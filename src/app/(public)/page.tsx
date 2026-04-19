@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Choc-collab — your workshop, in one small quiet app",
+  title: "Choc-collab — Make chocolate. Not spreadsheets.",
   description:
     "A local-first, open-source PWA for artisan chocolatiers. Ingredients, fillings, products, production, stock, and margins — all in one place.",
 };
