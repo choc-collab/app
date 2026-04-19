@@ -11,6 +11,8 @@ const inter = Inter({
   display: "swap",
 });
 
+export const runtime = "edge";
+
 const isCloudConfigured = Boolean(process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL);
 const appTitle = isCloudConfigured ? "Choc-collab" : "Choc-collab — local only";
 
