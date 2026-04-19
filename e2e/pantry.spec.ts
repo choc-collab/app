@@ -19,16 +19,16 @@ test.describe("Pantry", () => {
   test("navigates to Decoration from Pantry", async ({ page }) => {
     await page.goto("/pantry");
     // Use the card link (last match, since sidenav may also link to Decoration)
-    await page.locator('a[href="/pantry/decoration"]').last().click();
-    await expect(page).toHaveURL("/pantry/decoration");
+    await page.locator('a[href="/pantry/decoration/"]').last().click();
+    await expect(page).toHaveURL("/pantry/decoration/");
     await expect(page.getByRole("heading", { name: "Decoration" })).toBeVisible();
   });
 
   test("navigates to Collections from Pantry", async ({ page }) => {
     await page.goto("/pantry");
     // Use the card link (last match, since sidenav may also link to Collections)
-    await page.locator('a[href="/collections"]').last().click();
-    await expect(page).toHaveURL("/collections");
+    await page.locator('a[href="/collections/"]').last().click();
+    await expect(page).toHaveURL("/collections/");
     await expect(page.getByRole("heading", { name: "Collections" })).toBeVisible();
   });
 });

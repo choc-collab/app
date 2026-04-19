@@ -21,6 +21,7 @@ Keep these in mind for every new feature:
 - Prefer additive schema changes (new nullable fields) over destructive ones — sync makes migrations harder to coordinate
 - Do not add any features that would only work in a single-device context without flagging it as a known limitation
 - All user settings must sync via Dexie Cloud (the `userPreferences` table, not device-local storage) — users expect configuration to be consistent across devices
+- **Treat data loss as a primary threat model.** ChocCollab's default tier is local-only IndexedDB — there is no server to rescue a wiped database. Every change that touches persistence, schema, or destructive user flows must preserve the three protections already in place: (1) `navigator.storage.persist()` requested on boot to block eviction; (2) auto-snapshot download before any destructive op (`importBackup`, `clearAllData`); (3) pre-upgrade snapshot download before a Dexie schema migration runs. See "Data-loss protections" under Backup / Restore.
 
 ---
 
@@ -82,7 +83,7 @@ Documentation lives in six places — update the right one(s) when you change th
 | New pantry list or detail page | Follow the checklist in "Pantry Shared Components" section of AGENT.md |
 | New component | Component list in AGENT.md |
 | New table or field | Data model in AGENT.md + **backup/restore** (see below) + CHANGELOG `[Unreleased]` |
-| DB version bump | Version number in AGENT.md + CHANGELOG `[Unreleased]` (flag schema change) |
+| DB version bump | Version number in AGENT.md + CHANGELOG `[Unreleased]` (flag schema change) + **bump `CURRENT_DEXIE_VERSION` in `src/lib/upgrade-snapshot.ts`** (must track `db.ts`, otherwise the pre-upgrade snapshot silently reports "already-current" and users lose the safety net) |
 | New `lib/` function or export | Relevant section in AGENT.md |
 | New test file | Tests table in AGENT.md |
 | New dependency | Tech stack in README |
@@ -101,6 +102,15 @@ When you add a new Dexie table, you must update `backup.ts` in the same session:
 
 **Coverage checklist** — all tables currently handled in backup/restore:
 `ingredients`, `products`, `productCategories`, `fillings`, `fillingCategories`, `ingredientCategories`, `productFillings`, `fillingIngredients`, `moulds`, `productionPlans`, `planProducts`, `planStepStatus`, `settings`, `userPreferences`, `productFillingHistory`, `ingredientPriceHistory`, `coatingChocolateMappings`, `productCostSnapshots`, `packaging`, `packagingOrders`, `decorationMaterials`, `decorationCategories`, `shellDesigns`, `experiments`, `experimentIngredients`, `shoppingItems`, `collections`, `collectionProducts`, `collectionPackagings`, `collectionPricingSnapshots`, `fillingStock`
+
+### Data-loss protections
+Three layered safeguards work together so neither a browser eviction, a misclick, nor a schema upgrade can silently wipe a user's data:
+
+1. **Persistent storage request** (`src/lib/persistent-storage.ts` + `src/components/persistent-storage-request.tsx`) — `navigator.storage.persist()` is called on app boot from the root layout. Browsers that grant it will not evict the IndexedDB under storage pressure. Settings → Backup exposes the live status (persisted / usage / quota) and a manual "Request persistent storage" button for browsers (Safari, Firefox) that often refuse the auto-request and only grant on a user gesture.
+2. **Auto-snapshot before destructive ops** (`src/lib/backup.ts`) — both `importBackup()` and `clearAllData()` call `writeSafetySnapshot()` before wiping any data. Filenames are prefixed `choc-collab-snapshot-before-restore-` / `choc-collab-snapshot-before-clear-` so users can tell them apart from manual exports in the Downloads folder. Skipped when the DB is empty (nothing to protect). Both functions accept `{ snapshot: false }` for scripts/tests that need to opt out.
+3. **Pre-upgrade snapshot** (`src/lib/upgrade-snapshot.ts`) — `snapshotBeforeUpgrade()` is fired from `db.ts` at module init. It reads the stored IDB version via `indexedDB.databases()`, and if lower than `CURRENT_DEXIE_VERSION`, opens a bare `new Dexie("ChocolatierDB")` at the existing version, dumps every table it finds, and downloads `choc-collab-snapshot-before-upgrade-v{old}-to-v{new}-{date}.json`. IDB serializes the real upgrade behind the peek, so the snapshot always observes pre-upgrade state. `localStorage` records metadata so Settings can show a one-time "Recovery snapshot saved" banner explaining the mystery file in Downloads (dismissible via `dismissLastSnapshotMetadata()`). Skips cleanly for fresh installs (version 0), already-current loads, browsers without `indexedDB.databases()` (Safari <16.4), or when the existing DB has no rows.
+
+**When bumping the Dexie schema version in `db.ts`: also bump `CURRENT_DEXIE_VERSION` in `src/lib/upgrade-snapshot.ts`.** These two constants are linked by hand because the snapshot module cannot import the live Dexie instance without triggering a circular open.
 
 ## Tests
 
@@ -482,7 +492,8 @@ FillingStock     id, fillingId, remainingG (grams left), planId? (production pla
 ## Database (`src/lib/db.ts`)
 - Dexie DB named `"ChocolatierDB"`, currently **version 6** (v2 adds the `productCategories` table and `productCategoryId` FK on Product, replacing the legacy free-text `productType` string; v3 marks Chocolate ingredients as `shellCapable`, back-fills `shellIngredientId` from `CoatingChocolateMapping`, and sets `shellPercentage=37`; v4 adds `decorationCategories` and `shellDesigns` tables, seeded from the formerly hardcoded constants, plus `userPreferences` table to replace the old device-local `settings` key-value store — all preferences now sync across devices via Dexie Cloud; v5 adds the `fillingCategories` table with a per-category `shelfStable` boolean, replacing the hardcoded `SHELF_STABLE_CATEGORIES` constant — categories are seeded from `DEFAULT_FILLING_CATEGORIES` plus one record per unique legacy `Filling.category` string; v6 adds the `ingredientCategories` table, replacing the hardcoded `INGREDIENT_CATEGORIES` constant — categories are seeded from `DEFAULT_INGREDIENT_CATEGORIES` plus one record per unique legacy `Ingredient.category` string).
 - All entity IDs are **string UUIDs** (custom-generated via `newId()`). The legacy `settings` table (key-value, `key` as primary key) is kept in the schema for backward-compatible backup import but is no longer written to — all preferences are stored in the `userPreferences` table which has a proper UUID `id` and syncs via Dexie Cloud.
-- When adding new fields to existing tables: bump the version and add a migration
+- When adding new fields to existing tables: bump the version and add a migration. **Also bump `CURRENT_DEXIE_VERSION` in `src/lib/upgrade-snapshot.ts`** so the pre-upgrade snapshot runs before the new migration. The constants are kept in sync by hand (importing `db` from the snapshot module would create a circular open).
+- On every app boot, `src/lib/upgrade-snapshot.ts` is dynamically imported from `db.ts` before any table access. If the stored IDB version is behind `CURRENT_DEXIE_VERSION * 10`, it peeks at the on-disk DB and downloads a recovery snapshot before the real `db` opens and runs `.upgrade()` hooks. See "Data-loss protections" under Backup / Restore for details.
 - Indexes: `fillings` is indexed on `name, category, subcategory, rootId`; `productCategories` is indexed on `name, archived`; `fillingCategories` is indexed on `name, archived`; `ingredientCategories` is indexed on `name, archived`; `decorationCategories` is indexed on `slug, name, archived`; `shellDesigns` is indexed on `name, archived`
 - The v1→v2 upgrade hook walks every product, creates a category record per unique legacy `productType` string (always seeding `moulded` + `bar`), and back-fills `productCategoryId`. Fresh users skip the upgrade hook entirely; for them, `ensureDefaultProductCategories()` runs from the seed loader on every page load to seed the two defaults idempotently.
 - The v4→v5 upgrade hook seeds `fillingCategories` from `DEFAULT_FILLING_CATEGORIES` (Ganaches, Pralines, Caramels, Fruit-Based, Croustillants — Pralines + Fruit-Based default to `shelfStable=true` to preserve the prior hardcoded behavior) and back-fills one record per unique non-default `Filling.category` string. Fresh users get the same seed via `ensureDefaultFillingCategories()` from the seed loader.
@@ -732,6 +743,7 @@ src/
     csv-import.tsx          — reusable CSV import UI: file pick → preview table → commit (parameterised by CSVImportConfig<T>)
     seed-loader.tsx         — triggers seed on first load
     sw-register.tsx         — registers service worker
+    persistent-storage-request.tsx — requests `navigator.storage.persist()` on boot so the browser won't evict IndexedDB under storage pressure; mounted from the root layout alongside `sw-register.tsx`
     leftover-modal.tsx      — modal prompt for registering leftover filling after fill step completion
     freeze-modal.tsx        — FreezeModal (quantity + preserved-shelf-life form) + DefrostConfirmModal (two-step confirmation; shows the new sell-by date)
   lib/
@@ -745,7 +757,9 @@ src/
     shelfLifeBuckets.ts     — pure bucketing for shelf-life filters (none / ≤4wk / 5–12wk / >12wk); shared between Products + Fillings list pages
     productCategories.ts    — pure helpers: validateCategoryRange, categoryAllowsZero/FullShell, clampShellPercentToCategory, formatCategoryRange
     colors.ts               — cocoa butter colour name → CSS hex mapping + colorToCSS()
-    backup.ts               — export/import all IndexedDB data (includes productCategories; back-fills legacy productType strings post-import)
+    backup.ts               — export/import all IndexedDB data (includes productCategories; back-fills legacy productType strings post-import); `importBackup`/`clearAllData` auto-download a safety snapshot first so destructive ops are always recoverable
+    persistent-storage.ts   — `requestPersistentStorage()`, `getStorageStatus()`, `formatBytes()` — SSR-safe wrappers around `navigator.storage` so the UI can show persisted state + usage/quota and offer a manual "Request persistent storage" button
+    upgrade-snapshot.ts     — pre-upgrade safety snapshot. `snapshotBeforeUpgrade()` fires at `db.ts` module init; if the stored IDB version is below `CURRENT_DEXIE_VERSION * 10`, it peeks at the DB and downloads a recovery JSON before Dexie runs `.upgrade()` hooks. Exports pure helpers `decideUpgradeSnapshot()` and `buildUpgradeSnapshotFilename()` for unit testing. `CURRENT_DEXIE_VERSION` is kept in sync with `db.ts` by hand
     seed.ts                 — seeding logic
     collectionPricing.ts    — pure pricing/margin calculations
     csv.ts                  — CSV parser
@@ -780,6 +794,8 @@ Vitest, node environment. Run with `npm test`.
 | `src/lib/nutrition.test.ts` | `kcalToKj`, `kjToKcal`, `sodiumMgToSaltG`, `saltGToSodiumMg`, `fillDerivedNutrition`, `aggregateNutrition`, `scaleToServing`, `formatNutrientValue`, `percentDailyValue`, `hasNutritionData`, `getMissingMandatoryNutrients`, `getNutrientsByMarket`, `getNutritionPanelTitle` |
 | `src/lib/csv-import.test.ts` | `toNum`, `toNumOpt`, `toStrOpt`, `toBoolOpt`, `parseCSVImport` (valid rows, missing/unknown columns, validation errors, row indexing) |
 | `src/lib/csv-import-ingredients.test.ts` | `mapIngredientRow` (minimal, purchase, composition, allergens, nutrition, booleans, optional strings), `validateIngredientRow` (required name, composition sum, unknown category, partial pricing), `INGREDIENT_TEMPLATE_COLUMNS` (allergen + nutrition column counts) |
+| `src/lib/persistent-storage.test.ts` | `requestPersistentStorage` (SSR, unsupported browser, already-persisted short-circuit, grant/deny paths, error swallowing, persisted() missing), `getStorageStatus` (no navigator, no persist support, full happy path, missing estimate fields, errors from persisted()/estimate()), `formatBytes` (null/negative/NaN placeholders, B/KB/MB/GB boundaries, precision switch at ≥10) |
+| `src/lib/upgrade-snapshot.test.ts` | `decideUpgradeSnapshot` (unsupported browser, fresh install, already-current, downgrade, one-step-behind trigger, multi-step-behind trigger), `buildUpgradeSnapshotFilename` (both versions + ISO date in name, multi-step upgrades, default-now date shape) |
 
 When adding new pure functions to `lib/` or `types/`, add a corresponding `.test.ts` file. Browser-dependent code (Dexie hooks, React components) is not unit-tested — test the pure logic layer instead.
 
@@ -802,7 +818,7 @@ Playwright, Chromium. Run with `npm run test:e2e`. Config: `playwright.config.ts
 | `e2e/product-cost.spec.ts` | Observatory home link to Product Cost; empty state; nav item active; search input present |
 | `e2e/stock-fillings.spec.ts` | Fillings tab: empty state, manual add, adjust amount, discard with confirmation, search filtering |
 | `e2e/stock-freezer.spec.ts` | Freeze a filling with partial quantity (row splits), filter by Frozen-only / Available, defrost with confirmation modal |
-| `e2e/backup.spec.ts` | Export JSON contains all 27 table keys; round-trip data survives export+import; import overwrites post-backup additions |
+| `e2e/backup.spec.ts` | Export JSON contains all 27 table keys; round-trip data survives export+import; import overwrites post-backup additions; auto safety-snapshot downloads (with real canary content) before both `importBackup` and `clearAllData` run |
 | `e2e/product-categories.spec.ts` | Default seed (moulded + bar) appears on fresh DB; range badges visible; create/edit/delete; range validation rejects out-of-range default; pantry home card link |
 | `e2e/decoration.spec.ts` | 3 tabs visible; Materials tab CRUD; Categories tab: seeded data, create, cancel, delete; Designs tab: seeded data, create with applyAt, cancel, delete, production step display |
 | `e2e/csv-import.spec.ts` | Import tab visible; template download; valid CSV preview + import; validation errors shown; duplicate detection; empty CSV error |
@@ -836,10 +852,12 @@ Install section of the guide is not automatable — take that one by hand.
 - **Filling stock (leftover filling)**: After the fill step is completed in a production plan, a modal prompts the user to register leftover filling in grams (pre-filled: amountMade - amountNeeded, positive only for shelf-stable fillings with multiplier > 1). Stock is tracked in the `fillingStock` table and displayed on the stock page's "Fillings" tab. The production wizard shows "Use stock" toggle (instead of "Previous batch") only when stock exists for a shelf-stable filling, with coverage info.
 
 ## Export / Import (`src/lib/backup.ts`, `src/app/settings/page.tsx`)
-- All data lives in IndexedDB only — no server, no automatic backup
+- All data lives in IndexedDB only — no server. But three automatic data-loss protections run on top of the manual export (see "Data-loss protections" under Backup / Restore): persistent-storage request on boot, auto safety-snapshot before destructive ops, and a pre-upgrade snapshot before schema migrations.
 - Export/import is fully built: `exportBackup()` / `importBackup()` in `src/lib/backup.ts`
 - Backup uses `db.<table>.toArray()` for every table — a full object dump. New fields on any type are automatically included with no changes needed to `backup.ts`.
 - Do not maintain a separate field inventory for backup purposes; trust the full-object round-trip.
+- `importBackup(file)` and `clearAllData()` both auto-download a timestamped safety snapshot before wiping the DB. Opt out with `{ snapshot: false }` only for scripted/test flows. Snapshots are skipped when the DB is empty.
+- Filename prefixes by source, so users can tell files apart in Downloads: `choc-collab-backup-` (manual export), `choc-collab-snapshot-before-restore-`, `choc-collab-snapshot-before-clear-`, `choc-collab-snapshot-before-upgrade-v{old}-to-v{new}-`.
 
 ## Build Plan (remaining)
 - Allergen tracking + label printing

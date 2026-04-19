@@ -88,7 +88,7 @@ test.describe("Decoration — Materials", () => {
     await page.getByRole("button", { name: /Delete material/i }).click();
     await page.getByRole("button", { name: "Yes, delete" }).click();
 
-    await expect(page).toHaveURL("/pantry/decoration");
+    await expect(page).toHaveURL("/pantry/decoration/");
     await expect(page.getByText("Delete Me")).not.toBeVisible();
   });
 });
@@ -140,7 +140,7 @@ test.describe("Decoration — Categories", () => {
     await page.getByRole("button", { name: /Delete category/i }).click();
     await page.getByRole("button", { name: "Yes, delete" }).click();
 
-    await expect(page).toHaveURL("/pantry/decoration");
+    await expect(page).toHaveURL("/pantry/decoration/");
   });
 });
 
@@ -192,7 +192,7 @@ test.describe("Decoration — Designs", () => {
     await page.getByRole("button", { name: /Delete design/i }).click();
     await page.getByRole("button", { name: "Yes, delete" }).click();
 
-    await expect(page).toHaveURL("/pantry/decoration");
+    await expect(page).toHaveURL("/pantry/decoration/");
   });
 
   test("design detail shows the production step setting", async ({ page }) => {

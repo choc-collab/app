@@ -699,6 +699,21 @@ const SECTIONS: Section[] = [
           Settings → <strong>Import backup</strong>. Pick the JSON file. The importer warns before
           overwriting an existing database.
         </p>
+        <h3>Automatic safety snapshots</h3>
+        <p>
+          You don&apos;t need to remember to export before risky moves. Choc-collab auto-downloads a
+          JSON snapshot to your Downloads folder before three things: importing a backup (in case
+          the file is bad), deleting all data (in case you misclicked), and any app update that
+          changes the data format (in case the migration goes sideways). The files are named so you
+          can tell them apart — anything starting with <code>choc-collab-snapshot-before-</code> is
+          one of these. Keep the latest few; delete the rest when you feel like it.
+        </p>
+        <p>
+          Settings → <strong>Device Storage</strong> also shows whether your browser has promised
+          not to evict the app&apos;s data under storage pressure. If it hasn&apos;t, tap{" "}
+          <strong>Request persistent storage</strong> — browsers like Safari and Firefox usually
+          only grant it on a tap, not automatically.
+        </p>
         <h3>Optional: Dexie Cloud sync</h3>
         <p>
           If you want your workshop on both an iPad <em>and</em> a laptop, you can connect a

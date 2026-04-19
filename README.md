@@ -99,6 +99,7 @@ Choc-collab keeps everything a chocolatier needs in one place: products built fr
 - **Shopping list** — aggregates low-stock ingredients, packaging, and decoration materials alongside free-text items; mark items as ordered and track delivery status
 - **CSV import** — import ingredients from CSV files with column mapping, validation, and duplicate detection; download a template to get started
 - **Backup & restore** — full JSON export/import of all data from Settings
+- **Automatic safety snapshots** — before any destructive operation (restore, clear, schema upgrade) the app downloads a recovery JSON so you can always roll back
 - **Optional cloud sync** — bring your own [Dexie Cloud](https://dexie.org/cloud/) database to sync across devices; works offline and syncs automatically when reconnected. The app is fully functional without it
 - **PWA** — installable on iPad, iPhone, or desktop; feels like a native app
 

@@ -50,7 +50,11 @@ export interface BackupData {
   layerStock?: unknown[];
 }
 
-export async function exportBackup(): Promise<void> {
+export interface ExportBackupOptions {
+  filenamePrefix?: string;
+}
+
+async function buildBackupData(): Promise<BackupData> {
   const [
     ingredients,
     products,
@@ -115,7 +119,7 @@ export async function exportBackup(): Promise<void> {
     db.ingredientCategories.toArray(),
   ]);
 
-  const backup: BackupData = {
+  return {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     ingredients,
@@ -150,20 +154,69 @@ export async function exportBackup(): Promise<void> {
     fillingCategories,
     ingredientCategories,
   };
+}
 
-  const json = JSON.stringify(backup, (_key, value) => value ?? undefined);
+// True if at least one table has rows — used to skip auto-snapshots on a fresh
+// install where a download file would be noise with nothing to protect.
+function hasAnyData(data: BackupData): boolean {
+  const arrays: unknown[][] = [
+    data.ingredients, data.products, data.productCategories ?? [], data.fillings,
+    data.productFillings, data.fillingIngredients, data.moulds, data.productionPlans,
+    data.planProducts, data.planStepStatus, data.userPreferences ?? [],
+    data.productFillingHistory ?? [], data.ingredientPriceHistory ?? [],
+    data.coatingChocolateMappings ?? [], data.productCostSnapshots ?? [],
+    data.packaging ?? [], data.packagingOrders ?? [], data.decorationMaterials ?? [],
+    data.decorationCategories ?? [], data.shellDesigns ?? [], data.experiments ?? [],
+    data.experimentIngredients ?? [], data.shoppingItems ?? [], data.collections ?? [],
+    data.collectionProducts ?? [], data.collectionPackagings ?? [],
+    data.collectionPricingSnapshots ?? [], data.fillingStock ?? [],
+    data.fillingCategories ?? [], data.ingredientCategories ?? [],
+  ];
+  return arrays.some((a) => Array.isArray(a) && a.length > 0);
+}
+
+function triggerBackupDownload(data: BackupData, filenamePrefix: string): void {
+  if (typeof document === "undefined") return;
+  const json = JSON.stringify(data, (_key, value) => value ?? undefined);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-
   const date = new Date().toISOString().slice(0, 10);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `choc-collab-backup-${date}.json`;
+  a.download = `${filenamePrefix}-${date}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-export async function clearAllData(): Promise<void> {
+export async function exportBackup(options?: ExportBackupOptions): Promise<void> {
+  const data = await buildBackupData();
+  triggerBackupDownload(data, options?.filenamePrefix ?? "choc-collab-backup");
+}
+
+// Write a safety snapshot of the current DB before a destructive operation so
+// a misclick or a bad backup file is always recoverable. No-op if the DB is
+// empty. Errors are swallowed — the snapshot is a best-effort safety net and
+// should never block the operation the user actually asked for.
+async function writeSafetySnapshot(filenamePrefix: string): Promise<void> {
+  try {
+    const data = await buildBackupData();
+    if (!hasAnyData(data)) return;
+    triggerBackupDownload(data, filenamePrefix);
+  } catch {
+    // Intentionally swallowed.
+  }
+}
+
+export interface DestructiveOpOptions {
+  // When true (the default), a timestamped safety snapshot is downloaded
+  // before the DB is wiped. Pass false only for tests or scripted flows.
+  snapshot?: boolean;
+}
+
+export async function clearAllData(options?: DestructiveOpOptions): Promise<void> {
+  if (options?.snapshot !== false) {
+    await writeSafetySnapshot("choc-collab-snapshot-before-clear");
+  }
   await db.transaction(
     "rw",
     [
@@ -286,7 +339,7 @@ function applyAll<T>(rows: unknown[] | undefined, fn: (r: AnyRec) => AnyRec): T[
   return rows.map(r => fn((r ?? {}) as AnyRec)) as T[];
 }
 
-export async function importBackup(file: File): Promise<void> {
+export async function importBackup(file: File, options?: DestructiveOpOptions): Promise<void> {
   const text = await file.text();
   const data: BackupData = JSON.parse(text);
 
@@ -295,6 +348,13 @@ export async function importBackup(file: File): Promise<void> {
   }
   if (data.version !== BACKUP_VERSION) {
     throw new Error(`Unsupported backup version ${data.version}. Expected ${BACKUP_VERSION}.`);
+  }
+
+  // Snapshot the current DB before we wipe it, so a bad backup file or a
+  // misclick is always recoverable. Runs after validation so we don't hand the
+  // user a snapshot they can't undo with a file they couldn't use anyway.
+  if (options?.snapshot !== false) {
+    await writeSafetySnapshot("choc-collab-snapshot-before-restore");
   }
 
   // Prefer new keys, fall back to legacy keys from pre-rename backups.

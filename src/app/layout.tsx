@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/sw-register";
+import { PersistentStorageRequest } from "@/components/persistent-storage-request";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { GlobalErrorHandler } from "@/components/global-error-handler";
 
@@ -14,6 +15,7 @@ const inter = Inter({
 
 const isCloudConfigured = Boolean(process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL);
 const appTitle = isCloudConfigured ? "Choc-collab" : "Choc-collab — local only";
+const cfAnalyticsToken = process.env.NEXT_PUBLIC_CF_ANALYTICS_TOKEN;
 
 export const metadata: Metadata = {
   title: appTitle,
@@ -56,6 +58,14 @@ export default function RootLayout({
         </ErrorBoundary>
         <GlobalErrorHandler />
         <ServiceWorkerRegister />
+        <PersistentStorageRequest />
+        {cfAnalyticsToken && (
+          <script
+            defer
+            src="https://static.cloudflareinsights.com/beacon.min.js"
+            data-cf-beacon={JSON.stringify({ token: cfAnalyticsToken })}
+          />
+        )}
       </body>
     </html>
   );

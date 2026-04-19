@@ -8,7 +8,9 @@ import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MAR
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
 import { isCloudConfigured } from "@/lib/db";
-import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet } from "lucide-react";
+import { getStorageStatus, requestPersistentStorage, formatBytes, type StorageStatus } from "@/lib/persistent-storage";
+import { readLastSnapshotMetadata, dismissLastSnapshotMetadata, type LastSnapshotMetadata } from "@/lib/upgrade-snapshot";
+import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive } from "lucide-react";
 import { CSVImport } from "@/components/csv-import";
 import { ingredientImportConfig, getExistingIngredientKeys } from "@/lib/csv-import-ingredients";
 import type { Ingredient } from "@/types";
@@ -145,6 +147,146 @@ export default function SettingsPage() {
   );
 }
 
+function UpgradeSnapshotNotice() {
+  const [meta, setMeta] = useState<LastSnapshotMetadata | null>(null);
+
+  useEffect(() => {
+    setMeta(readLastSnapshotMetadata());
+  }, []);
+
+  if (!meta) return null;
+
+  const date = meta.savedAt.slice(0, 10);
+
+  function onDismiss() {
+    dismissLastSnapshotMetadata();
+    setMeta(null);
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-start gap-3 rounded-lg border border-status-ok-edge bg-status-ok-bg p-4">
+        <ShieldCheck className="w-5 h-5 text-status-ok shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-status-ok">Recovery snapshot saved</p>
+          <p className="text-xs text-status-ok/90 mt-0.5">
+            We updated the app&apos;s data format from v{meta.fromDexieVersion} to v
+            {meta.toDexieVersion} on {date} and saved a snapshot of your previous data to your
+            Downloads folder as <code>{meta.filename}</code>. If anything looks wrong after this
+            update, you can restore it with &ldquo;Choose backup file…&rdquo; below.
+          </p>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="text-xs text-status-ok/80 hover:text-status-ok underline shrink-0"
+        >
+          Dismiss
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function StorageStatusSection() {
+  const [status, setStatus] = useState<StorageStatus | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [lastAttempt, setLastAttempt] = useState<"idle" | "granted" | "denied">("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    getStorageStatus().then((s) => {
+      if (!cancelled) setStatus(s);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function onRequest() {
+    setRequesting(true);
+    setLastAttempt("idle");
+    try {
+      await requestPersistentStorage();
+      const next = await getStorageStatus();
+      setStatus(next);
+      setLastAttempt(next.persisted ? "granted" : "denied");
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  if (!status || !status.supported) return null;
+
+  const usage = status.usageBytes != null && status.quotaBytes != null
+    ? `${formatBytes(status.usageBytes)} used of ${formatBytes(status.quotaBytes)} available`
+    : null;
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-primary">Device Storage</h2>
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          {status.persisted ? (
+            <ShieldCheck className="w-5 h-5 text-status-ok shrink-0 mt-0.5" />
+          ) : (
+            <HardDrive className="w-5 h-5 text-status-warn shrink-0 mt-0.5" />
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">
+              {status.persisted ? "Storage is persistent" : "Storage is not persistent"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {status.persisted
+                ? "Your browser has promised not to evict this app's data under storage pressure."
+                : "The browser may clear this app's data under storage pressure. Requesting persistent storage tells it to keep your data."}
+            </p>
+            {usage && (
+              <p className="text-xs text-muted-foreground mt-1">{usage}</p>
+            )}
+          </div>
+        </div>
+        {status.persisted && lastAttempt === "granted" && (
+          <div className="flex items-start gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
+            <CheckCircle className="w-4 h-4 text-status-ok shrink-0 mt-0.5" />
+            <p className="text-xs text-status-ok">
+              Granted. Your data is now protected from storage-pressure eviction.
+            </p>
+          </div>
+        )}
+        {!status.persisted && lastAttempt === "denied" && (
+          <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
+            <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
+            <div className="text-xs text-status-warn space-y-1">
+              <p>
+                <strong>Your browser declined.</strong> Browsers decide this by their own rules —
+                Chrome and Edge usually refuse in a regular tab, Firefox asks permission, Safari
+                grants it mainly for installed apps.
+              </p>
+              <p>
+                The most reliable fix is to install Choc-collab as a PWA — &ldquo;Add to Home
+                Screen&rdquo; on iOS, or the install icon in your browser&apos;s URL bar on desktop
+                / Android. Installed apps are granted persistent storage automatically on most
+                browsers.
+              </p>
+            </div>
+          </div>
+        )}
+        {!status.persisted && (
+          <button
+            onClick={onRequest}
+            disabled={requesting}
+            className="w-full rounded-full border border-border py-2 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            {requesting
+              ? "Requesting…"
+              : lastAttempt === "denied"
+                ? "Try again"
+                : "Request persistent storage"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function BackupTab({
   fileInputRef,
   exporting,
@@ -168,6 +310,8 @@ function BackupTab({
 }) {
   return (
     <div className="space-y-6">
+      <UpgradeSnapshotNotice />
+      <StorageStatusSection />
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-primary">Backup & Restore</h2>
         {!isCloudConfigured ? (
@@ -218,7 +362,7 @@ function BackupTab({
               <p className="text-sm font-medium">Restore from backup</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Replaces <strong>all</strong> current data with the contents of a backup file.
-                This cannot be undone.
+                A safety snapshot of your current data downloads first so this is always recoverable.
               </p>
             </div>
           </div>
@@ -499,7 +643,7 @@ function ClearAllDataSection() {
             <p className="text-xs text-muted-foreground mt-0.5">
               Permanently deletes all products, fillings, ingredients, moulds, production plans,
               collections, experiments, and every other record in the app.
-              This cannot be undone — export a backup first if you want to keep anything.
+              A safety snapshot of your current data downloads first so this is always recoverable.
             </p>
           </div>
         </div>

@@ -410,4 +410,15 @@ for (const table of AUTO_ID_TABLES) {
   );
 }
 
+// Before any table access triggers Dexie's lazy open (which runs `.upgrade()`
+// hooks if the stored schema version is lower than the one declared above),
+// issue a second connection at the existing version and dump it to a JSON
+// file. IDB serializes the real open behind our peek until it closes, so the
+// snapshot always captures pre-upgrade state. Fire-and-forget on purpose:
+// failures here must never block the app, because the snapshot is a safety
+// net, not a precondition.
+if (typeof window !== "undefined") {
+  void import("./upgrade-snapshot").then(({ snapshotBeforeUpgrade }) => snapshotBeforeUpgrade());
+}
+
 export { db };
