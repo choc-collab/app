@@ -31,10 +31,10 @@ test.describe("Fillings — Tabs", () => {
   test("seeded shelf-stable categories are flagged", async ({ page }) => {
     await page.goto("/fillings");
     await page.getByRole("button", { name: /^Categories$/ }).click();
-    // Both Pralines and Fruit-Based should display the Shelf-stable badge.
     const badges = page.getByText("Shelf-stable", { exact: true });
-    await expect(badges.first()).toBeVisible();
-    await expect(await badges.count()).toBeGreaterThanOrEqual(2);
+    // Auto-retry: seed loader inserts categories async — Pralines may arrive
+    // before Fruit-Based. `toHaveCount` polls until the DOM settles.
+    await expect(badges).toHaveCount(2);
   });
 });
 
