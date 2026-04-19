@@ -1,0 +1,397 @@
+/* Getting-started guide — scoped styles. Uses tokens from globals.css. */
+
+.docs {
+  --docs-max: 860px;
+  --docs-max-wide: 1100px;
+}
+
+.docs .hero {
+  padding: 40px 0 16px;
+  max-width: var(--docs-max-wide);
+  margin: 0 auto;
+}
+.docs .hero .kicker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+  margin-bottom: 10px;
+}
+.docs .hero h1 {
+  font-size: clamp(32px, 4vw, 52px);
+  line-height: 1.02;
+  margin: 0 0 14px;
+  font-weight: 450;
+  letter-spacing: -0.035em;
+  max-width: 16ch;
+}
+.docs .hero p.lede {
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--color-muted-foreground);
+  max-width: 58ch;
+  margin: 0 0 22px;
+}
+.docs .hero .cta-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.docs .section {
+  padding: 32px 0;
+  max-width: var(--docs-max);
+  margin: 0 auto;
+}
+.docs .section.wide {
+  max-width: var(--docs-max-wide);
+}
+.docs .section h2 {
+  font-size: 28px;
+  letter-spacing: -0.025em;
+  font-weight: 450;
+  margin: 0 0 6px;
+}
+.docs .section h2 .num {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-muted-foreground);
+  margin-right: 10px;
+  vertical-align: 4px;
+  letter-spacing: 0.04em;
+}
+.docs .section h3 {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 18px 0 6px;
+  letter-spacing: -0.01em;
+}
+.docs .section p,
+.docs .section li {
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--color-foreground);
+}
+.docs .section p {
+  margin: 8px 0 12px;
+}
+.docs .section .sub {
+  color: var(--color-muted-foreground);
+  margin-bottom: 18px;
+  font-size: 15px;
+}
+.docs .section ul,
+.docs .section ol {
+  padding-left: 20px;
+  margin: 8px 0 16px;
+}
+.docs .section code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--color-muted);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.docs .section .divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 32px 0;
+}
+
+/* Copyable code block */
+.docs .code-block {
+  position: relative;
+  background: #1a1a1a;
+  color: #ececec;
+  border-radius: 8px;
+  margin: 14px 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.docs .code-block pre {
+  margin: 0;
+  padding: 16px 18px;
+  padding-right: 52px; /* leave room for the copy button */
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: inherit;
+  background: transparent;
+}
+.docs .code-block code {
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  white-space: pre;
+}
+.docs .code-block-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ececec;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.docs .code-block-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+.docs .code-block-copy:focus-visible {
+  outline: 2px dashed #ececec;
+  outline-offset: 2px;
+}
+
+/* Screenshot placeholder */
+.docs .shot {
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 10px, rgba(0, 0, 0, 0.025) 10px 20px),
+    var(--color-card);
+  aspect-ratio: 16 / 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted-foreground);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 10px 0 18px;
+}
+.docs .shot.tall { aspect-ratio: 3 / 4; }
+.docs .shot.wide { aspect-ratio: 21 / 9; }
+.docs .shot .inner { text-align: center; line-height: 1.5; }
+.docs .shot .inner b { color: var(--color-foreground); font-weight: 500; }
+.docs .shot-note {
+  opacity: 0.7;
+  margin-top: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-sans);
+}
+
+/* Real screenshot — replaces the striped placeholder styling.
+   Uses the image's natural aspect ratio so shots aren't cropped. */
+.docs .shot.shot-has-image {
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  aspect-ratio: auto;
+  padding: 0;
+  margin: 14px 0 22px;
+  overflow: hidden;
+  display: block;
+}
+.docs .shot.shot-has-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Callouts */
+.docs .callout {
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 14px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  background: var(--accent-butter-bg);
+  color: var(--accent-butter-ink);
+}
+.docs .callout.tip  { background: var(--accent-sage-bg);  color: var(--accent-sage-ink); }
+.docs .callout.note { background: var(--accent-cocoa-bg); color: var(--accent-cocoa-ink); }
+.docs .callout.warn { background: var(--color-status-warn-bg); color: var(--color-status-warn); }
+.docs .callout strong {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+/* kbd */
+.docs kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--color-foreground);
+}
+
+/* Hub card grid */
+.docs .card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 14px 0 8px;
+}
+.docs .card {
+  text-decoration: none;
+  color: inherit;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 140px;
+  transition: border-color 150ms, transform 150ms;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.docs .card:hover {
+  border-color: rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+.docs .card .ico {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+.docs .card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.docs .card p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-muted-foreground);
+  line-height: 1.45;
+  flex: 1;
+}
+.docs .card .arrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+
+/* Step chips */
+.docs .step-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.docs .step-list li { display: flex; gap: 14px; padding: 0; }
+.docs .step-list .n {
+  flex: 0 0 30px;
+  height: 30px;
+  border-radius: 9999px;
+  background: var(--accent-cocoa-bg);
+  color: var(--accent-cocoa-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 500;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+.docs .step-list .body { flex: 1; padding-top: 3px; }
+.docs .step-list .body strong { font-weight: 500; }
+
+/* FAQ */
+.docs details {
+  border-top: 1px solid var(--color-border);
+  padding: 12px 0;
+}
+.docs details:last-of-type { border-bottom: 1px solid var(--color-border); }
+.docs details summary {
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 15px;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.docs details summary::-webkit-details-marker { display: none; }
+.docs details summary::after {
+  content: "+";
+  font-family: var(--font-mono);
+  color: var(--color-muted-foreground);
+  font-size: 18px;
+}
+.docs details[open] summary::after { content: "–"; }
+.docs details p { margin: 10px 0 4px; color: var(--color-muted-foreground); }
+
+/* Hub modal */
+.docs .hub-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  padding: 40px 20px;
+  overflow: auto;
+}
+.docs .hub-modal-inner {
+  background: var(--color-background);
+  max-width: 740px;
+  margin: 0 auto;
+  border-radius: 14px;
+  padding: 28px 36px 40px;
+  border: 1px solid var(--color-border);
+  position: relative;
+}
+.docs .hub-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--color-foreground);
+}
+.docs .hub-modal-kicker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+  margin-bottom: 8px;
+}
+.docs .hub-modal-title {
+  font-size: 28px;
+  font-weight: 450;
+  letter-spacing: -0.025em;
+  margin: 0 0 14px;
+}
+.docs .hub-modal-nav {
+  margin-top: 24px;
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 18px;
+}
+.docs .hub-modal-nav .spacer { margin-left: auto; }

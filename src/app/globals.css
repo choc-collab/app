@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+@keyframes demo-ripple {
+  from { transform: translate(-50%, -50%) scale(0); opacity: 0.8; }
+  to   { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+
+@theme {
+  --animate-demo-ripple: demo-ripple 0.55s ease-out forwards;
+
+  /* ─── Monochrome interface (Figma-inspired) ─────────────────────────────
+     Chrome is strictly black + white. Color exists only inside product
+     content (photos, swatches, status pills). Do not add palette colors
+     here — see DESIGN.md.
+     ──────────────────────────────────────────────────────────────────── */
+  --color-background: #ffffff;
+  --color-foreground: #000000;
+  --color-muted: #f5f5f5;
+  --color-muted-foreground: #666666;
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-primary: #000000;
+  --color-primary-foreground: #ffffff;
+  /* Accent = the per-section pastel surface. Defaults to black/white so
+     components using `bg-accent text-accent-foreground` render unchanged
+     on sections with no accent (Lab, Settings, etc.). Overridden per-
+     section by `body[data-accent=…]` rules in @layer base. */
+  --color-accent: #000000;
+  --color-accent-foreground: #ffffff;
+  --color-card: #ffffff;
+  --color-card-foreground: #000000;
+  /* Destructive — deletion, exclusion, error states. Kept semantic (not
+     pure black) so pills like "exclude allergen" read as cautionary. */
+  --color-destructive: #8c3030;
+  --color-destructive-foreground: #ffffff;
+
+  /* Side-nav surface — subtle off-white so the nav reads as a distinct
+     column without a divider line. */
+  --color-nav: #f4f4f2;
+  --color-nav-foreground: #000000;
+
+  /* ─── Section accents ──────────────────────────────────────────────────
+     Each top-level section of the app has a pastel identity used for
+     primary CTAs, active tabs, and wayfinding cues. The palette is muted
+     and confectionery-inspired — this is a craft app, not a neon one.
+     To add a new accent: define *-bg and *-ink here, then map the route
+     in `src/components/section-accent.tsx`. Styles in `body[data-accent=…]`
+     below wire the accent to `--color-primary`/`--color-primary-foreground`
+     so every `bg-primary`, `text-primary-foreground`, `btn-primary`, and
+     active-tab style inherits it automatically.
+     ──────────────────────────────────────────────────────────────────── */
+  --accent-cocoa-bg:      #e0cdba;
+  --accent-cocoa-ink:     #4a3324;
+  --accent-peach-bg:      #f6d7b4;
+  --accent-peach-ink:     #8a4a1e;
+  --accent-sage-bg:       #d4e0c7;
+  --accent-sage-ink:      #4f6b3e;
+  --accent-blue-bg:       #cddfe8;
+  --accent-blue-ink:      #3a5a70;
+  --accent-lilac-bg:      #ddd0e5;
+  --accent-lilac-ink:     #5a3d73;
+  --accent-butter-bg:     #f2e3a8;
+  --accent-butter-ink:    #7a5e0c;
+  --accent-mint-bg:       #c9e3d2;
+  --accent-mint-ink:      #3a6648;
+  --accent-terracotta-bg: #e8cdb5;
+  --accent-terracotta-ink:#7a3e1e;
+  --accent-taupe-bg:      #dcd4c7;
+  --accent-taupe-ink:     #5a4a35;
+
+  /* Glass overlays — secondary buttons on light / dark surfaces */
+  --color-glass-dark: rgba(0, 0, 0, 0.08);
+  --color-glass-light: rgba(255, 255, 255, 0.16);
+
+  /* ─── Status palette ───────────────────────────────────────────────────
+     Kept as muted tonal signals (not chrome) so stock/urgency indicators
+     remain readable. Update here and all components pick up the change.
+     ──────────────────────────────────────────────────────────────────── */
+
+  /* WARN — low stock, advisory */
+  --color-status-warn:       #7a5c08;
+  --color-status-warn-bg:    #fdf5da;
+  --color-status-warn-edge:  #c9a83a;
+
+  /* ALERT — out of stock, urgent */
+  --color-status-alert:      #8c3030;
+  --color-status-alert-bg:   #f5eaea;
+  --color-status-alert-edge: #c98888;
+
+  /* OK — ordered, fulfilled */
+  --color-status-ok:         #3a6648;
+  --color-status-ok-bg:      #e8f4eb;
+  --color-status-ok-edge:    #8cbf9a;
+
+  --color-warning:           #7a5c08;
+  --color-warning-muted:     #fdf5da;
+  --color-success:           #3a6648;
+  --color-success-muted:     #e8f4eb;
+
+  /* Inter variable supplies the full weight axis; fall back to system UI. */
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, -apple-system, "SF Pro Display", sans-serif;
+  --font-display: var(--font-inter), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@layer utilities {
+  /* Standardised form input — use on <input>, <select>, <textarea>.
+     Focus is a solid black border (not dashed) — dashed is reserved for
+     buttons/links where it echoes canvas selection handles. On form
+     fields a dashed outline reads as "error" and feels harsh. */
+  .input {
+    @apply w-full min-w-0 rounded-md border border-border bg-card px-3 py-2 text-sm
+           focus:outline-none transition-colors;
+  }
+  .input:focus,
+  .input:focus-visible {
+    border-color: var(--color-foreground);
+    box-shadow: inset 0 0 0 1px var(--color-foreground);
+    outline: none;
+  }
+
+  /* Standardised field label */
+  .label {
+    @apply block text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider;
+  }
+
+  /* Filled primary button — pill geometry, asymmetric vertical padding.
+     Uses the section accent; falls back to black when no accent is set. */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full
+           bg-accent text-accent-foreground text-sm
+           px-5 py-2
+           transition-[background-color,opacity] hover:opacity-90
+           disabled:opacity-50;
+    font-weight: 480;
+    letter-spacing: -0.14px;
+  }
+
+  /* Outlined secondary button — pill geometry */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full
+           border border-border bg-card text-foreground text-sm
+           px-5 py-2
+           transition-colors hover:bg-muted;
+    font-weight: 450;
+    letter-spacing: -0.14px;
+  }
+
+  /* Mono label — uppercase technical signpost */
+  .mono-label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    line-height: 1;
+  }
+}
+
+@layer base {
+  html {
+    overflow-x: clip;
+    font-feature-settings: "kern" 1, "ss01" 1, "cv11" 1;
+    /* Side-nav width — set by media query, overridden by JS when user
+       has toggled collapse. Main content reads it via margin-left. */
+    --nav-w: 3.5rem;
+  }
+  @media (min-width: 640px) {
+    html { --nav-w: 11rem; }
+  }
+  html[data-nav-collapsed="1"] { --nav-w: 3.5rem; }
+
+  /* Section accent wiring — SectionAccent.tsx sets data-accent on <body>
+     based on the active route. We override ONLY the `--color-accent` /
+     `--color-accent-foreground` tokens (not `--color-primary`) so the
+     pastel shows up on components that opt in via `bg-accent` /
+     `text-accent-foreground` (Add buttons, active tabs), while every
+     other `text-primary` / `bg-primary` usage stays neutral black. */
+  body[data-accent="cocoa"]      { --color-accent: var(--accent-cocoa-bg);      --color-accent-foreground: var(--accent-cocoa-ink); }
+  body[data-accent="peach"]      { --color-accent: var(--accent-peach-bg);      --color-accent-foreground: var(--accent-peach-ink); }
+  body[data-accent="sage"]       { --color-accent: var(--accent-sage-bg);       --color-accent-foreground: var(--accent-sage-ink); }
+  body[data-accent="blue"]       { --color-accent: var(--accent-blue-bg);       --color-accent-foreground: var(--accent-blue-ink); }
+  body[data-accent="lilac"]      { --color-accent: var(--accent-lilac-bg);      --color-accent-foreground: var(--accent-lilac-ink); }
+  body[data-accent="butter"]     { --color-accent: var(--accent-butter-bg);     --color-accent-foreground: var(--accent-butter-ink); }
+  body[data-accent="mint"]       { --color-accent: var(--accent-mint-bg);       --color-accent-foreground: var(--accent-mint-ink); }
+  body[data-accent="terracotta"] { --color-accent: var(--accent-terracotta-bg); --color-accent-foreground: var(--accent-terracotta-ink); }
+  body[data-accent="taupe"]      { --color-accent: var(--accent-taupe-bg);      --color-accent-foreground: var(--accent-taupe-ink); }
+
+  body {
+    letter-spacing: -0.011em;
+    font-weight: 400;
+  }
+
+  /* Display typography — tight tracking, light weight */
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+    font-weight: 450;
+  }
+  h1 { letter-spacing: -0.03em; }
+
+  /* Dashed focus indicator — signature accessibility pattern */
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px dashed var(--color-foreground);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+}
