@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/sw-register";
+import { PersistentStorageRequest } from "@/components/persistent-storage-request";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { GlobalErrorHandler } from "@/components/global-error-handler";
 
@@ -56,6 +57,7 @@ export default function RootLayout({
         </ErrorBoundary>
         <GlobalErrorHandler />
         <ServiceWorkerRegister />
+        <PersistentStorageRequest />
       </body>
     </html>
   );

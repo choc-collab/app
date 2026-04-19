@@ -100,6 +100,79 @@ test.describe("Backup & Restore", () => {
     await expect(page.getByText("Backup Test Item")).toBeVisible();
   });
 
+  test("import auto-downloads a safety snapshot before wiping data", async ({ page }) => {
+    // Create a distinctive item so the snapshot has real content.
+    await page.goto("/shopping");
+    await page.getByRole("button", { name: /Add an item/i }).click();
+    await page.getByPlaceholder("Item name…").fill("Pre-Restore Canary");
+    await page.getByRole("button", { name: "Add" }).click();
+    await expect(page.getByText("Pre-Restore Canary")).toBeVisible();
+
+    // Produce a valid backup file we can reimport.
+    await page.goto("/settings");
+    const [manualExport] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: "Export backup" }).click(),
+    ]);
+    const backupPath = await manualExport.path();
+    expect(backupPath).toBeTruthy();
+
+    // Capture all downloads that occur during restore — we expect two:
+    // the auto safety snapshot first, then (none more; restore has no output).
+    const downloads: Array<{ filename: string; path: string | null }> = [];
+    page.on("download", async (d) => {
+      downloads.push({ filename: d.suggestedFilename(), path: await d.path() });
+    });
+
+    await page.locator('input[type="file"][accept=".json,application/json"]').setInputFiles(backupPath!);
+    await page.getByRole("button", { name: "Yes, replace all data" }).click();
+    await expect(page.getByText("Restore complete")).toBeVisible({ timeout: 15000 });
+
+    // Safety snapshot must have been emitted. Its filename is prefixed so a
+    // user scanning Downloads can tell it apart from a manual export.
+    const snapshot = downloads.find((d) =>
+      d.filename.startsWith("choc-collab-snapshot-before-restore-")
+    );
+    expect(snapshot, `expected a pre-restore snapshot download; got ${downloads.map(d => d.filename).join(", ") || "none"}`).toBeTruthy();
+
+    // And the snapshot must actually contain the canary row so it is a
+    // genuine recovery artifact, not an empty JSON shell.
+    const stream = await (await import("fs/promises")).readFile(snapshot!.path!, "utf-8");
+    const snap = JSON.parse(stream);
+    const names = (snap.shoppingItems ?? []).map((r: { name?: string }) => r?.name);
+    expect(names).toContain("Pre-Restore Canary");
+  });
+
+  test("clear-all auto-downloads a safety snapshot before wiping data", async ({ page }) => {
+    await page.goto("/shopping");
+    await page.getByRole("button", { name: /Add an item/i }).click();
+    await page.getByPlaceholder("Item name…").fill("Pre-Clear Canary");
+    await page.getByRole("button", { name: "Add" }).click();
+    await expect(page.getByText("Pre-Clear Canary")).toBeVisible();
+
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Demo Mode" }).click();
+
+    const downloads: Array<{ filename: string; path: string | null }> = [];
+    page.on("download", async (d) => {
+      downloads.push({ filename: d.suggestedFilename(), path: await d.path() });
+    });
+
+    await page.getByRole("button", { name: "Delete all data" }).click();
+    await page.getByRole("button", { name: "Yes, delete everything" }).click();
+    await expect(page.getByText("All data has been deleted")).toBeVisible({ timeout: 15000 });
+
+    const snapshot = downloads.find((d) =>
+      d.filename.startsWith("choc-collab-snapshot-before-clear-")
+    );
+    expect(snapshot, `expected a pre-clear snapshot download; got ${downloads.map(d => d.filename).join(", ") || "none"}`).toBeTruthy();
+
+    const stream = await (await import("fs/promises")).readFile(snapshot!.path!, "utf-8");
+    const snap = JSON.parse(stream);
+    const names = (snap.shoppingItems ?? []).map((r: { name?: string }) => r?.name);
+    expect(names).toContain("Pre-Clear Canary");
+  });
+
   test("import overwrites existing data with backup contents", async ({ page }) => {
     // Create original data
     await page.goto("/shopping");

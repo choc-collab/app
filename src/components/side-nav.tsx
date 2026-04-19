@@ -97,15 +97,27 @@ function isActive(pathname: string, href: string): boolean {
 }
 
 export function SideNav() {
-  const pathname = usePathname();
+  const livePathname = usePathname();
   const searchParams = useSearchParams();
-  const activeSection = getActiveSection(pathname, searchParams.get("from"));
   const pendingShoppingCount = usePendingShoppingCount();
+
+  // Snapshot the URL state on first render and keep using it until after
+  // hydration. The router can advance mid-hydration (a Playwright click or
+  // a prefetch racing with the hydration pass), which would otherwise make
+  // the in-flight render disagree with the server HTML and throw a mismatch.
+  const [initialPathname] = useState(() => livePathname);
+  const [initialFrom] = useState(() => searchParams.get("from"));
+  const [mounted, setMounted] = useState(false);
+
+  const pathname = mounted ? livePathname : initialPathname;
+  const from = mounted ? searchParams.get("from") : initialFrom;
+  const activeSection = getActiveSection(pathname, from);
 
   // User-toggled collapse; initial value read from the attribute set by the
   // pre-hydration script in layout.tsx so there's no flash on refresh.
   const [collapsed, setCollapsed] = useState<boolean>(false);
   useEffect(() => {
+    setMounted(true);
     setCollapsed(document.documentElement.getAttribute("data-nav-collapsed") === "1");
   }, []);
   useEffect(() => {
