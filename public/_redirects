@@ -1,0 +1,38 @@
+# /lab and /calculator are not yet publicly available — bounce to home.
+# More specific rules first (Cloudflare processes top-to-bottom, first match wins).
+/lab/*                 /  302
+/lab                   /  302
+/calculator/*          /  302
+/calculator            /  302
+
+# SPA rewrites for dynamic routes: user-generated IDs don't exist at build time,
+# so we generate a `_spa` placeholder HTML per route and rewrite any real ID to it.
+# The placeholder hydrates client-side, `useParams()` reads the actual ID from the URL.
+#
+# NOTE ordering: nested child routes (`/production/*/products`) must come BEFORE
+# the parent (`/production/*`) or the parent glob swallows them.
+
+# Production batch pages (nested children first)
+/production/*/products/   /production/_spa/products/   200
+/production/*/summary/    /production/_spa/summary/    200
+/production/*/            /production/_spa/            200
+
+# Calculator nested routes (blocked above, but include for completeness)
+/calculator/*/batch/      /calculator/_spa/batch/      200
+/calculator/*/run/        /calculator/_spa/run/        200
+
+# Nested category / design detail pages
+/fillings/categories/*/           /fillings/categories/_spa/           200
+/ingredients/categories/*/        /ingredients/categories/_spa/        200
+/pantry/decoration/categories/*/  /pantry/decoration/categories/_spa/  200
+/pantry/decoration/designs/*/     /pantry/decoration/designs/_spa/     200
+/products/categories/*/           /products/categories/_spa/           200
+
+# Top-level detail pages
+/collections/*/             /collections/_spa/             200
+/fillings/*/                /fillings/_spa/                200
+/ingredients/*/             /ingredients/_spa/             200
+/moulds/*/                  /moulds/_spa/                  200
+/packaging/*/               /packaging/_spa/               200
+/pantry/decoration/*/       /pantry/decoration/_spa/       200
+/products/*/                /products/_spa/                200

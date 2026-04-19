@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/sw-register";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -10,8 +11,6 @@ const inter = Inter({
   variable: "--font-inter",
   display: "swap",
 });
-
-export const runtime = "edge";
 
 const isCloudConfigured = Boolean(process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL);
 const appTitle = isCloudConfigured ? "Choc-collab" : "Choc-collab — local only";
@@ -49,7 +48,12 @@ export default function RootLayout({
         />
       </head>
       <body className="bg-background text-foreground font-sans antialiased">
-        <ErrorBoundary>{children}</ErrorBoundary>
+        <ErrorBoundary>
+          {/* Suspense boundary is required for static export: any client component
+              using `useSearchParams()` otherwise triggers a CSR bailout and the
+              build fails. Fallback is null — the real render happens client-side. */}
+          <Suspense fallback={null}>{children}</Suspense>
+        </ErrorBoundary>
         <GlobalErrorHandler />
         <ServiceWorkerRegister />
       </body>

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    { "source": "/lab/:path*", "destination": "/", "permanent": false },
+    { "source": "/lab", "destination": "/", "permanent": false },
+    { "source": "/calculator/:path*", "destination": "/", "permanent": false },
+    { "source": "/calculator", "destination": "/", "permanent": false }
+  ],
+  "rewrites": [
+    { "source": "/production/:id/products", "destination": "/production/_spa/products" },
+    { "source": "/production/:id/summary", "destination": "/production/_spa/summary" },
+    { "source": "/production/:id", "destination": "/production/_spa" },
+    { "source": "/fillings/categories/:id", "destination": "/fillings/categories/_spa" },
+    { "source": "/ingredients/categories/:id", "destination": "/ingredients/categories/_spa" },
+    { "source": "/pantry/decoration/categories/:id", "destination": "/pantry/decoration/categories/_spa" },
+    { "source": "/pantry/decoration/designs/:id", "destination": "/pantry/decoration/designs/_spa" },
+    { "source": "/products/categories/:id", "destination": "/products/categories/_spa" },
+    { "source": "/collections/:id", "destination": "/collections/_spa" },
+    { "source": "/fillings/:id", "destination": "/fillings/_spa" },
+    { "source": "/ingredients/:id", "destination": "/ingredients/_spa" },
+    { "source": "/moulds/:id", "destination": "/moulds/_spa" },
+    { "source": "/packaging/:id", "destination": "/packaging/_spa" },
+    { "source": "/pantry/decoration/:id", "destination": "/pantry/decoration/_spa" },
+    { "source": "/products/:id", "destination": "/products/_spa" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.dexie.cloud wss://*.dexie.cloud; worker-src 'self'; frame-ancestors 'none'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "geolocation=(), microphone=(), camera=()" }
+      ]
+    }
+  ]
+}
