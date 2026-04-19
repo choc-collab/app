@@ -104,7 +104,7 @@ test.describe("Unsaved changes — Fillings", () => {
 
     // Should have navigated without a dialog
     expect(dialogSeen).toBe(false);
-    await expect(page).toHaveURL("/fillings");
+    await expect(page).toHaveURL("/fillings/");
   });
 
   test("allows leaving when user confirms discard", async ({ page }) => {
@@ -117,7 +117,7 @@ test.describe("Unsaved changes — Fillings", () => {
     await expectGuardAndLeave(page);
     await page.getByRole("button", { name: "Back", exact: true }).click();
 
-    await expect(page).toHaveURL("/fillings");
+    await expect(page).toHaveURL("/fillings/");
   });
 
   test("warns when clicking side nav with unsaved changes", async ({ page }) => {

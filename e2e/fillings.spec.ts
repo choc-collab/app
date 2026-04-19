@@ -80,7 +80,7 @@ test.describe("Fillings", () => {
     await page.getByRole("button", { name: /Delete filling/i }).click();
     await page.getByRole("button", { name: /Yes, delete filling/i }).click();
 
-    await expect(page).toHaveURL("/fillings");
+    await expect(page).toHaveURL("/fillings/");
     await expect(page.getByText("Delete Me")).not.toBeVisible();
   });
 });

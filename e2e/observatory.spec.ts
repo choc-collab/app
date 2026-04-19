@@ -9,29 +9,29 @@ test.describe("Observatory", () => {
   test("shows links to Pricing & Margins, Production Stats, and Product Cost", async ({ page }) => {
     await page.goto("/observatory");
     // Use href selectors to target the main content cards, not the sidenav
-    await expect(page.locator('a[href="/pricing"]').last()).toBeVisible();
-    await expect(page.locator('a[href="/stats"]').last()).toBeVisible();
-    await expect(page.locator('a[href="/observatory/product-cost"]').last()).toBeVisible();
+    await expect(page.locator('a[href="/pricing/"]').last()).toBeVisible();
+    await expect(page.locator('a[href="/stats/"]').last()).toBeVisible();
+    await expect(page.locator('a[href="/observatory/product-cost/"]').last()).toBeVisible();
   });
 
   test("navigates to Pricing & Margins", async ({ page }) => {
     await page.goto("/observatory");
-    await page.locator('a[href="/pricing"]').last().click();
-    await expect(page).toHaveURL("/pricing");
+    await page.locator('a[href="/pricing/"]').last().click();
+    await expect(page).toHaveURL("/pricing/");
     await expect(page.getByRole("heading", { name: /Pricing/i })).toBeVisible();
   });
 
   test("navigates to Production Stats", async ({ page }) => {
     await page.goto("/observatory");
-    await page.locator('a[href="/stats"]').last().click();
-    await expect(page).toHaveURL("/stats");
+    await page.locator('a[href="/stats/"]').last().click();
+    await expect(page).toHaveURL("/stats/");
     await expect(page.getByRole("heading", { name: /Stats/i })).toBeVisible();
   });
 
   test("navigates to Product Cost", async ({ page }) => {
     await page.goto("/observatory");
-    await page.locator('a[href="/observatory/product-cost"]').last().click();
-    await expect(page).toHaveURL("/observatory/product-cost");
+    await page.locator('a[href="/observatory/product-cost/"]').last().click();
+    await expect(page).toHaveURL("/observatory/product-cost/");
   });
 });
 

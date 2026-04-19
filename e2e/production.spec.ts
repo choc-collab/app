@@ -16,7 +16,7 @@ test.describe("Production", () => {
   test("navigates to new plan wizard", async ({ page }) => {
     await page.goto("/production");
     await page.getByRole("link", { name: "New plan" }).click();
-    await expect(page).toHaveURL("/production/new");
+    await expect(page).toHaveURL("/production/new/");
   });
 
   test("new plan wizard shows product selection step", async ({ page }) => {

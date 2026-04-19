@@ -107,7 +107,7 @@ test.describe("Products", () => {
     await page.getByRole("button", { name: /Delete product/i }).click();
     await page.getByRole("button", { name: /Yes, delete product/i }).click();
 
-    await expect(page).toHaveURL("/products");
+    await expect(page).toHaveURL("/products/");
     await expect(page.getByText("To Delete")).not.toBeVisible();
   });
 });

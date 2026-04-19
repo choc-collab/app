@@ -107,6 +107,6 @@ test.describe("Fillings — Categories CRUD", () => {
     await page.getByRole("button", { name: /Delete category/i }).click();
     await page.getByRole("button", { name: "Yes, delete" }).click();
 
-    await expect(page).toHaveURL(/\/fillings(\?tab=categories)?$/);
+    await expect(page).toHaveURL(/\/fillings\/?(\?tab=categories)?$/);
   });
 });

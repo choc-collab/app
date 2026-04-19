@@ -12,7 +12,7 @@ test.describe("Navigation", () => {
   test("navigates to Pantry section", async ({ page }) => {
     await page.goto("/app");
     await page.getByRole("link", { name: /The Pantry/i }).click();
-    await expect(page).toHaveURL("/pantry");
+    await expect(page).toHaveURL("/pantry/");
   });
 
   test("landing page shows welcome tiles", async ({ page }) => {
@@ -81,6 +81,6 @@ test.describe("Navigation", () => {
   test("side nav Home link returns to app home", async ({ page }) => {
     await page.goto("/products");
     await page.getByRole("link", { name: /Home/i }).click();
-    await expect(page).toHaveURL("/app");
+    await expect(page).toHaveURL("/app/");
   });
 });
