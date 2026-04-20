@@ -61,37 +61,93 @@
   vertical-align: 4px;
   letter-spacing: 0.04em;
 }
-.docs .section h3 {
-  font-size: 16px;
-  font-weight: 500;
-  margin: 18px 0 6px;
+.docs .section h3,
+.docs .hub-modal-inner h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 22px 0 8px;
   letter-spacing: -0.01em;
+  color: var(--color-foreground);
+  line-height: 1.3;
 }
 .docs .section p,
-.docs .section li {
+.docs .section li,
+.docs .hub-modal-inner p,
+.docs .hub-modal-inner li {
   font-size: 15px;
   line-height: 1.62;
   color: var(--color-foreground);
 }
-.docs .section p {
+.docs .section p,
+.docs .hub-modal-inner p {
   margin: 8px 0 12px;
 }
-.docs .section .sub {
+.docs .section .sub,
+.docs .hub-modal-inner .sub {
   color: var(--color-muted-foreground);
   margin-bottom: 18px;
   font-size: 15px;
 }
 .docs .section ul,
-.docs .section ol {
+.docs .section ol,
+.docs .hub-modal-inner ul,
+.docs .hub-modal-inner ol {
   padding-left: 20px;
   margin: 8px 0 16px;
 }
-.docs .section code {
+.docs .section ul,
+.docs .hub-modal-inner ul {
+  list-style: disc;
+}
+.docs .section ol,
+.docs .hub-modal-inner ol {
+  list-style: decimal;
+}
+.docs .section code,
+.docs .hub-modal-inner code {
   font-family: var(--font-mono);
   font-size: 0.88em;
   background: var(--color-muted);
   padding: 1px 5px;
   border-radius: 4px;
+}
+
+/* Links in body copy — clearly distinguishable from text.
+   Scoped to content areas so we don't restyle the card buttons or hub nav. */
+.docs .section a,
+.docs .callout a,
+.docs details a,
+.docs .hub-modal-inner a {
+  color: var(--accent-blue-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  font-weight: 500;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+.docs .section a:hover,
+.docs .callout a:hover,
+.docs details a:hover,
+.docs .hub-modal-inner a:hover {
+  color: var(--accent-cocoa-ink);
+  text-decoration-thickness: 2px;
+}
+.docs .section a:focus-visible,
+.docs .callout a:focus-visible,
+.docs details a:focus-visible,
+.docs .hub-modal-inner a:focus-visible {
+  outline: 2px solid var(--accent-blue-ink);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* Links inside callouts: use the callout's own ink colour for contrast on the tinted background, keep the underline. */
+.docs .callout a {
+  color: inherit;
+  text-decoration-color: currentColor;
+}
+.docs .callout a:hover {
+  color: inherit;
+  opacity: 0.75;
 }
 .docs .section .divider {
   height: 1px;
@@ -215,7 +271,7 @@
 .docs .callout.tip  { background: var(--accent-sage-bg);  color: var(--accent-sage-ink); }
 .docs .callout.note { background: var(--accent-cocoa-bg); color: var(--accent-cocoa-ink); }
 .docs .callout.warn { background: var(--color-status-warn-bg); color: var(--color-status-warn); }
-.docs .callout strong {
+.docs .callout > strong {
   display: block;
   font-size: 12px;
   text-transform: uppercase;

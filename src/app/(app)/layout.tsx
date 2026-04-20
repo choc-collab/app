@@ -5,6 +5,7 @@ import { DemoModeOverlay } from "@/components/demo-mode-overlay";
 import { AuthGate } from "@/components/auth-gate";
 import { IosInstallBanner } from "@/components/ios-install-banner";
 import { SectionAccent } from "@/components/section-accent";
+import { PersistentStorageRequest } from "@/components/persistent-storage-request";
 
 export default function AppLayout({
   children,
@@ -32,6 +33,7 @@ export default function AppLayout({
       </AuthGate>
       <SeedLoader />
       <DemoModeOverlay />
+      <PersistentStorageRequest />
     </>
   );
 }

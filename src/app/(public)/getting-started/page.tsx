@@ -1316,8 +1316,67 @@ jobs:
             <a href="https://github.com/choc-collab/app/issues" target="_blank" rel="noreferrer">
               Open an issue on the repo
             </a>
-            , or email me at <code>choccollab@proton.me</code>. I read every message. Be specific —
-            screenshots help.
+            , or email me at <code>choccollab@proton.me</code>. I read every message. Be
+            specific — screenshots help.
+          </p>
+          <p>
+            A note on feature requests: I build Choc-collab in my spare time, and I can&apos;t
+            promise to implement everything that gets suggested. I&apos;ll read every request and
+            think about it, but whether it ships comes down to whether it fits the direction of
+            the app, whether I&apos;d use it myself, and whether I have the time. Expect a
+            &ldquo;not right now&rdquo; or &ldquo;probably never&rdquo; on plenty of things —
+            it&apos;s not personal.
+          </p>
+          <p>
+            The best way to get a feature you want is to open a pull request, or to fork the
+            app and build it yourself — it&apos;s open source for exactly that reason. Bugs are
+            a different story: I prioritise those and try to fix anything that corrupts data or
+            blocks core workflows.
+          </p>
+        </details>
+        <details>
+          <summary>
+            <span>What should I <em>not</em> expect from a free app?</span>
+          </summary>
+          <p>
+            Choc-collab is a free, open-source, one-person project. That shapes what you can
+            reasonably expect from it — and what you can&apos;t. Nothing here is a secret; I
+            want to be upfront so you can decide if it&apos;s right for you.
+          </p>
+          <ul>
+            <li>
+              <strong>No warranty, no support contract.</strong> The MIT license ships
+              &ldquo;AS IS&rdquo; — if the app loses data, miscalculates a cost, or breaks on
+              a browser update, there&apos;s no one you can invoice. I fix bugs when I find
+              time, not on a schedule.
+            </li>
+            <li>
+              <strong>Backups are your responsibility.</strong> The app offers exports and
+              auto-snapshots (see section 14), but I can&apos;t recover data for you. If your
+              iPad dies and you never exported, the data is gone. Treat a weekly backup like
+              closing the till.
+            </li>
+            <li>
+              <strong>Allergens and nutrition are calculation aids, not certified labels.</strong>
+              {" "}The arithmetic is mine; the legal liability for what goes on a sellable
+              product is yours. Always cross-check against supplier specs before printing
+              anything a customer will read. (This is true of paid apps too — but worth saying
+              plainly.)
+            </li>
+            <li>
+              <strong>No uptime SLA on hosted versions.</strong> If you self-host on Vercel,
+              availability is Vercel&apos;s problem and your problem, not mine. If I run a
+              public hosted version in future, it&apos;ll be best-effort — no 99.9% promise.
+            </li>
+            <li>
+              <strong>Features and fixes move at hobby pace.</strong> See the feature-request
+              answer above. This isn&apos;t a product team; it&apos;s me between batches.
+            </li>
+          </ul>
+          <p>
+            None of this is unusual for open-source software. I&apos;m saying it plainly here
+            because running it in a commercial kitchen raises the stakes, and I&apos;d rather
+            you go in clear-eyed.
           </p>
         </details>
       </>
