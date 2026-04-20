@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useProductCategory,
@@ -21,10 +21,10 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function ProductCategoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const categoryId = decodeURIComponent(idStr);
+export default function ProductCategoryDetailPage() {
+  const categoryId = useSpaId("categories");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -51,7 +51,7 @@ export default function ProductCategoryDetailPage({ params }: { params: Promise<
   );
   const isDirty = (isNew && !savedOnce) || formDirty;
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) {
+    if (isNew && categoryId) {
       try { await deleteProductCategory(categoryId); } catch { /* in-use guard may prevent delete — fine, leave it */ }
     }
   }, [isNew, categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -85,7 +85,7 @@ export default function ProductCategoryDetailPage({ params }: { params: Promise<
     syncForm(category);
     setEditing(false);
     setErrors([]);
-    if (isNew) router.replace(`/products/categories/${encodeURIComponent(categoryId)}`);
+    if (isNew && categoryId) router.replace(`/products/categories/${encodeURIComponent(categoryId)}`);
   }
 
   // Initialise the form when entering edit mode (covers ?new=1 path).
@@ -118,10 +118,11 @@ export default function ProductCategoryDetailPage({ params }: { params: Promise<
     setSavedOnce(true);
     setEditing(false);
     setErrors([]);
-    if (isNew) router.replace(`/products/categories/${encodeURIComponent(categoryId)}`);
+    if (isNew && categoryId) router.replace(`/products/categories/${encodeURIComponent(categoryId)}`);
   }
 
   async function handleHardDelete() {
+    if (!categoryId) return;
     try {
       await deleteProductCategory(categoryId);
       router.replace("/products?tab=categories");
@@ -133,12 +134,13 @@ export default function ProductCategoryDetailPage({ params }: { params: Promise<
   }
 
   async function handleArchive() {
+    if (!categoryId) return;
     await archiveProductCategory(categoryId);
     setConfirmDelete(false);
     router.replace("/products?tab=categories");
   }
 
-  if (!category) {
+  if (!categoryId || !category) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

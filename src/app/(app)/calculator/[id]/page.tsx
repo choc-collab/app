@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useExperiment,
@@ -20,6 +20,7 @@ import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType } fro
 import type { Ingredient } from "@/types";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 import { ChevronLeft, Trash2, Plus, AlertTriangle, CheckCircle, GripVertical, Info, PlayCircle } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -261,9 +262,8 @@ function AddIngredientForm({
 }
 
 // --- Main page ---
-export default function ExperimentPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const id = decodeURIComponent(idStr);
+export default function ExperimentPage() {
+  const id = useSpaId("calculator");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -277,7 +277,7 @@ export default function ExperimentPage({ params }: { params: Promise<{ id: strin
   // Clone source filling ingredients on first load when ?clone= is present
   const [cloned, setCloned] = useState(false);
   useEffect(() => {
-    if (!cloneFillingId || cloned || sourceFillingIngredients.length === 0) return;
+    if (!id || !cloneFillingId || cloned || sourceFillingIngredients.length === 0) return;
     setCloned(true);
     Promise.all(
       sourceFillingIngredients.map((li, idx) =>
@@ -299,7 +299,7 @@ export default function ExperimentPage({ params }: { params: Promise<{ id: strin
 
   // Navigation guard — delete incomplete record if user leaves ?new=1 without saving
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) await deleteExperiment(id);
+    if (isNew && id) await deleteExperiment(id);
   }, [isNew, id]); // eslint-disable-line react-hooks/exhaustive-deps
   useNavigationGuard(isNew, isNew ? handleConfirmLeave : undefined);
 
@@ -333,6 +333,7 @@ export default function ExperimentPage({ params }: { params: Promise<{ id: strin
   }
 
   async function handleAddIngredient(ingredientId: string, amount: number) {
+    if (!id) return;
     const maxSort = experimentIngredients.reduce((m, ei) => Math.max(m, ei.sortOrder ?? 0), -1);
     await saveExperimentIngredient({ experimentId: id, ingredientId, amount, sortOrder: maxSort + 1 });
   }
@@ -359,6 +360,7 @@ export default function ExperimentPage({ params }: { params: Promise<{ id: strin
   }
 
   async function handleDelete() {
+    if (!id) return;
     await deleteExperiment(id);
     router.replace("/calculator");
   }
@@ -429,11 +431,12 @@ export default function ExperimentPage({ params }: { params: Promise<{ id: strin
   const totalWeight = balance?.totalWeight ?? 0;
 
   async function handleNewVersion() {
+    if (!id) return;
     const newId = await forkExperimentVersion(id);
     router.push(`/calculator/${encodeURIComponent(newId)}?new=1`);
   }
 
-  if (!experiment) {
+  if (!id || !experiment) {
     return <div className="px-4 pt-6 text-sm text-muted-foreground">Loading…</div>;
   }
 

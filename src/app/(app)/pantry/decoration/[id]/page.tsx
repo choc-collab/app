@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useDecorationMaterial,
@@ -25,10 +25,10 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function DecorationMaterialPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const materialId = decodeURIComponent(idStr);
+export default function DecorationMaterialPage() {
+  const materialId = useSpaId("decoration");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -66,7 +66,7 @@ export default function DecorationMaterialPage({ params }: { params: Promise<{ i
   );
   const isDirty = (isNew && !savedOnce) || formDirty;
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) await deleteDecorationMaterial(materialId);
+    if (isNew && materialId) await deleteDecorationMaterial(materialId);
   }, [isNew, materialId]); // eslint-disable-line react-hooks/exhaustive-deps
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
@@ -99,7 +99,7 @@ export default function DecorationMaterialPage({ params }: { params: Promise<{ i
   function handleCancel() {
     syncForm(material!);
     setEditing(false);
-    if (isNew) router.replace(`/pantry/decoration/${encodeURIComponent(materialId)}`);
+    if (isNew && materialId) router.replace(`/pantry/decoration/${encodeURIComponent(materialId)}`);
   }
 
   async function handleSave(e: React.FormEvent<HTMLFormElement>) {
@@ -118,15 +118,16 @@ export default function DecorationMaterialPage({ params }: { params: Promise<{ i
     });
     setSavedOnce(true);
     setEditing(false);
-    if (isNew) router.replace(`/pantry/decoration/${encodeURIComponent(materialId)}`);
+    if (isNew && materialId) router.replace(`/pantry/decoration/${encodeURIComponent(materialId)}`);
   }
 
   async function handleDelete() {
+    if (!materialId) return;
     await deleteDecorationMaterial(materialId);
     router.replace("/pantry/decoration");
   }
 
-  if (!material) {
+  if (!materialId || !material) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

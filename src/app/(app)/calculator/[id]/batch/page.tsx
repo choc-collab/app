@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useExperiment,
@@ -18,10 +18,10 @@ import {
 import { FILL_FACTOR } from "@/lib/production";
 import { ChevronLeft, CheckCircle } from "lucide-react";
 import { LowStockFlagButton } from "@/components/pantry";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function BatchPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const id = decodeURIComponent(idStr);
+export default function BatchPage() {
+  const id = useSpaId("calculator");
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -107,11 +107,12 @@ export default function BatchPage({ params }: { params: Promise<{ id: string }> 
   }
 
   async function handleNewVersion() {
+    if (!id) return;
     const newId = await forkExperimentVersion(id);
     router.push(`/calculator/${encodeURIComponent(newId)}?new=1`);
   }
 
-  if (!experiment || !mould) {
+  if (!id || !experiment || !mould) {
     return <div className="px-4 pt-6 text-sm text-muted-foreground">Loading…</div>;
   }
 

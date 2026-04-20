@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useProductionPlan, usePlanProducts, usePlanStepStatuses,
   useProductsList, useProductFillingsForProducts, useFillings, useFillingIngredientsForFillings,
@@ -19,6 +19,7 @@ import type { LeftoverEntry } from "@/components/leftover-modal";
 import { LowStockFlagButton } from "@/components/pantry";
 import { printLabels } from "@/lib/printer";
 import type { LabelData } from "@/lib/printer";
+import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
 
 const PHASES = [
@@ -32,9 +33,8 @@ const PHASES = [
 
 type PhaseId = typeof PHASES[number]["id"];
 
-export default function ProductionPlanPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const planId = decodeURIComponent(idStr);
+export default function ProductionPlanPage() {
+  const planId = useSpaId("production");
 
   const plan = useProductionPlan(planId);
   const planProducts = usePlanProducts(planId);
@@ -62,7 +62,7 @@ export default function ProductionPlanPage({ params }: { params: Promise<{ id: s
     return map;
   }, [stepStatuses]);
 
-  if (!plan) {
+  if (!planId || !plan) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

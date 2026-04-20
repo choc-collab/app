@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, use, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMould, useMoulds, saveMould, deleteMould, archiveMould, unarchiveMould, isMouldInUse, useMouldUsage } from "@/lib/hooks";
 import { UsedInPanel } from "@/components/pantry";
@@ -8,10 +8,10 @@ import { ArrowLeft, Camera, Pencil, Trash2, Archive, ArchiveRestore } from "luci
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { FILL_FACTOR } from "@/lib/production";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function MouldDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const mouldId = decodeURIComponent(idStr);
+export default function MouldDetailPage() {
+  const mouldId = useSpaId("moulds");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -91,12 +91,12 @@ export default function MouldDetailPage({ params }: { params: Promise<{ id: stri
   const isDirty = (isNew && !savedOnce) || formDirty;
 
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) await deleteMould(mouldId);
+    if (isNew && mouldId) await deleteMould(mouldId);
   }, [isNew, mouldId]);
 
   const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
-  if (!mould) {
+  if (!mouldId || !mould) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>
@@ -112,12 +112,12 @@ export default function MouldDetailPage({ params }: { params: Promise<{ id: stri
   function handleCancel() {
     syncForm(mould!);
     setEditing(false);
-    if (isNew) router.replace(`/moulds/${encodeURIComponent(mouldId)}`);
+    if (isNew && mouldId) router.replace(`/moulds/${encodeURIComponent(mouldId)}`);
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (wt <= 0 || cav <= 0) return;
+    if (!mouldId || wt <= 0 || cav <= 0) return;
     const fillG = parseFloat(fillingGramsPerCavity);
     const qtyOwned = parseInt(quantityOwned);
     await saveMould({
@@ -134,7 +134,7 @@ export default function MouldDetailPage({ params }: { params: Promise<{ id: stri
     });
     setSavedOnce(true);
     setEditing(false);
-    if (isNew) router.replace(`/moulds/${encodeURIComponent(mouldId)}`);
+    if (isNew && mouldId) router.replace(`/moulds/${encodeURIComponent(mouldId)}`);
   }
 
   function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {

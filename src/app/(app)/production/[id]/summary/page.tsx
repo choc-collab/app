@@ -1,24 +1,25 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useProductionPlan } from "@/lib/hooks";
+import { useSpaId } from "@/lib/use-spa-id";
 import { ArrowLeft, Copy, Check } from "lucide-react";
 import Link from "next/link";
 
-export default function BatchSummaryPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const planId = decodeURIComponent(idStr);
+export default function BatchSummaryPage() {
+  const planId = useSpaId("production");
   const plan = useProductionPlan(planId);
   const [copied, setCopied] = useState(false);
-  const [backHref, setBackHref] = useState(`/production/${planId}`);
+  const [backHref, setBackHref] = useState("/production");
   const [backLabel, setBackLabel] = useState("Back to batch");
   useEffect(() => {
     const from = new URLSearchParams(window.location.search).get("from");
     if (from === "/production") { setBackHref(from); setBackLabel("Production"); }
     else if (from) { setBackHref(from); setBackLabel("Back to product"); }
-  }, []);
+    else if (planId) { setBackHref(`/production/${planId}`); }
+  }, [planId]);
 
-  if (!plan) {
+  if (!planId || !plan) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground text-sm">Loading…</p>

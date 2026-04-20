@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, use, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 import { useIngredient, useIngredients, useIngredientUsage, saveIngredient, deleteIngredient, archiveIngredient, unarchiveIngredient, checkIngredientBeforeDelete, useIngredientPriceHistory, deleteIngredientPriceHistoryEntry, setIngredientLowStock, setIngredientOutOfStock, markIngredientOrdered, useCurrencySymbol, useCurrentCoatingMappings } from "@/lib/hooks";
 import type { IngredientDeleteCheck } from "@/lib/hooks";
 import { IngredientForm } from "@/components/ingredient-form";
@@ -16,9 +17,8 @@ import { useMarketRegion } from "@/lib/hooks";
 import Link from "next/link";
 
 
-export default function IngredientDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const ingredientId = decodeURIComponent(idStr);
+export default function IngredientDetailPage() {
+  const ingredientId = useSpaId("ingredients");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -63,7 +63,7 @@ export default function IngredientDetailPage({ params }: { params: Promise<{ id:
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [confirmDelete, editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!ingredient) {
+  if (!ingredientId || !ingredient) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>
@@ -75,13 +75,13 @@ export default function IngredientDetailPage({ params }: { params: Promise<{ id:
     setSavedOnce(true);
     setEditing(false);
     setFormDirty(false);
-    if (isNew) router.replace(`/ingredients/${encodeURIComponent(ingredientId)}`);
+    if (isNew && ingredientId) router.replace(`/ingredients/${encodeURIComponent(ingredientId)}`);
   }
 
   function handleCancel() {
     setEditing(false);
     setFormDirty(false);
-    if (isNew) router.replace(`/ingredients/${encodeURIComponent(ingredientId)}`);
+    if (isNew && ingredientId) router.replace(`/ingredients/${encodeURIComponent(ingredientId)}`);
   }
 
   const tags = ingredient.allergens.filter(Boolean);
