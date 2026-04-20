@@ -7,37 +7,58 @@
 
 # SPA rewrites for dynamic routes: user-generated IDs don't exist at build time,
 # so we generate a `_spa` placeholder HTML per route and rewrite any real ID to it.
-# The placeholder hydrates client-side, `useParams()` reads the actual ID from the URL.
+# The placeholder hydrates client-side and `useSpaId` reads the actual ID from
+# `window.location.pathname`.
 #
-# Patterns omit the trailing slash so they match both `/fillings/xyz` (shared or
-# reloaded URLs — Next.js Link navigation doesn't normalize dynamic hrefs) and
-# `/fillings/xyz/`. Static files (e.g. `/fillings/index.html`) are served before
-# _redirects is consulted, so the list pages keep working.
+# Each route has TWO patterns:
+#   - `/fillings/*/` (trailing slash, `*` glob) — matches `/fillings/xyz/` and
+#     requires at least a slash after `*`, so it cannot match `/fillings/` itself.
+#   - `/fillings/:id`  (no trailing slash, named placeholder) — matches
+#     `/fillings/xyz`. `:id` must be non-empty, so it cannot match `/fillings`.
+# Using a single `*` without the trailing slash (e.g. `/fillings/*`) is a trap:
+# the `*` glob matches empty, swallowing the list URL into the detail placeholder.
 #
 # NOTE ordering: nested child routes (`/production/*/products`) must come BEFORE
-# the parent (`/production/*`) or the parent glob swallows them.
+# the parent (`/production/*`) or the parent swallows them.
 
 # Production batch pages (nested children first)
-/production/*/products   /production/_spa/products/   200
-/production/*/summary    /production/_spa/summary/    200
-/production/*            /production/_spa/            200
+/production/*/products/   /production/_spa/products/   200
+/production/:id/products  /production/_spa/products/   200
+/production/*/summary/    /production/_spa/summary/    200
+/production/:id/summary   /production/_spa/summary/    200
+/production/*/            /production/_spa/            200
+/production/:id           /production/_spa/            200
 
 # Calculator nested routes (blocked above, but include for completeness)
-/calculator/*/batch      /calculator/_spa/batch/      200
-/calculator/*/run        /calculator/_spa/run/        200
+/calculator/*/batch/      /calculator/_spa/batch/      200
+/calculator/:id/batch     /calculator/_spa/batch/      200
+/calculator/*/run/        /calculator/_spa/run/        200
+/calculator/:id/run       /calculator/_spa/run/        200
 
 # Nested category / design detail pages
-/fillings/categories/*           /fillings/categories/_spa/           200
-/ingredients/categories/*        /ingredients/categories/_spa/        200
-/pantry/decoration/categories/*  /pantry/decoration/categories/_spa/  200
-/pantry/decoration/designs/*     /pantry/decoration/designs/_spa/     200
-/products/categories/*           /products/categories/_spa/           200
+/fillings/categories/*/           /fillings/categories/_spa/           200
+/fillings/categories/:id          /fillings/categories/_spa/           200
+/ingredients/categories/*/        /ingredients/categories/_spa/        200
+/ingredients/categories/:id       /ingredients/categories/_spa/        200
+/pantry/decoration/categories/*/  /pantry/decoration/categories/_spa/  200
+/pantry/decoration/categories/:id /pantry/decoration/categories/_spa/  200
+/pantry/decoration/designs/*/     /pantry/decoration/designs/_spa/     200
+/pantry/decoration/designs/:id    /pantry/decoration/designs/_spa/     200
+/products/categories/*/           /products/categories/_spa/           200
+/products/categories/:id          /products/categories/_spa/           200
 
 # Top-level detail pages
-/collections/*             /collections/_spa/             200
-/fillings/*                /fillings/_spa/                200
-/ingredients/*             /ingredients/_spa/             200
-/moulds/*                  /moulds/_spa/                  200
-/packaging/*               /packaging/_spa/               200
-/pantry/decoration/*       /pantry/decoration/_spa/       200
-/products/*                /products/_spa/                200
+/collections/*/             /collections/_spa/             200
+/collections/:id            /collections/_spa/             200
+/fillings/*/                /fillings/_spa/                200
+/fillings/:id               /fillings/_spa/                200
+/ingredients/*/             /ingredients/_spa/             200
+/ingredients/:id            /ingredients/_spa/             200
+/moulds/*/                  /moulds/_spa/                  200
+/moulds/:id                 /moulds/_spa/                  200
+/packaging/*/               /packaging/_spa/               200
+/packaging/:id              /packaging/_spa/               200
+/pantry/decoration/*/       /pantry/decoration/_spa/       200
+/pantry/decoration/:id      /pantry/decoration/_spa/       200
+/products/*/                /products/_spa/                200
+/products/:id               /products/_spa/                200

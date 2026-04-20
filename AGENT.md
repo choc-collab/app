@@ -32,9 +32,7 @@ Keep these in mind for every new feature:
 ---
 
 ## Routing & URL Encoding
-Dexie Cloud generates entity IDs containing a `|` pipe character (e.g. `ing0PpjyEqXloLHYjgzZ|nVN7qMzed`). Next.js App Router does **not** apply `decodeURIComponent` to dynamic path params, so a `|` encoded as `%7C` in a URL will arrive still-encoded — causing `db.<table>.get(id)` to silently return `undefined`.
-
-**Two rules that must always both hold:**
+Dexie Cloud generates entity IDs containing a `|` pipe character (e.g. `ing0PpjyEqXloLHYjgzZ|nVN7qMzed`). The id also has to survive a static-export + Cloudflare rewrite round-trip. Three rules must hold for every `[id]` route:
 
 1. **Links and `router.push` calls must use `encodeURIComponent(id)`** when embedding an entity ID in a path segment:
    ```tsx
@@ -42,13 +40,22 @@ Dexie Cloud generates entity IDs containing a `|` pipe character (e.g. `ing0Ppjy
    router.push(`/ingredients/${encodeURIComponent(id)}?new=1`);
    ```
 
-2. **Every `[id]` detail page must decode the param before using it:**
+2. **Every `[id]` detail page must read the id via `useSpaId(...)`, never `use(params)`:**
    ```tsx
-   const { id: idStr } = use(params);
-   const ingredientId = decodeURIComponent(idStr);
-   ```
+   import { useSpaId } from "@/lib/use-spa-id";
 
-When adding a new `[id]` route, apply both rules immediately. Never pass `idStr` directly to a DB lookup or hook.
+   export default function IngredientDetailPage() {
+     const ingredientId = useSpaId("ingredients"); // the segment directly before [id]
+     const ingredient = useIngredient(ingredientId);
+     if (!ingredientId || !ingredient) return <Loading />;
+     // …
+   }
+   ```
+   Why: `output: "export"` builds every `[id]` route with a `_spa` placeholder param, and `public/_redirects` + `vercel.json` rewrite any real id to that placeholder HTML on fresh loads (reload / share / direct link). The RSC payload baked into the served HTML therefore has `params.id = "_spa"` — `use(params)` returns the placeholder forever and the page sits on "Loading". `useSpaId` reads the real id from `window.location.pathname` after mount. See `src/lib/use-spa-id.ts` and the fresh-load Playwright test at `e2e/fresh-load.spec.ts`.
+
+3. **When you add a new `[id]` route, also add the rewrite rule in both hosts' configs.** `public/_redirects` for Cloudflare (nested routes before parents — see the comment in that file) and `vercel.json` for Vercel. Each route needs **two** Cloudflare patterns: `/fillings/*/` (trailing slash, `*` glob — catches `/fillings/xyz/`) and `/fillings/:id` (no trailing slash, named placeholder — catches `/fillings/xyz`). A single `/fillings/*` is a trap: the `*` glob matches empty, so it swallows the list URL `/fillings/` into the detail placeholder.
+
+Never pass a raw route segment directly to a DB lookup or hook.
 
 ---
 
@@ -822,6 +829,7 @@ Playwright, Chromium. Run with `npm run test:e2e`. Config: `playwright.config.ts
 | `e2e/product-categories.spec.ts` | Default seed (moulded + bar) appears on fresh DB; range badges visible; create/edit/delete; range validation rejects out-of-range default; pantry home card link |
 | `e2e/decoration.spec.ts` | 3 tabs visible; Materials tab CRUD; Categories tab: seeded data, create, cancel, delete; Designs tab: seeded data, create with applyAt, cancel, delete, production step display |
 | `e2e/csv-import.spec.ts` | Import tab visible; template download; valid CSV preview + import; validation errors shown; duplicate detection; empty CSV error |
+| `e2e/fresh-load.spec.ts` | Detail pages (fillings, products, ingredients) resolve the real id from `window.location.pathname` when served from the `_spa` placeholder — catches any regression to `use(params)` that would strand the page on "Loading" after a reload / share / direct URL load. Uses `page.route()` to simulate the Cloudflare rewrite in dev mode. |
 
 When adding a new page or flow, add E2E coverage in the appropriate spec file (or create a new one). See the E2E test patterns section above for timing/loading guidance.
 
@@ -842,7 +850,7 @@ captured screen's UI meaningfully changes. The iOS install screenshot in the
 Install section of the guide is not automatable — take that one by hand.
 
 ## Important Patterns
-- Pages use `use(params)` for dynamic route params (Next.js 16 async params)
+- `[id]` detail pages read the route param via `useSpaId("<parent-segment>")` (see `src/lib/use-spa-id.ts` and the Routing rules above). Never `use(params)` — the static-export + `_redirects` rewrite bakes `params.id = "_spa"` into every detail page's RSC payload.
 - State sync pattern for edit forms: check `!editing && name === ""` before syncing from DB — always use `|| ""` guards since old IndexedDB records may have `undefined` fields
 - Allergens are auto-aggregated: adding/removing a `FillingIngredient` calls `updateFillingAllergens(fillingId)`; editing an ingredient also re-aggregates all fillings that use it
 - `saveFilling` / `saveProduct` — pass the full object; upsert is handled by presence of `id`
