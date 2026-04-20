@@ -1,11 +1,89 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import { ScreenshotGallery } from "./screenshot-gallery";
 
 export const metadata: Metadata = {
   title: "Choc-collab — Make chocolate. Not spreadsheets.",
   description:
     "A local-first, open-source PWA for artisan chocolatiers. Ingredients, fillings, products, production, stock, and margins — all in one place.",
 };
+
+type Highlight = {
+  title: string;
+  body: string;
+  accent: "cocoa" | "sage" | "butter" | "mint" | "blue" | "terracotta";
+  icon: ReactNode;
+};
+
+const HIGHLIGHTS: Highlight[] = [
+  {
+    title: "One pantry, infinite reuse",
+    body:
+      "Build up ingredients, fillings, and products once. Fork a ganache and every product that used it knows about the new version.",
+    accent: "cocoa",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 3v4M16 3v4M5 11h14M5 7h14a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a1 1 0 0 1 1-1z" />
+      </svg>
+    ),
+  },
+  {
+    title: "Production wizard that scales itself",
+    body:
+      "Pick products and moulds — the app computes fill and shell weights, consolidates shared fillings, and schedules colour steps for you.",
+    accent: "terracotta",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h10M4 18h16M17 10l4 2-4 2z" />
+      </svg>
+    ),
+  },
+  {
+    title: "Stock, freezer, and leftovers",
+    body:
+      "FIFO sell-by tracking for products. Freeze items without clobbering low-stock alerts. Leftover filling from one batch is ready for the next.",
+    accent: "mint",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7l9-4 9 4-9 4zM3 7v10l9 4M21 7v10l-9 4" />
+      </svg>
+    ),
+  },
+  {
+    title: "Allergens & nutrition that cascade",
+    body:
+      "Tick allergens once at the ingredient; they flow through fillings into products. Formatted for EU, UK, US, AU, or CA labels.",
+    accent: "butter",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.3 3.9 1.8 18.2A2 2 0 0 0 3.5 21h17a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />
+      </svg>
+    ),
+  },
+  {
+    title: "The Observatory",
+    body:
+      "Margin health per box, production trends over time, and full cost breakdowns per product. See where the business is actually working.",
+    accent: "sage",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 20h16M6 20V10M10 20V6M14 20v-8M18 20V4" />
+      </svg>
+    ),
+  },
+  {
+    title: "Local-first, yours forever",
+    body:
+      "Runs offline as a PWA on iPad, phone, or desktop. No account, no server. Optional Dexie Cloud sync across devices. MIT-licensed on GitHub.",
+    accent: "blue",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M17 18a4 4 0 0 0 1-7.87A5 5 0 0 0 8.2 9.5 4 4 0 0 0 7 17.5M12 13v7m0 0-3-3m3 3 3-3" />
+      </svg>
+    ),
+  },
+];
 
 export default function LandingPage() {
   return (
@@ -149,6 +227,42 @@ export default function LandingPage() {
             View on GitHub <span className="font-mono">→</span>
           </div>
         </a>
+      </section>
+
+      <section className="pb-16">
+        <div className="mono-label text-muted-foreground mb-4">Highlights</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {HIGHLIGHTS.map((h) => (
+            <div
+              key={h.title}
+              className="bg-card border border-border rounded-lg p-5"
+            >
+              <div
+                className="inline-flex items-center justify-center w-10 h-10 rounded-md mb-3"
+                style={{
+                  background: `var(--accent-${h.accent}-bg)`,
+                  color: `var(--accent-${h.accent}-ink)`,
+                }}
+              >
+                {h.icon}
+              </div>
+              <h3
+                className="text-base font-[500] tracking-tight mb-1.5"
+                style={{ letterSpacing: "-0.01em" }}
+              >
+                {h.title}
+              </h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {h.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="pb-24">
+        <div className="mono-label text-muted-foreground mb-4">A look inside</div>
+        <ScreenshotGallery />
       </section>
     </div>
   );
