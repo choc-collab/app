@@ -8,7 +8,7 @@ import {
   useDecorationMaterials, setDecorationMaterialLowStock, useCurrentCoatingMappings,
   saveFillingStock, deductFillingStock, useShelfStableCategoryNames,
 } from "@/lib/hooks";
-import { generateSteps, calculateFillingAmounts, consolidateSharedFillings, generateBatchSummary, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
+import { generateSteps, calculateFillingAmounts, consolidateSharedFillings, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
 import type { Filling, Mould, PlanProduct, Product, DecorationMaterial } from "@/types";
 import { normalizeApplyAt } from "@/types";
 import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, StickyNote, Plus, ClipboardList, Printer } from "lucide-react";
@@ -231,17 +231,20 @@ function PlanContent({
 
   const doneCount = steps.filter((s) => statusMap.get(s.key)).length;
 
-  /** Deduct filling stock for all fillings marked as "use stock" (fillingPreviousBatches) */
+  /** Deduct filling stock for all fillings marked as "use stock" (fillingPreviousBatches).
+   *  Sums cavity volume across every mould slot so alternative-mould-setup plan products
+   *  deduct the right amount. */
   async function deductPreviousBatchStock() {
     for (const pb of planProducts) {
-      const mould = mouldsMap.get(pb.mouldId);
-      if (!mould) continue;
+      const slots = getMouldSlots(pb, mouldsMap);
+      if (slots.length === 0) continue;
+      const totalCavityVolumeML = slots.reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
       const rls = productFillingsMap.get(pb.productId) ?? [];
       for (const rl of rls) {
         const prev = fillingPreviousBatches[rl.fillingId];
         if (!prev) continue;
         const fillPct = (rl.fillPercentage ?? 100) / 100;
-        const fillWeightG = mould.cavityWeightG * mould.numberOfCavities * pb.quantity * FILL_FACTOR * DENSITY_G_PER_ML;
+        const fillWeightG = totalCavityVolumeML * FILL_FACTOR * DENSITY_G_PER_ML;
         const neededG = Math.round(fillWeightG * fillPct);
         if (neededG > 0) {
           await deductFillingStock(rl.fillingId, neededG, { includeFrozen: prev.includeFrozen });
@@ -817,17 +820,21 @@ function PlanContent({
                       const seedTempering = activePhase === "shell" && (mapping?.seedTempering ?? false);
                       let temperingPanel: React.ReactNode = null;
                       if (seedTempering) {
-                        // Sum total cavity weight (g) for all planProducts with this coating using manufacturer's cavityWeightG
+                        // Sum total cavity weight (g) for all planProducts with this coating
+                        // using manufacturer's cavityWeightG. Walks every mould slot (primary
+                        // + additionalMoulds) so alt-setup plan products are included too.
                         const mouldsMissingWeight: string[] = [];
                         const totalCavityG = planProducts.reduce((sum, pb) => {
                           if ((productsMap.get(pb.productId)?.coating ?? "chocolate") !== coating) return sum;
-                          const m = mouldsMap.get(pb.mouldId);
-                          if (!m) return sum;
-                          if (m.cavityWeightG == null) {
-                            if (!mouldsMissingWeight.includes(m.name)) mouldsMissingWeight.push(m.name);
-                            return sum;
+                          let pbTotal = 0;
+                          for (const slot of getMouldSlots(pb, mouldsMap)) {
+                            if (slot.mould.cavityWeightG == null) {
+                              if (!mouldsMissingWeight.includes(slot.mould.name)) mouldsMissingWeight.push(slot.mould.name);
+                              continue;
+                            }
+                            pbTotal += slot.cavityCount * slot.mould.cavityWeightG;
                           }
-                          return sum + pb.quantity * m.numberOfCavities * m.cavityWeightG;
+                          return sum + pbTotal;
                         }, 0);
                         if (mouldsMissingWeight.length > 0) {
                           temperingPanel = (

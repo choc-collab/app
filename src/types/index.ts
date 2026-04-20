@@ -390,12 +390,29 @@ export interface ProductionPlan {
  *  Kept as a legacy fallback (used only when the FillingCategory record is missing). */
 export const SHELF_STABLE_CATEGORIES = ["Fruit-Based (Pectins & Acids)", "Pralines & Giandujas (Nut-Based)"] as const;
 
+/** Additional mould entry for a plan product — used for the rare case where a
+ *  user pours the same product into more than one mould type, or wants to fill
+ *  only part of a mould. Populated from the "Alternative mould setup" disclosure
+ *  in the new-plan wizard; undefined/empty for the default single-mould path. */
+export interface PlanProductAdditionalMould {
+  mouldId: string;
+  /** Number of physical moulds to fill at full capacity. Ignored when `partialCavities` is set. */
+  quantity: number;
+  /** When set, fill exactly this many cavities (overrides quantity × numberOfCavities). */
+  partialCavities?: number;
+}
+
 export interface PlanProduct {
   id?: string;
   planId: string;
   productId: string;
   mouldId: string;
   quantity: number; // number of moulds used
+  /** When set, only fill this many cavities of the primary mould (overrides
+   *  quantity × numberOfCavities for cavity/volume math). Undefined = full fill. */
+  partialCavities?: number;
+  /** Extra mould types used for the same product. Summed into total cavity count. */
+  additionalMoulds?: PlanProductAdditionalMould[];
   sortOrder: number;
   notes?: string;
   stockStatus?: "low" | "gone"; // undefined = in stock

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateFillingAmounts, consolidateSharedFillings, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
+import { calculateFillingAmounts, consolidateSharedFillings, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
 import type { ColorTask, FillingAmount, ConsolidatedFilling, IngredientRef } from "./production";
 import type { PlanProduct, ProductFilling, Filling, FillingIngredient, Mould, Product, DecorationMaterial } from "@/types";
 
@@ -1172,5 +1172,252 @@ describe("computeEffectiveShelfLife", () => {
       new Date(),
     );
     expect(effectiveWeeks).toBe(0);
+  });
+});
+
+// ─── Alternative mould setup ──────────────────────────────────────────────
+
+const mouldB: Mould = { id: "2", name: "Heart 24", cavityWeightG: 8, numberOfCavities: 24 };
+
+describe("getMouldSlots", () => {
+  it("returns a single primary slot for a default plan product", () => {
+    const slots = getMouldSlots(makePlanProduct({ quantity: 2 }), new Map([["1", mould]]));
+    expect(slots).toHaveLength(1);
+    expect(slots[0].slotId).toBe("primary");
+    expect(slots[0].cavityCount).toBe(30); // 15 × 2
+    expect(slots[0].physicalMouldCount).toBe(2);
+    expect(slots[0].isPartial).toBe(false);
+    expect(slots[0].label).toBe("2× Rect 15");
+  });
+
+  it("returns a partial-cavity primary slot when partialCavities is set", () => {
+    const slots = getMouldSlots(
+      makePlanProduct({ quantity: 2, partialCavities: 8 }),
+      new Map([["1", mould]]),
+    );
+    expect(slots).toHaveLength(1);
+    expect(slots[0].cavityCount).toBe(8); // overrides quantity × numberOfCavities
+    expect(slots[0].physicalMouldCount).toBe(1); // partial uses 1 physical mould
+    expect(slots[0].isPartial).toBe(true);
+    expect(slots[0].label).toBe("8 cavities of Rect 15");
+  });
+
+  it("includes every additional mould in order", () => {
+    const slots = getMouldSlots(
+      makePlanProduct({
+        quantity: 1,
+        additionalMoulds: [
+          { mouldId: "2", quantity: 1 },
+          { mouldId: "2", quantity: 1, partialCavities: 12 },
+        ],
+      }),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    expect(slots).toHaveLength(3);
+    expect(slots.map((s) => s.slotId)).toEqual(["primary", "add-0", "add-1"]);
+    expect(slots[1].cavityCount).toBe(24); // full Heart 24
+    expect(slots[2].cavityCount).toBe(12); // partial
+    expect(slots[2].label).toBe("12 cavities of Heart 24");
+  });
+
+  it("silently drops slots whose mould is missing from the map", () => {
+    const slots = getMouldSlots(
+      makePlanProduct({ additionalMoulds: [{ mouldId: "99", quantity: 1 }] }),
+      new Map([["1", mould]]),
+    );
+    expect(slots).toHaveLength(1);
+    expect(slots[0].slotId).toBe("primary");
+  });
+});
+
+describe("getTotalCavities", () => {
+  it("sums cavities across primary and additional moulds", () => {
+    const total = getTotalCavities(
+      makePlanProduct({
+        quantity: 2,
+        additionalMoulds: [{ mouldId: "2", quantity: 1 }],
+      }),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    expect(total).toBe(30 + 24); // 15×2 + 24×1
+  });
+
+  it("respects partial cavities on both primary and additional slots", () => {
+    const total = getTotalCavities(
+      makePlanProduct({
+        quantity: 2,
+        partialCavities: 10,
+        additionalMoulds: [{ mouldId: "2", quantity: 1, partialCavities: 6 }],
+      }),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    expect(total).toBe(16);
+  });
+});
+
+describe("formatMouldList", () => {
+  it("joins slot labels with ' + '", () => {
+    const pp = makePlanProduct({
+      quantity: 2,
+      additionalMoulds: [{ mouldId: "2", quantity: 1, partialCavities: 12 }],
+    });
+    expect(formatMouldList(pp, new Map([["1", mould], ["2", mouldB]])))
+      .toBe("2× Rect 15 + 12 cavities of Heart 24");
+  });
+});
+
+describe("hasAlternativeMouldSetup", () => {
+  it("is false for the default single-full-mould path", () => {
+    expect(hasAlternativeMouldSetup(makePlanProduct())).toBe(false);
+  });
+  it("is true when partialCavities is set", () => {
+    expect(hasAlternativeMouldSetup(makePlanProduct({ partialCavities: 5 }))).toBe(true);
+  });
+  it("is true when additionalMoulds is non-empty", () => {
+    expect(hasAlternativeMouldSetup(makePlanProduct({ additionalMoulds: [{ mouldId: "2", quantity: 1 }] }))).toBe(true);
+  });
+});
+
+describe("calculateFillingAmounts with alternative mould setup", () => {
+  it("sums fill volume across primary and additional moulds", () => {
+    const baseMouldOnly = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1 })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould]]),
+    );
+
+    const withAdditional = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, additionalMoulds: [{ mouldId: "2", quantity: 1 }] })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+
+    // Adding a second mould must strictly increase the fill weight.
+    expect(withAdditional[0].weightG).toBeGreaterThan(baseMouldOnly[0].weightG);
+    // Exact check: 15×10 + 24×8 = 342 ml; × 0.63 × 1.2 ≈ 258.55g
+    const expected = Math.round((15 * 10 + 24 * 8) * FILL_FACTOR * DENSITY_G_PER_ML);
+    expect(withAdditional[0].weightG).toBe(expected);
+  });
+
+  it("uses partialCavities to scale the primary mould's fill volume", () => {
+    const result = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, partialCavities: 5 })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould]]),
+    );
+    // 5 cavities × 10g × 0.63 × 1.2 = 37.8 → 38g
+    const expected = Math.round(5 * 10 * FILL_FACTOR * DENSITY_G_PER_ML);
+    expect(result[0].weightG).toBe(expected);
+  });
+
+  it("uses total cavities across slots for grams-mode fillings", () => {
+    // Product with fillMode "grams" + explicit fillGrams per cavity → weight = fillGrams × totalCavities
+    const product: Product = {
+      id: "1", name: "Gram product", createdAt: new Date(), updatedAt: new Date(),
+      fillMode: "grams", shellPercentage: 40,
+    };
+    const result = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, additionalMoulds: [{ mouldId: "2", quantity: 1 }] })],
+      new Map([["1", "Gram product"]]),
+      new Map([["1", [makeProductFilling({ fillGrams: 5 })]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+      {},
+      {},
+      new Map([["1", product]]),
+    );
+    // 5g × (15 + 24) cavities = 195g
+    expect(result[0].weightG).toBe(195);
+  });
+});
+
+describe("generateSteps with alternative mould setup", () => {
+  const twoSlotPb = (): PlanProduct =>
+    makePlanProduct({ id: "99", productId: "1", additionalMoulds: [{ mouldId: "2", quantity: 1 }] });
+
+  it("emits one shell/fill/cap step per slot and keys them with slotId", () => {
+    const steps = generateSteps(
+      [twoSlotPb()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      [],
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+
+    const shell = steps.filter((s) => s.group === "shell");
+    const fill = steps.filter((s) => s.group === "fill");
+    const cap = steps.filter((s) => s.group === "cap");
+
+    expect(shell.map((s) => s.key)).toEqual(["shell-99-primary", "shell-99-add-0"]);
+    expect(fill.map((s) => s.key)).toEqual(["fill-99-primary", "fill-99-add-0"]);
+    expect(cap.map((s) => s.key)).toEqual(["cap-99-primary", "cap-99-add-0"]);
+    // Mould name appears in the label so the user can tell slots apart on the checklist
+    expect(shell[0].label).toContain("Rect 15");
+    expect(shell[1].label).toContain("Heart 24");
+  });
+
+  it("keeps legacy single-key format when only the primary mould is used", () => {
+    const steps = generateSteps(
+      [makePlanProduct({ id: "7" })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      [],
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould]]),
+    );
+    expect(steps.some((s) => s.key === "shell-7")).toBe(true);
+    expect(steps.some((s) => s.key.startsWith("shell-7-"))).toBe(false);
+  });
+
+  it("emits a single unmould step per plan product that aggregates all slots", () => {
+    const steps = generateSteps(
+      [twoSlotPb()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", []]]),
+      [],
+      new Map(),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    const unmould = steps.filter((s) => s.group === "unmould");
+    expect(unmould).toHaveLength(1);
+    expect(unmould[0].key).toBe("unmould-99");
+    expect(unmould[0].totalProducts).toBe(15 + 24);
+    expect(unmould[0].detail).toContain("1× Rect 15");
+    expect(unmould[0].detail).toContain("1× Heart 24");
+  });
+});
+
+describe("generateBatchSummary with alternative mould setup", () => {
+  it("lists every mould used for a product on a single line", () => {
+    const pb: PlanProduct = makePlanProduct({
+      quantity: 2,
+      additionalMoulds: [{ mouldId: "2", quantity: 1, partialCavities: 12 }],
+    });
+    const result = generateBatchSummary({
+      batchNumber: "B",
+      planName: "P",
+      completedAt: new Date("2026-04-20T12:00:00Z"),
+      planProducts: [pb],
+      productNames: new Map([["1", "Truffle"]]),
+      moulds: new Map([["1", mould], ["2", mouldB]]),
+      fillingAmounts: [],
+      ingredients: [],
+    });
+    // Single row per product, mould list is "2× Rect 15 + 12 cavities of Heart 24"
+    expect(result).toContain("Truffle");
+    expect(result).toContain("2× Rect 15 + 12 cavities of Heart 24");
+    // Total cavities = 15×2 + 12 = 42
+    expect(result).toContain("42 pcs");
   });
 });

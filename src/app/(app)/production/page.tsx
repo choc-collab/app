@@ -10,6 +10,7 @@ import { CollapseControls } from "@/components/pantry";
 import Link from "next/link";
 import { useState, useMemo } from "react";
 import type { ProductionPlan, Product, PlanProduct, Mould } from "@/types";
+import { getTotalCavities, formatMouldList, hasAlternativeMouldSetup } from "@/lib/production";
 
 const STATUS_LABEL: Record<string, string> = { draft: "Not yet started", active: "In progress", done: "Done" };
 const STATUS_STYLE: Record<string, string> = {
@@ -303,12 +304,15 @@ const EMPTY_SET: Set<string> = new Set();
 //   cap:     cap-{coating}-{mouldId}
 //   unmould: unmould-{planProductId}
 function lastActivityForProduct(planProductId: string, doneKeys: Set<string>): string | null {
+  // Match both legacy single-slot keys (`shell-${pbId}`) and per-slot keys for
+  // products with alternative mould setups (`shell-${pbId}-${slotId}`).
+  const anyWithPrefix = (prefix: string) => [...doneKeys].some((k) => k === prefix || k.startsWith(`${prefix}-`));
   const checks: { rank: number; label: string; matched: boolean }[] = [
-    { rank: 1, label: "Mould coloured", matched: [...doneKeys].some((k) => k === `color-${planProductId}` || k.startsWith(`color-${planProductId}-`)) },
-    { rank: 2, label: "Shell done", matched: doneKeys.has(`shell-${planProductId}`) },
+    { rank: 1, label: "Mould coloured", matched: anyWithPrefix(`color-${planProductId}`) },
+    { rank: 2, label: "Shell done", matched: anyWithPrefix(`shell-${planProductId}`) },
     { rank: 3, label: "Fillings in progress", matched: [...doneKeys].some((k) => k.startsWith(`filling-${planProductId}-`)) },
-    { rank: 4, label: "Filled", matched: doneKeys.has(`fill-${planProductId}`) },
-    { rank: 5, label: "Capped", matched: doneKeys.has(`cap-${planProductId}`) },
+    { rank: 4, label: "Filled", matched: anyWithPrefix(`fill-${planProductId}`) },
+    { rank: 5, label: "Capped", matched: anyWithPrefix(`cap-${planProductId}`) },
     { rank: 6, label: "Unmoulded", matched: doneKeys.has(`unmould-${planProductId}`) },
   ];
   let best: { rank: number; label: string } | null = null;
@@ -334,8 +338,7 @@ function PlanRow({
   const totalProducts = useMemo(
     () => planProducts.reduce((sum, pb) => {
       if (pb.actualYield != null) return sum + pb.actualYield;
-      const mould = mouldMap.get(pb.mouldId);
-      return sum + (mould ? mould.numberOfCavities * pb.quantity : 0);
+      return sum + getTotalCavities(pb, mouldMap);
     }, 0),
     [planProducts, mouldMap]
   );
@@ -388,15 +391,17 @@ function PlanRow({
                     <ul className="mt-1 space-y-0.5">
                       {planProducts.map((pb) => {
                         const product = productMap.get(pb.productId);
-                        const mould = mouldMap.get(pb.mouldId);
-                        const planned = mould ? mould.numberOfCavities * pb.quantity : null;
-                        const productCount = pb.actualYield ?? planned;
+                        const planned = getTotalCavities(pb, mouldMap);
+                        const productCount = pb.actualYield ?? (planned > 0 ? planned : null);
+                        const mouldLabel = hasAlternativeMouldSetup(pb)
+                          ? formatMouldList(pb, mouldMap)
+                          : `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""}`;
                         return (
                           <li key={pb.id}>
                             <div className="flex items-baseline gap-1 min-w-0 flex-wrap">
                               <span className="text-xs text-foreground truncate">{product?.name ?? "Unknown"}</span>
                               <span className="text-[10px] text-muted-foreground shrink-0">
-                                · {pb.quantity} mould{pb.quantity !== 1 ? "s" : ""}{productCount !== null ? ` · ${productCount} pcs` : ""}
+                                · {mouldLabel}{productCount !== null ? ` · ${productCount} pcs` : ""}
                               </span>
                             </div>
                             {pb.notes && (
@@ -421,15 +426,18 @@ function PlanRow({
                 <ul className="mt-1 space-y-0.5">
                   {planProducts.map((pb) => {
                     const product = productMap.get(pb.productId);
-                    const mould = mouldMap.get(pb.mouldId);
-                    const productCount = mould ? mould.numberOfCavities * pb.quantity : null;
+                    const totalCavities = getTotalCavities(pb, mouldMap);
+                    const productCount = totalCavities > 0 ? totalCavities : null;
+                    const mouldLabel = hasAlternativeMouldSetup(pb)
+                      ? formatMouldList(pb, mouldMap)
+                      : `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""}`;
                     const lastActivity = lastActivityForProduct(pb.id!, doneKeys);
                     return (
                       <li key={pb.id}>
                         <div className="flex items-center gap-1 min-w-0 flex-wrap">
                           <span className="text-xs text-foreground truncate">{product?.name ?? "Unknown"}</span>
                           <span className="text-[10px] text-muted-foreground shrink-0">
-                            · {pb.quantity} mould{pb.quantity !== 1 ? "s" : ""}{productCount !== null ? ` · ${productCount} pcs` : ""}
+                            · {mouldLabel}{productCount !== null ? ` · ${productCount} pcs` : ""}
                           </span>
                           {lastActivity ? (
                             <span className="text-[10px] text-primary/80 shrink-0">· {lastActivity}</span>

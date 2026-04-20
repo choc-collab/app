@@ -156,6 +156,97 @@ export function scheduleColorSteps(tasks: ColorTask[]): ColorTask[] {
   return result;
 }
 
+/**
+ * One mould "slot" in a plan product — either the primary mould or one of the
+ * additionalMoulds entries. Encapsulates whether this slot is a full-mould use
+ * or a partial-cavity pour so downstream math (fill volume, step labels,
+ * warnings) can treat them uniformly.
+ */
+export type MouldSlot = {
+  /** Stable identifier used in step keys: "primary" or `add-${index}`. */
+  slotId: string;
+  mouldId: string;
+  mould: Mould;
+  /** Number of cavities actually filled from this slot. */
+  cavityCount: number;
+  /** Number of physical moulds consumed (for quantityOwned warnings).
+   *  Always 1 when `partialCavities` is set; otherwise equals `quantity`. */
+  physicalMouldCount: number;
+  /** True when this slot uses a partial-cavity override (for label formatting). */
+  isPartial: boolean;
+  /** Short label for UI — e.g. "2× Rect 15" or "12 cavities of Heart 24". */
+  label: string;
+};
+
+/**
+ * Enumerate every mould slot for a plan product: primary first, then any
+ * additionalMoulds in order. Slots whose mould is missing from `moulds` are
+ * silently dropped (matches the existing `calculateFillingAmounts` behaviour
+ * where a missing primary mould skips the plan product entirely).
+ */
+export function getMouldSlots(pp: PlanProduct, moulds: Map<string, Mould>): MouldSlot[] {
+  const slots: MouldSlot[] = [];
+
+  const primary = moulds.get(pp.mouldId);
+  if (primary) {
+    const isPartial = pp.partialCavities != null;
+    const cavityCount = isPartial ? pp.partialCavities! : primary.numberOfCavities * pp.quantity;
+    slots.push({
+      slotId: "primary",
+      mouldId: pp.mouldId,
+      mould: primary,
+      cavityCount,
+      physicalMouldCount: isPartial ? 1 : pp.quantity,
+      isPartial,
+      label: isPartial
+        ? `${cavityCount} cavities of ${primary.name}`
+        : `${pp.quantity}× ${primary.name}`,
+    });
+  }
+
+  (pp.additionalMoulds ?? []).forEach((am, i) => {
+    const m = moulds.get(am.mouldId);
+    if (!m) return;
+    const isPartial = am.partialCavities != null;
+    const cavityCount = isPartial ? am.partialCavities! : m.numberOfCavities * am.quantity;
+    slots.push({
+      slotId: `add-${i}`,
+      mouldId: am.mouldId,
+      mould: m,
+      cavityCount,
+      physicalMouldCount: isPartial ? 1 : am.quantity,
+      isPartial,
+      label: isPartial
+        ? `${cavityCount} cavities of ${m.name}`
+        : `${am.quantity}× ${m.name}`,
+    });
+  });
+
+  return slots;
+}
+
+/** Sum of cavities to fill across every slot (primary + additional). */
+export function getTotalCavities(pp: PlanProduct, moulds: Map<string, Mould>): number {
+  return getMouldSlots(pp, moulds).reduce((s, sl) => s + sl.cavityCount, 0);
+}
+
+/** Total fill-volume in ml across every slot (cavityWeightG × cavityCount). */
+export function getTotalCavityVolumeML(pp: PlanProduct, moulds: Map<string, Mould>): number {
+  return getMouldSlots(pp, moulds).reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
+}
+
+/** Short summary string listing every mould used — "2× Rect 15 + 12 cavities of Heart 24". */
+export function formatMouldList(pp: PlanProduct, moulds: Map<string, Mould>): string {
+  const slots = getMouldSlots(pp, moulds);
+  if (slots.length === 0) return "";
+  return slots.map((s) => s.label).join(" + ");
+}
+
+/** True when a plan product uses anything beyond a single full-fill primary mould. */
+export function hasAlternativeMouldSetup(pp: PlanProduct): boolean {
+  return pp.partialCavities != null || (pp.additionalMoulds?.length ?? 0) > 0;
+}
+
 export type ScaledIngredient = {
   ingredientId: string;
   amount: number;
@@ -285,18 +376,19 @@ export function calculateFillingAmounts(
   const results: FillingAmount[] = [];
 
   for (const pb of planProducts) {
-    const mould = moulds.get(pb.mouldId);
-    if (!mould) continue;
+    const slots = getMouldSlots(pb, moulds);
+    if (slots.length === 0) continue;
 
     // Derive fill factor from the product's per-product shellPercentage
     const product = productsMap.get(pb.productId);
     const shellPct = product?.shellPercentage ?? DEFAULT_SHELL_PERCENTAGE;
     const fillFactor = (100 - shellPct) / 100;
 
-    // Total fill weight for all moulds in this plan entry
-    // cavityWeightG is the cavity volume expressed as grams of water (≈ ml),
-    // so we multiply by ganache density to get actual fill weight in grams.
-    const totalCavityVolumeML = mould.cavityWeightG * mould.numberOfCavities * pb.quantity;
+    // Total fill weight across primary + any additional moulds.
+    // cavityWeightG is cavity volume expressed as grams of water (≈ ml),
+    // multiplied by ganache density to get actual fill weight in grams.
+    const totalCavityVolumeML = slots.reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
+    const totalCavities = slots.reduce((s, sl) => s + sl.cavityCount, 0);
     const fillWeightG = totalCavityVolumeML * fillFactor * DENSITY_G_PER_ML;
 
     const productFillings = productFillingsMap.get(pb.productId) ?? [];
@@ -331,7 +423,7 @@ export function calculateFillingAmounts(
       if (isShelfStable && prevBatch && !fillingOverrides[lw.fillingId]) {
         // Fully from a prior batch (no additional fresh batch) — compute how much is needed for reference
         if (isGramsMode) {
-          weightG = Math.round(bl.fillGrams! * mould.numberOfCavities * pb.quantity);
+          weightG = Math.round(bl.fillGrams! * totalCavities);
         } else {
           const fillPct = (bl.fillPercentage ?? 100) / 100;
           weightG = Math.round(fillWeightG * fillPct);
@@ -352,8 +444,8 @@ export function calculateFillingAmounts(
         const multiplier = fillingOverrides[lw.fillingId] ?? 1;
         weightG = Math.round(lw.totalWeight * multiplier);
       } else if (isGramsMode) {
-        // Grams mode: fillGrams per cavity × total cavities
-        weightG = Math.round(bl.fillGrams! * mould.numberOfCavities * pb.quantity);
+        // Grams mode: fillGrams per cavity × total cavities across all slots
+        weightG = Math.round(bl.fillGrams! * totalCavities);
       } else {
         // Percentage mode: scale by this filling's fill percentage of the total fill volume
         const fillPct = (bl.fillPercentage ?? 100) / 100;
@@ -460,13 +552,15 @@ export function generateBatchSummary(params: {
   let grandTotalActual = 0;
   let grandTotalPlanned = 0;
   for (const pb of planProducts) {
-    const mould = moulds.get(pb.mouldId);
     const name = productNames.get(pb.productId) ?? "Unknown";
-    const planned = mould ? mould.numberOfCavities * pb.quantity : 0;
+    const planned = getTotalCavities(pb, moulds);
     const actual = pb.actualYield ?? planned;
     grandTotalPlanned += planned;
     grandTotalActual += actual;
-    const mouldLabel = `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""}`;
+    // Single-slot default keeps the legacy "N mould(s)" label; alt setups list every mould used.
+    const mouldLabel = hasAlternativeMouldSetup(pb)
+      ? formatMouldList(pb, moulds)
+      : `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""}`;
     if (actual !== planned && planned > 0) {
       lines.push(`  ${name.padEnd(30)} ${actual} of ${planned} pcs (${mouldLabel})`);
     } else {
@@ -627,52 +721,63 @@ export function generateSteps(
     return a.sortOrder - b.sortOrder;
   });
 
-  // 1: Collect all colour/decoration tasks across all products
+  // Pre-compute slots for every plan product — reused by all step phases.
+  const slotsByPb = new Map<string, MouldSlot[]>();
+  for (const pb of planProducts) slotsByPb.set(pb.id!, getMouldSlots(pb, moulds));
+
+  // Step keys stay stable (legacy format `shell-${pb.id}`) when there's only
+  // a single mould slot, so existing completion statuses keep working.
+  const stepKey = (prefix: string, pbId: string, slot: MouldSlot, slots: MouldSlot[]): string =>
+    slots.length > 1 ? `${prefix}-${pbId}-${slot.slotId}` : `${prefix}-${pbId}`;
+
+  // 1: Collect all colour/decoration tasks across all products and mould slots.
+  // Each slot (primary + any additional mould) gets its own colour task set —
+  // physical moulds are airbrushed/brushed independently.
   const colorTasks: ColorTask[] = [];
   for (const pb of planProducts) {
-    const mould = moulds.get(pb.mouldId);
-    const mouldName = mould?.name ?? "Unknown mould";
-    const mouldDetail = mould
-      ? `${pb.quantity} × ${mould.numberOfCavities} cavities = ${pb.quantity * mould.numberOfCavities} products`
-      : undefined;
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
     const bName = productNames.get(pb.productId) ?? "Unknown";
-
     const shellDesign = productsMap.get(pb.productId)?.shellDesign ?? [];
-    if (shellDesign.length > 0) {
-      let onMouldCount = 0;
-      shellDesign.forEach((designStep, i) => {
-        // Transfer sheet steps are applied at capping — skip from colour phase
-        const isTransferSheet = (designStep.materialIds ?? []).some(
-          (id) => materialsMap.get(id)?.type === "transfer_sheet"
-        );
-        if (isTransferSheet) return;
-        // Only include steps targeting the colour phase
-        if (normalizeApplyAt(designStep.applyAt) !== "colour") return;
-        onMouldCount++;
+
+    for (const slot of slots) {
+      const slotSuffix = slots.length > 1 ? `-${slot.slotId}` : "";
+      const mouldDetail = slot.isPartial
+        ? `${slot.cavityCount} cavities of ${slot.mould.name} = ${slot.cavityCount} products`
+        : `${slot.physicalMouldCount} × ${slot.mould.numberOfCavities} cavities = ${slot.cavityCount} products`;
+
+      if (shellDesign.length > 0) {
+        shellDesign.forEach((designStep, i) => {
+          const isTransferSheet = (designStep.materialIds ?? []).some(
+            (id) => materialsMap.get(id)?.type === "transfer_sheet"
+          );
+          if (isTransferSheet) return;
+          if (normalizeApplyAt(designStep.applyAt) !== "colour") return;
+          colorTasks.push({
+            planProductId: pb.id! + slotSuffix,
+            mouldId: slot.mouldId,
+            stepIndex: i,
+            technique: designStep.technique,
+            colors: (designStep.materialIds ?? []),
+            mouldName: slot.mould.name,
+            mouldDetail,
+            notes: designStep.notes,
+            productName: bName,
+          });
+        });
+      } else {
+        // Fallback: single task with no colors (wildcard)
         colorTasks.push({
-          planProductId: pb.id!,
-          mouldId: pb.mouldId,
-          stepIndex: i,
-          technique: designStep.technique,
-          colors: (designStep.materialIds ?? []),
-          mouldName,
+          planProductId: pb.id! + slotSuffix,
+          mouldId: slot.mouldId,
+          stepIndex: 0,
+          technique: "",
+          colors: [],
+          mouldName: slot.mould.name,
           mouldDetail,
-          notes: designStep.notes,
           productName: bName,
         });
-      });
-    } else {
-      // Fallback: single task with no colors (wildcard)
-      colorTasks.push({
-        planProductId: pb.id!,
-        mouldId: pb.mouldId,
-        stepIndex: 0,
-        technique: "",
-        colors: [],
-        mouldName,
-        mouldDetail,
-        productName: bName,
-      });
+      }
     }
   }
 
@@ -704,20 +809,28 @@ export function generateSteps(
     }
   }
 
-  // 4: Shell — one step per planProduct, sorted by coating for grouping in the UI
+  // 4: Shell — one step per mould slot, sorted by coating for grouping in the UI.
+  //    When a product uses only a single mould this produces one shell step keyed
+  //    `shell-${pb.id}` (legacy format); with additional moulds each slot gets
+  //    its own step keyed `shell-${pb.id}-${slotId}`.
   for (const pb of planProductsByCoating) {
-    const mould = moulds.get(pb.mouldId);
-    const mouldName = mould?.name ?? "Unknown mould";
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
     const coating = productsMap.get(pb.productId)?.coating?.trim() || "";
-    steps.push({
-      key: `shell-${pb.id}`,
-      label: `Shell: ${productName}`,
-      group: "shell",
-      detail: `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""} · ${mouldName}`,
-      coating: coating || "chocolate",
-      mouldCount: pb.quantity,
-    });
+    for (const slot of slots) {
+      const slotLabel = slots.length > 1 ? ` (${slot.mould.name})` : "";
+      steps.push({
+        key: stepKey("shell", pb.id!, slot, slots),
+        label: `Shell: ${productName}${slotLabel}`,
+        group: "shell",
+        detail: slot.isPartial
+          ? `${slot.cavityCount} cavities · ${slot.mould.name}`
+          : `${slot.physicalMouldCount} mould${slot.physicalMouldCount !== 1 ? "s" : ""} · ${slot.mould.name}`,
+        coating: coating || "chocolate",
+        mouldCount: slot.physicalMouldCount,
+      });
+    }
   }
 
   // 3: Make each filling — one step per unique filling (consolidated across products)
@@ -759,33 +872,37 @@ export function generateSteps(
     }
   }
 
-  // 4: Fill shells — one per product (skipped when shell is 100%, i.e. solid bars
-  // with no filling/cap — the shell step already produces the finished piece)
+  // 4: Fill shells — one per mould slot (skipped when shell is 100%, i.e. solid
+  // bars with no filling/cap — the shell step already produces the finished piece)
   for (const pb of planProducts) {
     if ((productsMap.get(pb.productId)?.shellPercentage ?? DEFAULT_SHELL_PERCENTAGE) >= 100) continue;
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
-    const mould = moulds.get(pb.mouldId);
-    const mouldName = mould?.name ?? "Unknown mould";
-    steps.push({
-      key: `fill-${pb.id}`,
-      label: `Fill: ${productName}`,
-      group: "fill",
-      detail: `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""} · ${mouldName}`,
-      mouldCount: pb.quantity,
-    });
+    for (const slot of slots) {
+      const slotLabel = slots.length > 1 ? ` (${slot.mould.name})` : "";
+      steps.push({
+        key: stepKey("fill", pb.id!, slot, slots),
+        label: `Fill: ${productName}${slotLabel}`,
+        group: "fill",
+        detail: slot.isPartial
+          ? `${slot.cavityCount} cavities · ${slot.mould.name}`
+          : `${slot.physicalMouldCount} mould${slot.physicalMouldCount !== 1 ? "s" : ""} · ${slot.mould.name}`,
+        mouldCount: slot.physicalMouldCount,
+      });
+    }
   }
 
-  // 5a: Cap — one step per planProduct, sorted by coating for grouping in the UI
+  // 5a: Cap — one step per mould slot, sorted by coating for grouping in the UI.
   // If a shell design step uses transfer sheet materials, merge into the cap label.
   for (const pb of planProductsByCoating) {
     if ((productsMap.get(pb.productId)?.shellPercentage ?? DEFAULT_SHELL_PERCENTAGE) >= 100) continue;
-    const mould = moulds.get(pb.mouldId);
-    const mouldName = mould?.name ?? "Unknown mould";
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
     const coating = productsMap.get(pb.productId)?.coating?.trim() || "";
     const shellDesign = productsMap.get(pb.productId)?.shellDesign ?? [];
 
-    // Collect transfer sheet material names for this product
     const transferSheetNames: string[] = [];
     for (const designStep of shellDesign) {
       for (const id of (designStep.materialIds ?? [])) {
@@ -796,24 +913,32 @@ export function generateSteps(
       }
     }
 
-    const capLabel = transferSheetNames.length > 0
-      ? `Cap using transfer sheet: ${transferSheetNames.join(", ")} (${productName})`
-      : `Cap: ${productName}`;
+    for (const slot of slots) {
+      const slotLabel = slots.length > 1 ? ` (${slot.mould.name})` : "";
+      const capLabel = transferSheetNames.length > 0
+        ? `Cap using transfer sheet: ${transferSheetNames.join(", ")} (${productName}${slotLabel})`
+        : `Cap: ${productName}${slotLabel}`;
 
-    steps.push({
-      key: `cap-${pb.id}`,
-      label: capLabel,
-      group: "cap",
-      detail: `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""} · ${mouldName}`,
-      coating: coating || "chocolate",
-      mouldCount: pb.quantity,
-    });
+      steps.push({
+        key: stepKey("cap", pb.id!, slot, slots),
+        label: capLabel,
+        group: "cap",
+        detail: slot.isPartial
+          ? `${slot.cavityCount} cavities · ${slot.mould.name}`
+          : `${slot.physicalMouldCount} mould${slot.physicalMouldCount !== 1 ? "s" : ""} · ${slot.mould.name}`,
+        coating: coating || "chocolate",
+        mouldCount: slot.physicalMouldCount,
+      });
+    }
   }
 
   // 5b: Non-colour decoration steps — placed in their target phase group.
   // Steps targeting "cap" appear after regular cap steps; steps targeting other phases
   // (shell, fill, unmould) appear after their regular steps in the same group.
+  // When a product uses multiple moulds, each slot gets its own decoration step.
   for (const pb of planProductsByCoating) {
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
     const coating = productsMap.get(pb.productId)?.coating?.trim() || "";
     const shellDesign = productsMap.get(pb.productId)?.shellDesign ?? [];
@@ -825,29 +950,37 @@ export function generateSteps(
       if (isTransferSheet) return;
       const phase = normalizeApplyAt(designStep.applyAt);
       if (phase === "colour") return; // already handled in step 1
-      steps.push({
-        key: `${phase}-after-${pb.id}-${i}`,
-        label: `${designStep.technique}: ${productName}`,
-        group: phase,
-        subgroup: phase === "cap" ? "after_cap" : undefined,
-        detail: designStep.notes || undefined,
-        coating: coating || "chocolate",
-      });
+      for (const slot of slots) {
+        const keySuffix = slots.length > 1 ? `-${slot.slotId}` : "";
+        const slotLabel = slots.length > 1 ? ` (${slot.mould.name})` : "";
+        steps.push({
+          key: `${phase}-after-${pb.id}${keySuffix}-${i}`,
+          label: `${designStep.technique}: ${productName}${slotLabel}`,
+          group: phase,
+          subgroup: phase === "cap" ? "after_cap" : undefined,
+          detail: designStep.notes || undefined,
+          coating: coating || "chocolate",
+        });
+      }
     });
   }
 
-  // 6: Unmould — one per product, after crystallisation
+  // 6: Unmould — one per planProduct, after crystallisation. Stays per-product
+  // (not per-slot) so yield capture remains a single aggregate number per product;
+  // the detail line enumerates every mould used when there's more than one.
   for (const pb of planProducts) {
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
-    const mould = moulds.get(pb.mouldId);
-    const mouldName = mould?.name ?? "Unknown mould";
-    const totalProducts = mould ? pb.quantity * mould.numberOfCavities : 0;
+    const totalProducts = slots.reduce((s, sl) => s + sl.cavityCount, 0);
+    const totalPhysicalMoulds = slots.reduce((s, sl) => s + sl.physicalMouldCount, 0);
+    const mouldList = slots.map((s) => s.label).join(" + ");
     steps.push({
       key: `unmould-${pb.id}`,
       label: `Unmould: ${productName}`,
       group: "unmould",
-      detail: `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""} · ${mouldName} · ${totalProducts} products`,
-      mouldCount: pb.quantity,
+      detail: `${mouldList} · ${totalProducts} products`,
+      mouldCount: totalPhysicalMoulds,
       planProductId: pb.id,
       totalProducts,
     });
