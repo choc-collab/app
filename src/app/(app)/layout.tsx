@@ -26,7 +26,7 @@ export default function AppLayout({
             className="flex-1 min-w-0 min-h-screen transition-[margin-left] duration-200"
             style={{ marginLeft: "var(--nav-w)" }}
           >
-            <Suspense fallback={null}>{children}</Suspense>
+            {children}
           </main>
         </div>
       </AuthGate>
