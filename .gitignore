@@ -41,3 +41,7 @@ tsconfig.tsbuildinfo
 
 .agents/
 skills-lock.json
+
+# playwright artifacts
+playwright-report/
+test-results/
