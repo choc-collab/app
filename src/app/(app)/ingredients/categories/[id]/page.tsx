@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useIngredientCategory,
@@ -15,10 +15,10 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function IngredientCategoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const categoryId = decodeURIComponent(idStr);
+export default function IngredientCategoryDetailPage() {
+  const categoryId = useSpaId("categories");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -32,7 +32,7 @@ export default function IngredientCategoryDetailPage({ params }: { params: Promi
   const [savedOnce, setSavedOnce] = useState(false);
   const isDirty = isNew && !savedOnce;
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) {
+    if (isNew && categoryId) {
       try { await deleteIngredientCategory(categoryId); } catch { /* in-use guard may prevent delete — fine, leave it */ }
     }
   }, [isNew, categoryId]);
@@ -40,7 +40,7 @@ export default function IngredientCategoryDetailPage({ params }: { params: Promi
 
   // Strip ?new=1 after initial render to mark the record as "committed"
   useEffect(() => {
-    if (isNew && category) {
+    if (isNew && category && categoryId) {
       setSavedOnce(true);
       router.replace(`/ingredients/categories/${encodeURIComponent(categoryId)}`);
     }
@@ -55,6 +55,7 @@ export default function IngredientCategoryDetailPage({ params }: { params: Promi
   }, [confirmDelete]);
 
   async function handleHardDelete() {
+    if (!categoryId) return;
     try {
       await deleteIngredientCategory(categoryId);
       router.replace("/ingredients?tab=categories");
@@ -65,6 +66,7 @@ export default function IngredientCategoryDetailPage({ params }: { params: Promi
   }
 
   async function handleArchive() {
+    if (!categoryId) return;
     await archiveIngredientCategory(categoryId);
     setConfirmDelete(false);
     router.replace("/ingredients?tab=categories");
@@ -72,7 +74,7 @@ export default function IngredientCategoryDetailPage({ params }: { params: Promi
 
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  if (!category) {
+  if (!categoryId || !category) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

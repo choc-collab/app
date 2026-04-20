@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   useExperiment,
@@ -9,11 +9,11 @@ import {
   useFillings,
 } from "@/lib/hooks";
 import { FILL_FACTOR } from "@/lib/production";
+import { useSpaId } from "@/lib/use-spa-id";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-export default function RunBatchPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const id = decodeURIComponent(idStr);
+export default function RunBatchPage() {
+  const id = useSpaId("calculator");
   const router = useRouter();
 
   const experiment = useExperiment(id);
@@ -41,12 +41,12 @@ export default function RunBatchPage({ params }: { params: Promise<{ id: string 
   const scaleFactor = totalWeight > 0 && targetWeightG > 0 ? targetWeightG / totalWeight : 1;
   const productCount = mould ? mould.numberOfCavities * numMoulds : 0;
 
-  if (!experiment) {
+  if (!id || !experiment) {
     return <div className="px-4 pt-6 text-sm text-muted-foreground">Loading…</div>;
   }
 
   function handleStart() {
-    if (!mouldId) return;
+    if (!id || !mouldId) return;
     const p = new URLSearchParams({ mouldId, numMoulds: numMouldsStr });
     if (showCompanion && companionFillingId) {
       p.set("companionFillingId", companionFillingId);

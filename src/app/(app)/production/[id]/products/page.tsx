@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   useProductionPlan, usePlanProducts, useProductsList,
   useProductFillingsForProducts, useFillings, useFillingIngredientsForFillings,
@@ -14,10 +14,10 @@ import Link from "next/link";
 import { LowStockFlagButton } from "@/components/pantry";
 import { StepList } from "@/components/step-list-editor";
 import { useSearchParams } from "next/navigation";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function PlanProductsPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const planId = decodeURIComponent(idStr);
+export default function PlanProductsPage() {
+  const planId = useSpaId("production");
   const searchParams = useSearchParams();
   const backTab = searchParams.get("back");
 
@@ -31,7 +31,7 @@ export default function PlanProductsPage({ params }: { params: Promise<{ id: str
   const fillingsMap = useMemo(() => new Map(allFillings.map((l) => [l.id!, l])), [allFillings]);
   const mouldsMap = useMemo(() => new Map(moulds.map((m) => [m.id!, m])), [moulds]);
 
-  if (!plan) {
+  if (!planId || !plan) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

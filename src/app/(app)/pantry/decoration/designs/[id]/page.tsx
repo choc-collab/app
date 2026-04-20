@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useShellDesign,
@@ -15,12 +15,12 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 import { DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt } from "@/types";
 import type { ShellDesignApplyAt } from "@/types";
 
-export default function ShellDesignDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const designId = decodeURIComponent(idStr);
+export default function ShellDesignDetailPage() {
+  const designId = useSpaId("designs");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -40,7 +40,7 @@ export default function ShellDesignDetailPage({ params }: { params: Promise<{ id
   const formDirty = editing && design != null && editApplyAt !== normalizeApplyAt(design.defaultApplyAt);
   const isDirty = (isNew && !savedOnce) || formDirty;
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) {
+    if (isNew && designId) {
       try { await deleteShellDesign(designId); } catch { /* ignore */ }
     }
   }, [isNew, designId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -72,7 +72,7 @@ export default function ShellDesignDetailPage({ params }: { params: Promise<{ id
     syncForm(design);
     setEditing(false);
     setErrors([]);
-    if (isNew) router.replace(`/pantry/decoration/designs/${encodeURIComponent(designId)}`);
+    if (isNew && designId) router.replace(`/pantry/decoration/designs/${encodeURIComponent(designId)}`);
   }
 
   useEffect(() => {
@@ -92,10 +92,11 @@ export default function ShellDesignDetailPage({ params }: { params: Promise<{ id
     setSavedOnce(true);
     setEditing(false);
     setErrors([]);
-    if (isNew) router.replace(`/pantry/decoration/designs/${encodeURIComponent(designId)}`);
+    if (isNew && designId) router.replace(`/pantry/decoration/designs/${encodeURIComponent(designId)}`);
   }
 
   async function handleHardDelete() {
+    if (!designId) return;
     try {
       await deleteShellDesign(designId);
       router.replace("/pantry/decoration");
@@ -105,12 +106,13 @@ export default function ShellDesignDetailPage({ params }: { params: Promise<{ id
   }
 
   async function handleArchive() {
+    if (!designId) return;
     await archiveShellDesign(designId);
     setConfirmDelete(false);
     router.replace("/pantry/decoration");
   }
 
-  if (!design) {
+  if (!designId || !design) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useFillingCategory,
@@ -16,10 +16,10 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function FillingCategoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const categoryId = decodeURIComponent(idStr);
+export default function FillingCategoryDetailPage() {
+  const categoryId = useSpaId("categories");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -38,7 +38,7 @@ export default function FillingCategoryDetailPage({ params }: { params: Promise<
   const [savedOnce, setSavedOnce] = useState(false);
   const isDirty = isNew && !savedOnce;
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) {
+    if (isNew && categoryId) {
       try { await deleteFillingCategory(categoryId); } catch { /* ignore — silently keep if in use */ }
     }
   }, [isNew, categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -46,7 +46,7 @@ export default function FillingCategoryDetailPage({ params }: { params: Promise<
 
   // Strip ?new=1 once the category loads
   useEffect(() => {
-    if (isNew && category && !savedOnce) {
+    if (isNew && category && !savedOnce && categoryId) {
       setSavedOnce(true);
       router.replace(`/fillings/categories/${encodeURIComponent(categoryId)}`);
     }
@@ -60,7 +60,7 @@ export default function FillingCategoryDetailPage({ params }: { params: Promise<
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [confirmDelete]);
 
-  if (!category) {
+  if (!categoryId || !category) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

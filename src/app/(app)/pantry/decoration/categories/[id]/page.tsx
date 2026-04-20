@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useDecorationCategory,
@@ -16,15 +16,15 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
 /** Generate a URL-safe slug from a display name. */
 function nameToSlug(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
 }
 
-export default function DecorationCategoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const categoryId = decodeURIComponent(idStr);
+export default function DecorationCategoryDetailPage() {
+  const categoryId = useSpaId("categories");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -44,7 +44,7 @@ export default function DecorationCategoryDetailPage({ params }: { params: Promi
   const [savedOnce, setSavedOnce] = useState(false);
   const isDirty = isNew && !savedOnce;
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) {
+    if (isNew && categoryId) {
       try { await deleteDecorationCategory(categoryId); } catch { /* ignore */ }
     }
   }, [isNew, categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -52,7 +52,7 @@ export default function DecorationCategoryDetailPage({ params }: { params: Promi
 
   // Auto-save and strip ?new=1 once the category loads for a new record
   useEffect(() => {
-    if (isNew && category && !savedOnce) {
+    if (isNew && category && !savedOnce && categoryId) {
       setSavedOnce(true);
       router.replace(`/pantry/decoration/categories/${encodeURIComponent(categoryId)}`);
     }
@@ -66,7 +66,7 @@ export default function DecorationCategoryDetailPage({ params }: { params: Promi
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [confirmDelete]);
 
-  if (!category) {
+  if (!categoryId || !category) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>

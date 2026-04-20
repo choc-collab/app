@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback, use } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingGrams, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useFillingIngredientsForFillings, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels } from "@/lib/hooks";
 import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
@@ -20,10 +20,10 @@ import type { DraggableAttributes } from "@dnd-kit/core";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
-export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const productId = decodeURIComponent(idStr);
+export default function ProductDetailPage() {
+  const productId = useSpaId("products");
   const router = useRouter();
   const product = useProduct(productId);
   const productFillings = useProductFillings(productId);
@@ -178,7 +178,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     await reorderProductFillings(reordered);
   }
 
-  if (!product) {
+  if (!productId || !product) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>
@@ -216,6 +216,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   }
 
   async function handleSave() {
+    if (!productId) return;
     const batchQty = Math.max(1, parseInt(batchQtyInput) || 1);
     const shellPct = parseFloat(localShellPercentageStr);
 
@@ -289,17 +290,18 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     setShowAssign(false);
     setFillingSearch("");
     setSaveErrors([]);
-    if (isNew) router.replace(`/products/${encodeURIComponent(productId)}`);
+    if (isNew && productId) router.replace(`/products/${encodeURIComponent(productId)}`);
   }
 
   async function handlePopularity(stars: number) {
+    if (!productId) return;
     const newVal = product!.popularity === stars ? undefined : stars;
     await saveProduct({ id: productId, name: product!.name, photo: product!.photo, popularity: newVal });
   }
 
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !productId) return;
     const reader = new FileReader();
     reader.onload = async () => {
       const base64 = reader.result as string;
@@ -309,6 +311,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   }
 
   async function handleAssignFilling(fillingId: string) {
+    if (!productId) return;
     await addFillingToProduct(productId, fillingId);
     setFillingSearch("");
     setShowAssign(false);

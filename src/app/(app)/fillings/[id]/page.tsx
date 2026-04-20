@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback, useEffect, use } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useFilling, useFillingIngredients, useIngredients, saveFilling, deleteFilling, deleteFillingWithCleanup, archiveFillingWithCleanup, unarchiveFilling, updateFillingAllergens, useFillingUsage, reorderFillingIngredients, useFillingVersionHistory, forkFillingVersion, getFillingForkImpact, getFillingDeleteImpact, hasProductBeenProduced, hasFillingBeenProduced, getFillingArchiveImpact, useProductsList, saveProduct, addFillingToProduct, duplicateFilling, useAllFillingStatuses } from "@/lib/hooks";
+import { useSpaId } from "@/lib/use-spa-id";
 import type { FillingArchiveImpact, FillingDeleteImpact } from "@/lib/hooks";
 import { SortableFillingIngredientRow } from "@/components/sortable-filling-ingredient-row";
 import { AddFillingIngredient } from "@/components/add-filling-ingredient";
@@ -18,9 +19,8 @@ import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import type { Ingredient, Product } from "@/types";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
 
-export default function FillingDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const fillingId = decodeURIComponent(idStr);
+export default function FillingDetailPage() {
+  const fillingId = useSpaId("fillings");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -150,7 +150,7 @@ export default function FillingDetailPage({ params }: { params: Promise<{ id: st
     await reorderFillingIngredients(reordered);
   }
 
-  if (!filling) {
+  if (!fillingId || !filling) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>
@@ -159,6 +159,7 @@ export default function FillingDetailPage({ params }: { params: Promise<{ id: st
   }
 
   async function handleSave() {
+    if (!fillingId) return;
     const parsedShelfLife = parseFloat(shelfLifeWeeks);
     await saveFilling({
       ...filling!,
@@ -180,7 +181,7 @@ export default function FillingDetailPage({ params }: { params: Promise<{ id: st
     setStatus(filling!.status || "");
     setShelfLifeWeeks(filling!.shelfLifeWeeks != null ? String(filling!.shelfLifeWeeks) : "");
     setEditing(false);
-    if (isNew) router.replace(`/fillings/${encodeURIComponent(fillingId)}`);
+    if (isNew && fillingId) router.replace(`/fillings/${encodeURIComponent(fillingId)}`);
   }
 
   function startEditing() {
@@ -193,6 +194,7 @@ export default function FillingDetailPage({ params }: { params: Promise<{ id: st
   }
 
   async function handleOpenForkPanel() {
+    if (!fillingId) return;
     const { products } = await getFillingForkImpact(fillingId);
     setForkImpact(products);
     setForkNotes("");
@@ -201,6 +203,7 @@ export default function FillingDetailPage({ params }: { params: Promise<{ id: st
   }
 
   async function handleFork() {
+    if (!fillingId) return;
     setForking(true);
     try {
       const newId = await forkFillingVersion(fillingId, forkNotes);

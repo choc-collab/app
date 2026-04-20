@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCollection,
@@ -25,6 +25,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { ArrowLeft, Plus, Search, X, Trash2, Pencil, ChevronDown, RefreshCw, AlertTriangle } from "lucide-react";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
 import type { ProductCostSnapshot, Packaging, PackagingOrder, CollectionPricingSnapshot } from "@/types";
 import { costPerGram } from "@/types";
@@ -93,9 +94,8 @@ function useProductCosts(productIds: string[]): Map<string, ProductCostSnapshot>
   return snapshots ?? new Map();
 }
 
-export default function CollectionDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: idStr } = use(params);
-  const collectionId = decodeURIComponent(idStr);
+export default function CollectionDetailPage() {
+  const collectionId = useSpaId("collections");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -201,7 +201,7 @@ export default function CollectionDetailPage({ params }: { params: Promise<{ id:
 
   function handleCancel() {
     setEditing(false);
-    if (isNew) router.replace(`/collections/${encodeURIComponent(collectionId)}${fromSuffix}`);
+    if (isNew && collectionId) router.replace(`/collections/${encodeURIComponent(collectionId)}${fromSuffix}`);
   }
 
   async function handleSave() {
@@ -217,7 +217,7 @@ export default function CollectionDetailPage({ params }: { params: Promise<{ id:
     });
     setSavedOnce(true);
     setEditing(false);
-    if (isNew) router.replace(`/collections/${encodeURIComponent(collectionId)}${fromSuffix}`);
+    if (isNew && collectionId) router.replace(`/collections/${encodeURIComponent(collectionId)}${fromSuffix}`);
   }
 
   async function handleDelete() {
@@ -227,6 +227,7 @@ export default function CollectionDetailPage({ params }: { params: Promise<{ id:
   }
 
   async function handleAddProduct(productId: string) {
+    if (!collectionId) return;
     await addProductToCollection(collectionId, productId);
     setProductSearch("");
   }
@@ -243,7 +244,7 @@ export default function CollectionDetailPage({ params }: { params: Promise<{ id:
     triggerType: CollectionPricingSnapshot["triggerType"],
     triggerDetail: string,
   ) {
-    if (!avgCost) return;
+    if (!avgCost || !collectionId) return;
     const pkg = packagingMap.get(packagingId);
     const orders = ordersByPackaging.get(packagingId) ?? [];
     const packagingUnitCost = latestPackagingUnitCost(orders) ?? 0;
@@ -266,7 +267,7 @@ export default function CollectionDetailPage({ params }: { params: Promise<{ id:
   }
 
   async function handleAddBox() {
-    if (!selectedPackagingId || !sellPriceStr) return;
+    if (!collectionId || !selectedPackagingId || !sellPriceStr) return;
     const price = parseFloat(sellPriceStr);
     if (isNaN(price) || price < 0) return;
     await saveCollectionPackaging({
@@ -397,7 +398,7 @@ export default function CollectionDetailPage({ params }: { params: Promise<{ id:
 
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
-  if (collection === undefined) {
+  if (!collectionId || collection === undefined) {
     return <div className="p-6 text-muted-foreground text-sm">Loading...</div>;
   }
   if (collection === null) {

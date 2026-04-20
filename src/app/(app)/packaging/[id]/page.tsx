@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, use, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   usePackaging, usePackagingOrders, useAllPackagingSuppliers,
@@ -12,6 +12,7 @@ import { ArrowLeft, Pencil, Trash2, Plus, Package, Archive, ArchiveRestore } fro
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { StockStatusPanel } from "@/components/stock-status-panel";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { useSpaId } from "@/lib/use-spa-id";
 
 function formatDate(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
@@ -21,9 +22,8 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function PackagingDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: _packagingId } = use(params);
-  const packagingId = decodeURIComponent(_packagingId);
+export default function PackagingDetailPage() {
+  const packagingId = useSpaId("packaging");
   const router = useRouter();
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
@@ -79,12 +79,12 @@ export default function PackagingDetailPage({ params }: { params: Promise<{ id: 
   const isDirty = (isNew && !savedOnce) || formDirty;
 
   const handleConfirmLeave = useCallback(async () => {
-    if (isNew) await deletePackaging(packagingId);
+    if (isNew && packagingId) await deletePackaging(packagingId);
   }, [isNew, packagingId]);
 
   const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
-  if (!pkg) {
+  if (!packagingId || !pkg) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground">Loading…</p>
@@ -101,11 +101,12 @@ export default function PackagingDetailPage({ params }: { params: Promise<{ id: 
 
   function handleCancel() {
     setEditing(false);
-    if (isNew) router.replace(`/packaging/${encodeURIComponent(packagingId)}`);
+    if (isNew && packagingId) router.replace(`/packaging/${encodeURIComponent(packagingId)}`);
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (!packagingId) return;
     const cap = parseInt(capacity) || 1;
     await savePackaging({
       id: packagingId,
@@ -127,6 +128,7 @@ export default function PackagingDetailPage({ params }: { params: Promise<{ id: 
 
   async function handleLogOrder(e: React.FormEvent) {
     e.preventDefault();
+    if (!packagingId) return;
     const qty = parseInt(orderQty);
     const price = parseFloat(orderPrice);
     if (!qty || !price || !orderDate) return;
