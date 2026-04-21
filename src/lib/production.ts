@@ -1,4 +1,4 @@
-import type { PlanProduct, ProductFilling, Filling, FillingIngredient, Mould, Product, FillingPreviousBatch, DecorationMaterial } from "@/types";
+import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, Mould, Product, FillingPreviousBatch, DecorationMaterial } from "@/types";
 import { SHELF_STABLE_CATEGORIES, normalizeApplyAt } from "@/types";
 
 // Legacy fill factor — used as the default when a product has no per-product
@@ -23,7 +23,12 @@ export type ProductionStep = {
   mouldCount?: number; // number of physical moulds for this step (shell/fill/cap/unmould)
   subgroup?: "after_cap"; // decoration steps applied after capping
   planProductId?: string; // set on unmould steps to reference the specific PlanProduct
+  /** Set on standalone filling-batch steps to reference the PlanFilling row.
+   *  When present, completion writes a FillingStock row (the batch's output). */
+  planFillingId?: string;
   totalProducts?: number; // total product count for this step (moulds × cavities)
+  /** Target yield in grams — set on standalone filling-batch steps. */
+  targetGrams?: number;
 };
 
 export type ColorTask = {
@@ -477,6 +482,53 @@ export function calculateFillingAmounts(
   return results;
 }
 
+/** Ingredient amounts for a standalone filling batch (PlanFilling-driven).
+ *  Parallel to `FillingAmount` but keyed by planFillingId and sized by
+ *  the user's free-form target grams rather than cavity-derived weight. */
+export type StandaloneFillingAmount = {
+  planFillingId: string;
+  fillingId: string;
+  fillingName: string;
+  targetGrams: number;
+  /** Ratio of target grams to recipe base weight — shown as "×N.N base" in UI. */
+  multiplier: number;
+  scaledIngredients: ScaledIngredient[];
+  notes?: string;
+};
+
+/** Compute ingredient amounts for each PlanFilling row.
+ *  Scale factor = targetGrams ÷ (sum of FillingIngredient.amount for that filling). */
+export function calculateStandaloneFillingAmounts(
+  planFillings: PlanFilling[],
+  fillingsMap: Map<string, Filling>,
+  fillingIngredientsMap: Map<string, FillingIngredient[]>,
+): StandaloneFillingAmount[] {
+  const results: StandaloneFillingAmount[] = [];
+  for (const pf of planFillings) {
+    const filling = fillingsMap.get(pf.fillingId);
+    if (!filling || !pf.id) continue;
+    const lis = fillingIngredientsMap.get(pf.fillingId) ?? [];
+    const baseTotal = lis.reduce((s, li) => s + li.amount, 0);
+    const multiplier = baseTotal > 0 ? pf.targetGrams / baseTotal : 0;
+    const scaledIngredients: ScaledIngredient[] = lis.map((li) => ({
+      ingredientId: li.ingredientId,
+      amount: Math.round(li.amount * multiplier * 10) / 10,
+      unit: li.unit,
+      note: li.note,
+    }));
+    results.push({
+      planFillingId: pf.id,
+      fillingId: pf.fillingId,
+      fillingName: filling.name,
+      targetGrams: pf.targetGrams,
+      multiplier: Math.round(multiplier * 100) / 100,
+      scaledIngredients,
+      notes: pf.notes,
+    });
+  }
+  return results;
+}
+
 export type IngredientRef = { id: string; name: string; manufacturer?: string };
 
 /**
@@ -532,8 +584,13 @@ export function generateBatchSummary(params: {
   previousBatches?: Record<string, FillingPreviousBatch>;
   productsMap?: Map<string, { shelfLifeWeeks?: string }>;
   productFillingsMap?: Map<string, { fillingId: string }[]>;
+  /** Optional: standalone filling batches (PlanFilling-derived). When provided,
+   *  a FILLING BATCHES section is emitted and their scaled ingredients are
+   *  aggregated into INGREDIENTS USED. When planProducts is empty but this is
+   *  non-empty, the PRODUCTS PRODUCED section is skipped. */
+  standaloneFillings?: StandaloneFillingAmount[];
 }): string {
-  const { batchNumber, planName, completedAt, planProducts, productNames, moulds, fillingAmounts, ingredients, previousBatches, productsMap, productFillingsMap } = params;
+  const { batchNumber, planName, completedAt, planProducts, productNames, moulds, fillingAmounts, ingredients, previousBatches, productsMap, productFillingsMap, standaloneFillings = [] } = params;
   const ingredientMap = new Map(ingredients.map((i) => [i.id, i]));
 
   const dateStr = completedAt.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -547,36 +604,54 @@ export function generateBatchSummary(params: {
   lines.push("");
 
   // --- Products produced ---
-  lines.push("PRODUCTS PRODUCED");
-  lines.push("─".repeat(48));
-  let grandTotalActual = 0;
-  let grandTotalPlanned = 0;
-  for (const pb of planProducts) {
-    const name = productNames.get(pb.productId) ?? "Unknown";
-    const planned = getTotalCavities(pb, moulds);
-    const actual = pb.actualYield ?? planned;
-    grandTotalPlanned += planned;
-    grandTotalActual += actual;
-    // Single-slot default keeps the legacy "N mould(s)" label; alt setups list every mould used.
-    const mouldLabel = hasAlternativeMouldSetup(pb)
-      ? formatMouldList(pb, moulds)
-      : `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""}`;
-    if (actual !== planned && planned > 0) {
-      lines.push(`  ${name.padEnd(30)} ${actual} of ${planned} pcs (${mouldLabel})`);
-    } else {
-      lines.push(`  ${name.padEnd(30)} ${planned > 0 ? `${planned} pcs` : "?"} (${mouldLabel})`);
+  // Skip entirely for fillings-only plans (no planProducts, only standalone fillings).
+  if (planProducts.length > 0) {
+    lines.push("PRODUCTS PRODUCED");
+    lines.push("─".repeat(48));
+    let grandTotalActual = 0;
+    let grandTotalPlanned = 0;
+    for (const pb of planProducts) {
+      const name = productNames.get(pb.productId) ?? "Unknown";
+      const planned = getTotalCavities(pb, moulds);
+      const actual = pb.actualYield ?? planned;
+      grandTotalPlanned += planned;
+      grandTotalActual += actual;
+      // Single-slot default keeps the legacy "N mould(s)" label; alt setups list every mould used.
+      const mouldLabel = hasAlternativeMouldSetup(pb)
+        ? formatMouldList(pb, moulds)
+        : `${pb.quantity} mould${pb.quantity !== 1 ? "s" : ""}`;
+      if (actual !== planned && planned > 0) {
+        lines.push(`  ${name.padEnd(30)} ${actual} of ${planned} pcs (${mouldLabel})`);
+      } else {
+        lines.push(`  ${name.padEnd(30)} ${planned > 0 ? `${planned} pcs` : "?"} (${mouldLabel})`);
+      }
     }
+    lines.push("─".repeat(48));
+    if (grandTotalActual !== grandTotalPlanned && grandTotalPlanned > 0) {
+      const yieldPct = ((grandTotalActual / grandTotalPlanned) * 100).toFixed(1);
+      lines.push(`  ${"To stock:".padEnd(30)} ${grandTotalActual} pcs`);
+      lines.push(`  ${"Planned:".padEnd(30)} ${grandTotalPlanned} pcs`);
+      lines.push(`  ${"Yield:".padEnd(30)} ${yieldPct}%`);
+    } else {
+      lines.push(`  ${"Total:".padEnd(30)} ${grandTotalPlanned} pcs`);
+    }
+    lines.push("");
   }
-  lines.push("─".repeat(48));
-  if (grandTotalActual !== grandTotalPlanned && grandTotalPlanned > 0) {
-    const yieldPct = ((grandTotalActual / grandTotalPlanned) * 100).toFixed(1);
-    lines.push(`  ${"To stock:".padEnd(30)} ${grandTotalActual} pcs`);
-    lines.push(`  ${"Planned:".padEnd(30)} ${grandTotalPlanned} pcs`);
-    lines.push(`  ${"Yield:".padEnd(30)} ${yieldPct}%`);
-  } else {
-    lines.push(`  ${"Total:".padEnd(30)} ${grandTotalPlanned} pcs`);
+
+  // --- Standalone filling batches (PlanFilling-derived) ---
+  if (standaloneFillings.length > 0) {
+    lines.push("FILLING BATCHES");
+    lines.push("─".repeat(48));
+    let totalFillingG = 0;
+    for (const sf of standaloneFillings) {
+      totalFillingG += sf.targetGrams;
+      const multLabel = sf.multiplier > 0 ? `  (×${sf.multiplier} base)` : "";
+      lines.push(`  ${sf.fillingName.padEnd(30)} ${sf.targetGrams}g${multLabel}`);
+    }
+    lines.push("─".repeat(48));
+    lines.push(`  ${"Total yield:".padEnd(30)} ${totalFillingG}g`);
+    lines.push("");
   }
-  lines.push("");
 
   // --- Fillings prepared (consolidated) ---
   const consolidatedFillings = consolidateSharedFillings(
@@ -599,17 +674,22 @@ export function generateBatchSummary(params: {
   }
 
   // --- Ingredients used ---
-  // Aggregate scaled amounts by ingredientId across all filling amounts
+  // Aggregate scaled amounts by ingredientId across all filling amounts —
+  // both product-driven (fillingAmounts) and standalone batches (standaloneFillings).
   const totals = new Map<string, { amount: number; unit: string }>();
-  for (const la of fillingAmounts) {
-    for (const si of la.scaledIngredients) {
-      const existing = totals.get(si.ingredientId);
-      if (existing) {
-        existing.amount += si.amount;
-      } else {
-        totals.set(si.ingredientId, { amount: si.amount, unit: si.unit });
-      }
+  const mergeScaled = (si: ScaledIngredient) => {
+    const existing = totals.get(si.ingredientId);
+    if (existing) {
+      existing.amount += si.amount;
+    } else {
+      totals.set(si.ingredientId, { amount: si.amount, unit: si.unit });
     }
+  };
+  for (const la of fillingAmounts) {
+    for (const si of la.scaledIngredients) mergeScaled(si);
+  }
+  for (const sf of standaloneFillings) {
+    for (const si of sf.scaledIngredients) mergeScaled(si);
   }
 
   // Sort alphabetically by ingredient name
@@ -709,6 +789,10 @@ export function generateSteps(
   productsMap: Map<string, Product> = new Map(),
   fillingPreviousBatches: Record<string, FillingPreviousBatch> = {},
   materialsMap: Map<string, DecorationMaterial> = new Map(),
+  /** Standalone filling batches (PlanFilling rows). Emitted as extra "filling"
+   *  group steps with key `planfilling-{id}`, placed alongside product-driven
+   *  fillings. Empty for pure full-production plans. */
+  standaloneFillings: StandaloneFillingAmount[] = [],
 ): ProductionStep[] {
   const steps: ProductionStep[] = [];
 
@@ -870,6 +954,23 @@ export function generateSteps(
         ].filter(Boolean).join(" · "),
       });
     }
+  }
+
+  // 3b: Standalone filling batches — one step per PlanFilling row. Key format
+  // `planfilling-${id}` keeps it distinct from the consolidated product-driven
+  // `filling-${fillingId}` so hybrid plans (products + standalone batches of
+  // the same filling) don't collide on step completion.
+  for (const sf of standaloneFillings) {
+    const multLabel = sf.multiplier > 0 ? ` · ×${sf.multiplier} base recipe` : "";
+    const noteLabel = sf.notes ? ` · ${sf.notes}` : "";
+    steps.push({
+      key: `planfilling-${sf.planFillingId}`,
+      label: `Make ${sf.fillingName} — batch for stock`,
+      group: "filling",
+      detail: `${sf.targetGrams}g${multLabel}${noteLabel}`,
+      planFillingId: sf.planFillingId,
+      targetGrams: sf.targetGrams,
+    });
   }
 
   // 4: Fill shells — one per mould slot (skipped when shell is 100%, i.e. solid

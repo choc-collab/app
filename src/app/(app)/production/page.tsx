@@ -1,15 +1,15 @@
 "use client";
 
 import {
-  useProductionPlans, useProductsList, useMouldsList,
-  useAllPlanProducts, useAllPlanStepStatuses, deleteProductionPlan,
+  useProductionPlans, useProductsList, useMouldsList, useFillings,
+  useAllPlanProducts, useAllPlanFillings, useAllPlanStepStatuses, deleteProductionPlan,
 } from "@/lib/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Plus, Trash2, ChevronRight, ChevronDown, BookOpen, Search, StickyNote, Copy } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, BookOpen, Search, Sprout, StickyNote, Copy } from "lucide-react";
 import { CollapseControls } from "@/components/pantry";
 import Link from "next/link";
 import { useState, useMemo } from "react";
-import type { ProductionPlan, Product, PlanProduct, Mould } from "@/types";
+import type { ProductionPlan, Product, PlanProduct, PlanFilling, Filling, Mould } from "@/types";
 import { getTotalCavities, formatMouldList, hasAlternativeMouldSetup } from "@/lib/production";
 
 const STATUS_LABEL: Record<string, string> = { draft: "Not yet started", active: "In progress", done: "Done" };
@@ -28,7 +28,9 @@ export default function ProductionPage() {
   const plans = useProductionPlans();
   const products = useProductsList();
   const moulds = useMouldsList(true);
+  const fillings = useFillings();
   const allPlanProducts = useAllPlanProducts();
+  const allPlanFillings = useAllPlanFillings();
   const allStepStatuses = useAllPlanStepStatuses();
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export default function ProductionPage() {
 
   const productMap = useMemo(() => new Map(products.map((r) => [r.id!, r])), [products]);
   const mouldMap = useMemo(() => new Map(moulds.map((m) => [m.id!, m])), [moulds]);
+  const fillingMap = useMemo(() => new Map(fillings.map((f) => [f.id!, f])), [fillings]);
 
   // One pass over all PlanProduct rows → Map<planId, PlanProduct[]>
   const planProductsByPlan = useMemo(() => {
@@ -52,6 +55,18 @@ export default function ProductionPage() {
     for (const arr of map.values()) arr.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     return map;
   }, [allPlanProducts]);
+
+  // One pass over all PlanFilling rows → Map<planId, PlanFilling[]>
+  const planFillingsByPlan = useMemo(() => {
+    const map = new Map<string, PlanFilling[]>();
+    for (const pf of allPlanFillings) {
+      const arr = map.get(pf.planId);
+      if (arr) arr.push(pf);
+      else map.set(pf.planId, [pf]);
+    }
+    for (const arr of map.values()) arr.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    return map;
+  }, [allPlanFillings]);
 
   // One pass over all step statuses → Map<planId, Set<stepKey of done>>
   const doneKeysByPlan = useMemo(() => {
@@ -258,9 +273,11 @@ export default function ProductionPage() {
                           key={plan.id}
                           plan={plan}
                           planProducts={planProductsByPlan.get(plan.id!) ?? []}
+                          planFillings={planFillingsByPlan.get(plan.id!) ?? []}
                           doneKeys={doneKeysByPlan.get(plan.id!) ?? EMPTY_SET}
                           productMap={productMap}
                           mouldMap={mouldMap}
+                          fillingMap={fillingMap}
                           confirmDeleteId={confirmDeleteId}
                           onConfirmDelete={setConfirmDeleteId}
                           onDelete={async (id) => { await deleteProductionPlan(id); setConfirmDeleteId(null); }}
@@ -279,9 +296,11 @@ export default function ProductionPage() {
                 key={plan.id}
                 plan={plan}
                 planProducts={planProductsByPlan.get(plan.id!) ?? []}
+                planFillings={planFillingsByPlan.get(plan.id!) ?? []}
                 doneKeys={doneKeysByPlan.get(plan.id!) ?? EMPTY_SET}
                 productMap={productMap}
                 mouldMap={mouldMap}
+                fillingMap={fillingMap}
                 confirmDeleteId={confirmDeleteId}
                 onConfirmDelete={setConfirmDeleteId}
                 onDelete={async (id) => { await deleteProductionPlan(id); setConfirmDeleteId(null); }}
@@ -323,18 +342,26 @@ function lastActivityForProduct(planProductId: string, doneKeys: Set<string>): s
 }
 
 function PlanRow({
-  plan, planProducts, doneKeys, productMap, mouldMap,
+  plan, planProducts, planFillings, doneKeys, productMap, mouldMap, fillingMap,
   confirmDeleteId, onConfirmDelete, onDelete,
 }: {
   plan: ProductionPlan;
   planProducts: PlanProduct[];
+  planFillings: PlanFilling[];
   doneKeys: Set<string>;
   productMap: Map<string, Product>;
   mouldMap: Map<string, Mould>;
+  fillingMap: Map<string, Filling>;
   confirmDeleteId: string | null;
   onConfirmDelete: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const totalFillingG = useMemo(
+    () => planFillings.reduce((s, pf) => s + (pf.actualYieldG ?? pf.targetGrams ?? 0), 0),
+    [planFillings],
+  );
+  const isFillingsOnly = planProducts.length === 0 && planFillings.length > 0;
+  const isHybrid = planProducts.length > 0 && planFillings.length > 0;
   const totalProducts = useMemo(
     () => planProducts.reduce((sum, pb) => {
       if (pb.actualYield != null) return sum + pb.actualYield;
@@ -378,6 +405,12 @@ function PlanRow({
                 <span className="line-clamp-2">{plan.notes}</span>
               </p>
             )}
+            {(isFillingsOnly || isHybrid) && (
+              <span className="inline-flex items-center gap-1 mt-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                <Sprout className="w-3 h-3" />
+                {isHybrid ? "Products + filling batches" : "Fillings only"}
+              </span>
+            )}
             {plan.status === "done" && (
               <div className="mt-0.5 space-y-0.5">
                 <p className="text-xs text-muted-foreground">
@@ -416,6 +449,49 @@ function PlanRow({
                     </ul>
                   </>
                 )}
+              </div>
+            )}
+            {plan.status !== "done" && planFillings.length > 0 && (
+              <div className="mt-1.5">
+                <p className="text-xs font-medium">
+                  {planFillings.length} filling batch{planFillings.length === 1 ? "" : "es"}
+                  {totalFillingG > 0 ? ` · ${totalFillingG}g total` : ""}
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {planFillings.map((pf) => {
+                    const filling = fillingMap.get(pf.fillingId);
+                    return (
+                      <li key={pf.id}>
+                        <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                          <span className="text-xs text-foreground truncate">{filling?.name ?? "Unknown filling"}</span>
+                          <span className="text-[10px] text-muted-foreground shrink-0">· {pf.targetGrams}g</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+            {plan.status === "done" && planFillings.length > 0 && (
+              <div className="mt-0.5">
+                <p className="text-xs font-medium mt-0.5">
+                  {planFillings.length} filling batch{planFillings.length === 1 ? "" : "es"}
+                  {totalFillingG > 0 ? ` · ${totalFillingG}g` : ""}
+                </p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {planFillings.map((pf) => {
+                    const filling = fillingMap.get(pf.fillingId);
+                    const actual = pf.actualYieldG ?? pf.targetGrams;
+                    return (
+                      <li key={pf.id}>
+                        <div className="flex items-center gap-1 min-w-0 flex-wrap">
+                          <span className="text-xs text-foreground truncate">{filling?.name ?? "Unknown filling"}</span>
+                          <span className="text-[10px] text-muted-foreground shrink-0">· {actual}g</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
             {plan.status !== "done" && planProducts.length > 0 && (
@@ -458,7 +534,7 @@ function PlanRow({
           <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
         </Link>
         <div className="flex items-center gap-1 pr-2">
-          {planProducts.length > 0 && (
+          {(planProducts.length > 0 || planFillings.length > 0) && (
             <Link
               href={`/production/${encodeURIComponent(plan.id ?? '')}/products`}
               className="p-1.5 rounded-full hover:bg-muted transition-colors"

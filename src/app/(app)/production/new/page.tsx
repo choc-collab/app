@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
-import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, toggleStep, useFillings, usePlanProducts, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames } from "@/lib/hooks";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, History, PackageX, Plus, ShoppingCart, X } from "lucide-react";
+import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, saveFillingStock, toggleStep, useFillings, usePlanProducts, usePlanFillings, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames } from "@/lib/hooks";
+import { AlertTriangle, ArrowLeft, Beaker, Check, ChevronDown, History, Package, PackageX, Plus, ShoppingCart, Sprout, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { Product, Mould, PlanProduct, PlanProductAdditionalMould, FillingPreviousBatch } from "@/types";
-import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, getTotalCavities } from "@/lib/production";
+import type { Product, Mould, PlanProduct, PlanFilling, PlanProductAdditionalMould, FillingPreviousBatch, Filling } from "@/types";
+import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, getTotalCavities } from "@/lib/production";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 
@@ -28,6 +28,10 @@ export default function NewProductionPlanPage() {
 function NewPlanContent() {
   const searchParams = useSearchParams();
   const fromPlanId = searchParams.get("from") ?? undefined;
+  // Escape hatch: `?mode=full` or `?mode=fillings-only` skips the plan-type
+  // picker and lands directly on the relevant flow. Used by deep links and
+  // E2E specs that exercise a specific flow.
+  const modeParam = searchParams.get("mode");
 
   const products = useProductsList();
   const moulds = useMouldsList(true);
@@ -37,7 +41,22 @@ function NewPlanContent() {
   const allCollectionProducts = useAllCollectionProducts();
   const router = useRouter();
 
-  const [phase, setPhase] = useState<"select" | "configure" | "batch-sizes">("select");
+  // Wizard phases:
+  //   plan-type       — new plans only: pick full vs fillings-only
+  //   select → configure → batch-sizes   — full-plan flow (unchanged)
+  //   filling-targets — fillings-only flow (inline picker + target grams)
+  const [phase, setPhase] = useState<"plan-type" | "select" | "configure" | "batch-sizes" | "filling-targets">(
+    fromPlanId ? "select"
+    : modeParam === "full" ? "select"
+    : modeParam === "fillings-only" ? "filling-targets"
+    : "plan-type",
+  );
+  // planMode is user intent, not persisted — mode is derived from plan contents
+  // at read time (presence of PlanProduct / PlanFilling rows).
+  const [planMode, setPlanMode] = useState<"full" | "fillings-only">(
+    modeParam === "fillings-only" ? "fillings-only" : "full",
+  );
+  const [fillingTargets, setFillingTargets] = useState<Array<{ fillingId: string; targetGrams: number; notes?: string }>>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set<string>());
   // `partialCavities` / `additionalMoulds` stay undefined/empty for the default
   // single-mould path so persisted PlanProducts match the legacy shape unless the
@@ -71,12 +90,35 @@ function NewPlanContent() {
   // Collection filter — default ON so active-collection products are prioritised
   const [filterToActiveCollection, setFilterToActiveCollection] = useState(true);
 
-  // Load source plan products when duplicating
+  // Load source plan products + fillings when duplicating
   const sourcePlanProducts = usePlanProducts(fromPlanId);
+  const sourcePlanFillings = usePlanFillings(fromPlanId);
 
-  // Pre-populate from source plan on first load
+  // Pre-populate from source plan on first load. Mode is inferred from what
+  // the source plan has (products vs fillings vs both) — initial v1 only
+  // supports pure modes, so duplicating a fillings-only plan hands the user
+  // the fillings-only flow; duplicating a full plan stays in full flow; a
+  // hybrid source is treated as full for now (filling batches aren't copied).
   useEffect(() => {
-    if (!fromPlanId || initialized || sourcePlanProducts.length === 0) return;
+    if (!fromPlanId || initialized) return;
+    const hasProducts = sourcePlanProducts.length > 0;
+    const hasFillings = sourcePlanFillings.length > 0;
+    if (!hasProducts && !hasFillings) return;
+
+    if (hasFillings && !hasProducts) {
+      setPlanMode("fillings-only");
+      setFillingTargets(
+        sourcePlanFillings.map((pf) => ({
+          fillingId: pf.fillingId,
+          targetGrams: pf.targetGrams,
+          notes: pf.notes,
+        })),
+      );
+      setPhase("filling-targets");
+      setInitialized(true);
+      return;
+    }
+
     const ids = new Set(sourcePlanProducts.map((pb) => pb.productId));
     setSelectedIds(ids);
     const cfg: Record<string, ProductConfig> = {};
@@ -96,7 +138,7 @@ function NewPlanContent() {
     if (reopened.size > 0) setAltOpen(reopened);
     setPhase("configure");
     setInitialized(true);
-  }, [sourcePlanProducts, fromPlanId, initialized]);
+  }, [sourcePlanProducts, sourcePlanFillings, fromPlanId, initialized]);
 
   const allIngredients = useIngredients();
   const selectedProducts = products.filter((r) => selectedIds.has(r.id!));
@@ -332,6 +374,86 @@ function NewPlanContent() {
     });
   }
 
+  /** Save path for a fillings-only plan. Skips PlanProduct save + mould math;
+   *  writes PlanFilling rows and (when logging a past batch) FillingStock rows
+   *  with remainingG = targetGrams. */
+  async function handleCreateFillingsOnly() {
+    if (fillingTargets.length === 0) return;
+    setSaving(true);
+    try {
+      const completedAt = isPastBatch ? new Date(completedDateStr + "T12:00:00") : undefined;
+      const batchNumber = completedAt ? await generateBatchNumber(completedAt) : undefined;
+
+      const planId = await saveProductionPlan({
+        name: planName.trim() || "Filling batch",
+        status: isPastBatch ? "done" : "draft",
+        notes: isPastBatch ? (batchNote.trim() || undefined) : "",
+        ...(completedAt ? { completedAt, batchNumber } : {}),
+      } as any);
+
+      const savedFillings: PlanFilling[] = [];
+      for (let i = 0; i < fillingTargets.length; i++) {
+        const ft = fillingTargets[i];
+        const id = await savePlanFilling({
+          planId,
+          fillingId: ft.fillingId,
+          targetGrams: ft.targetGrams,
+          sortOrder: i,
+          ...(ft.notes ? { notes: ft.notes } : {}),
+        });
+        savedFillings.push({ id, planId, fillingId: ft.fillingId, targetGrams: ft.targetGrams, sortOrder: i, notes: ft.notes });
+      }
+
+      if (isPastBatch && completedAt) {
+        const fillingsMap = new Map(allFillings.map((l) => [l.id!, l]));
+        // For past-batch logging the ingredient-aggregate section is elided —
+        // users are recording quantities they already made. The FILLING BATCHES
+        // block still captures batch names + targetGrams, which is the core
+        // recall info. Full per-ingredient aggregate is a future enhancement
+        // (needs a live fillingIngredients query for all target fillingIds).
+        const emptyIngredientsMap = new Map<string, import("@/types").FillingIngredient[]>();
+        const standaloneAmounts = calculateStandaloneFillingAmounts(savedFillings, fillingsMap, emptyIngredientsMap);
+
+        // Mark every planfilling-* step as done
+        for (const sf of standaloneAmounts) {
+          await toggleStep(planId, `planfilling-${sf.planFillingId}`, true);
+        }
+
+        // Emit FillingStock rows — one per PlanFilling, remainingG = targetGrams
+        const madeAt = completedAt.toISOString().slice(0, 10);
+        for (const pf of savedFillings) {
+          await saveFillingStock({
+            fillingId: pf.fillingId,
+            remainingG: pf.targetGrams,
+            planId,
+            madeAt,
+            createdAt: Date.now(),
+          });
+        }
+
+        const batchSummary = generateBatchSummary({
+          batchNumber: batchNumber ?? "",
+          planName: planName.trim() || "Filling batch",
+          completedAt,
+          planProducts: [],
+          productNames: new Map(),
+          moulds: new Map(),
+          fillingAmounts: [],
+          ingredients: allIngredients.filter((i) => i.id != null) as { id: string; name: string; manufacturer?: string }[],
+          standaloneFillings: standaloneAmounts,
+        });
+        await saveProductionPlan({ id: planId, name: planName.trim() || "Filling batch", status: "done", notes: batchNote.trim() || undefined, batchSummary, completedAt, batchNumber } as any);
+        setSaving(false);
+        router.push(`/production/${encodeURIComponent(planId)}/summary?from=%2Fproduction`);
+        return;
+      }
+
+      router.push(`/production/${encodeURIComponent(planId)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleCreate() {
     if (selectedProducts.length === 0) return;
     for (const r of selectedProducts) {
@@ -485,6 +607,47 @@ function NewPlanContent() {
           </p>
         )}
       </div>
+
+      {phase === "plan-type" && (
+        <div className="px-4 pt-2 pb-6 max-w-lg space-y-4">
+          <p className="text-sm text-muted-foreground">What do you want to make in this batch?</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              onClick={() => { setPlanMode("full"); setPhase("select"); }}
+              aria-pressed={planMode === "full"}
+              className="text-left rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/40 focus:outline-none focus:border-foreground"
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+                  <Package className="w-4 h-4 text-foreground" />
+                </div>
+              </div>
+              <p className="text-sm font-medium">Full production</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Products with shell, fillings, cap and unmould phases.
+              </p>
+            </button>
+            <button
+              onClick={() => { setPlanMode("fillings-only"); setPhase("filling-targets"); }}
+              aria-pressed={planMode === "fillings-only"}
+              className="text-left rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/40 focus:outline-none focus:border-foreground"
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+                  <Sprout className="w-4 h-4 text-foreground" />
+                </div>
+              </div>
+              <p className="text-sm font-medium">Fillings only</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Make batches of filling that go to stock — no products, no moulds.
+              </p>
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed pt-2">
+            Need both? Pick <span className="font-medium text-foreground">Full production</span> — you&rsquo;ll be able to add extra filling batches alongside your products from the plan detail page.
+          </p>
+        </div>
+      )}
 
       {phase === "select" && (
         <div className="px-4 space-y-3 pb-6">
@@ -943,6 +1106,32 @@ function NewPlanContent() {
           moulds={moulds}
           onBack={() => setPhase("configure")}
           onCreate={handleCreate}
+          saving={saving}
+        />
+      )}
+
+      {phase === "filling-targets" && (
+        <FillingTargetsPhase
+          fillings={allFillings}
+          fillingTargets={fillingTargets}
+          onAdd={(fillingId) =>
+            setFillingTargets((prev) => [...prev, { fillingId, targetGrams: 500 }])
+          }
+          onUpdate={(index, patch) =>
+            setFillingTargets((prev) => prev.map((ft, i) => (i === index ? { ...ft, ...patch } : ft)))
+          }
+          onRemove={(index) =>
+            setFillingTargets((prev) => prev.filter((_, i) => i !== index))
+          }
+          planName={planName}
+          setPlanName={setPlanName}
+          isPastBatch={isPastBatch}
+          completedDateStr={completedDateStr}
+          setCompletedDateStr={setCompletedDateStr}
+          batchNote={batchNote}
+          setBatchNote={setBatchNote}
+          onBack={() => (fromPlanId ? router.push("/production") : setPhase("plan-type"))}
+          onCreate={handleCreateFillingsOnly}
           saving={saving}
         />
       )}
@@ -1442,6 +1631,217 @@ function BatchSizesPhase({
           className="flex-1 rounded-full bg-accent text-accent-foreground py-2.5 text-sm font-medium disabled:opacity-50"
         >
           {saving ? "Creating…" : "Create plan"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Fillings-only flow ─────────────────────────────────────────────────────
+function FillingTargetsPhase({
+  fillings,
+  fillingTargets,
+  onAdd,
+  onUpdate,
+  onRemove,
+  planName,
+  setPlanName,
+  isPastBatch,
+  completedDateStr,
+  setCompletedDateStr,
+  batchNote,
+  setBatchNote,
+  onBack,
+  onCreate,
+  saving,
+}: {
+  fillings: Filling[];
+  fillingTargets: { fillingId: string; targetGrams: number; notes?: string }[];
+  onAdd: (fillingId: string) => void;
+  onUpdate: (index: number, patch: Partial<{ targetGrams: number; notes: string }>) => void;
+  onRemove: (index: number) => void;
+  planName: string;
+  setPlanName: (v: string) => void;
+  isPastBatch: boolean;
+  completedDateStr: string;
+  setCompletedDateStr: (v: string) => void;
+  batchNote: string;
+  setBatchNote: (v: string) => void;
+  onBack: () => void;
+  onCreate: () => void;
+  saving: boolean;
+}) {
+  const [showPicker, setShowPicker] = useState(false);
+  const [query, setQuery] = useState("");
+  const usedIds = new Set(fillingTargets.map((ft) => ft.fillingId));
+  const options = fillings
+    .filter((f) => !f.archived && !usedIds.has(f.id!) && f.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const fillingById = new Map(fillings.map((f) => [f.id!, f]));
+  const totalGrams = fillingTargets.reduce((s, ft) => s + (ft.targetGrams || 0), 0);
+  const canCreate = fillingTargets.length > 0 && fillingTargets.every((ft) => ft.targetGrams > 0) && !saving;
+
+  return (
+    <div className="px-4 space-y-4 pb-6 max-w-lg">
+      <div>
+        <label className="label" htmlFor="plan-name">Plan name</label>
+        <input
+          id="plan-name"
+          type="text"
+          value={planName}
+          onChange={(e) => setPlanName(e.target.value)}
+          className="input w-full"
+          placeholder="Filling batch — Thursday"
+        />
+      </div>
+
+      {isPastBatch && (
+        <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+          <div>
+            <label className="label" htmlFor="past-batch-date">Completed on</label>
+            <input
+              id="past-batch-date"
+              type="date"
+              value={completedDateStr}
+              onChange={(e) => setCompletedDateStr(e.target.value)}
+              className="input w-full"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="past-batch-note">Notes (optional)</label>
+            <input
+              id="past-batch-note"
+              type="text"
+              value={batchNote}
+              onChange={(e) => setBatchNote(e.target.value)}
+              className="input w-full"
+              placeholder="Any notes for this batch…"
+            />
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="flex items-baseline justify-between mb-2">
+          <p className="text-sm font-medium">Fillings to make ({fillingTargets.length})</p>
+          {totalGrams > 0 && (
+            <span className="text-xs text-muted-foreground">Total: {totalGrams}g</span>
+          )}
+        </div>
+        {fillingTargets.length > 0 ? (
+          <div className="divide-y divide-border rounded-lg border border-border bg-card">
+            {fillingTargets.map((ft, idx) => {
+              const filling = fillingById.get(ft.fillingId);
+              return (
+                <div key={`${ft.fillingId}-${idx}`} className="flex items-center gap-3 px-3 py-2.5">
+                  <Beaker className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{filling?.name ?? "Unknown filling"}</p>
+                    {filling?.category && (
+                      <p className="text-xs text-muted-foreground truncate">{filling.category}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <input
+                      type="number"
+                      min="1"
+                      step="10"
+                      value={ft.targetGrams || ""}
+                      onChange={(e) => {
+                        const n = parseInt(e.target.value);
+                        onUpdate(idx, { targetGrams: isNaN(n) ? 0 : Math.max(0, n) });
+                      }}
+                      className="w-20 rounded-md border border-border bg-card px-2 py-1 text-sm text-right focus:outline-none focus:border-foreground"
+                      aria-label={`Target grams for ${filling?.name ?? "filling"}`}
+                    />
+                    <span className="text-xs text-muted-foreground">g</span>
+                  </div>
+                  <button
+                    onClick={() => onRemove(idx)}
+                    className="p-1 rounded-full hover:bg-muted transition-colors shrink-0"
+                    aria-label={`Remove ${filling?.name ?? "filling"}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border bg-card px-3 py-6 text-center">
+            <p className="text-xs text-muted-foreground">No fillings selected yet.</p>
+          </div>
+        )}
+
+        <div className="mt-3">
+          {showPicker ? (
+            <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search fillings…"
+                className="input w-full"
+                aria-label="Search fillings"
+                autoFocus
+              />
+              <ul className="divide-y divide-border max-h-72 overflow-y-auto -mx-1 px-1">
+                {options.map((f) => (
+                  <li key={f.id}>
+                    <button
+                      onClick={() => { onAdd(f.id!); setShowPicker(false); setQuery(""); }}
+                      className="w-full flex items-center gap-2 py-2 text-left hover:bg-muted/40 rounded-md px-2 transition-colors"
+                    >
+                      <Beaker className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{f.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{f.category}</p>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+                {options.length === 0 && (
+                  <p className="text-xs text-muted-foreground py-4 text-center">
+                    {usedIds.size === fillings.filter((f) => !f.archived).length
+                      ? "All fillings are already added."
+                      : "No matches."}
+                  </p>
+                )}
+              </ul>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => { setShowPicker(false); setQuery(""); }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowPicker(true)}
+              className="inline-flex items-center gap-1.5 text-sm text-foreground hover:opacity-70 transition-opacity"
+            >
+              <Plus className="w-4 h-4" /> Add filling
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex gap-2 pt-4 border-t border-border">
+        <button
+          onClick={onBack}
+          className="rounded-full border border-border bg-card px-5 py-2.5 text-sm"
+        >
+          Back
+        </button>
+        <button
+          onClick={onCreate}
+          disabled={!canCreate}
+          className="flex-1 rounded-full bg-accent text-accent-foreground py-2.5 text-sm font-medium disabled:opacity-50"
+        >
+          {saving ? (isPastBatch ? "Logging…" : "Creating…") : isPastBatch ? "Log completed batch" : "Create plan"}
         </button>
       </div>
     </div>

@@ -439,7 +439,8 @@ export interface PlanProduct {
 // stepKey formats:
 //   "color-{mouldId}"                 — colour/brush mould
 //   "shell-{mouldId}"                 — shell mould
-//   "filling-{planProductId}-{fillingId}" — make a filling
+//   "filling-{planProductId}-{fillingId}" — make a filling (product-driven)
+//   "planfilling-{planFillingId}"    — make a standalone filling batch (filling-only / hybrid plans)
 //   "fill-{planProductId}"            — fill shells for a product
 //   "cap-{mouldId}"                   — cap mould
 export interface PlanStepStatus {
@@ -448,6 +449,28 @@ export interface PlanStepStatus {
   stepKey: string;
   done: boolean;
   doneAt?: Date;
+}
+
+/** A standalone filling batch scheduled in a production plan.
+ *  Produces FillingStock on completion. Coexists with PlanProduct in the same
+ *  plan — a plan with PlanProducts only is "full", PlanFillings only is
+ *  "fillings-only", both is "hybrid". The mode is derived, not stored. */
+export interface PlanFilling {
+  id?: string;
+  planId: string;
+  fillingId: string;
+  /** Target weight of this batch in grams. Multiplier vs the recipe's base
+   *  total grams is derived for display. Free-form so users can top up stock
+   *  to any amount. */
+  targetGrams: number;
+  sortOrder: number;
+  notes?: string;
+  /** Actual yield captured at finalize-time. When the plan is marked done,
+   *  a FillingStock row is written with remainingG = actualYieldG ?? targetGrams. */
+  actualYieldG?: number;
+  /** Ingredient stock status for this filling's recipe — shown in the plan
+   *  warning summary the same way PlanProduct.stockStatus does. */
+  stockStatus?: "low" | "gone";
 }
 
 // --- Filling Stock (leftover filling) ---

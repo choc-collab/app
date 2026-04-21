@@ -2,16 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  useProductionPlan, usePlanProducts, usePlanStepStatuses,
+  useProductionPlan, usePlanProducts, usePlanFillings, usePlanStepStatuses,
   useProductsList, useProductFillingsForProducts, useFillings, useFillingIngredientsForFillings,
-  useMouldsList, useIngredients, saveProductionPlan, savePlanProduct, toggleStep,
+  useMouldsList, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, deletePlanFilling, toggleStep,
   useDecorationMaterials, setDecorationMaterialLowStock, useCurrentCoatingMappings,
   saveFillingStock, deductFillingStock, useShelfStableCategoryNames,
 } from "@/lib/hooks";
-import { generateSteps, calculateFillingAmounts, consolidateSharedFillings, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
-import type { Filling, Mould, PlanProduct, Product, DecorationMaterial } from "@/types";
+import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
+import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
 import { normalizeApplyAt } from "@/types";
-import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, StickyNote, Plus, ClipboardList, Printer } from "lucide-react";
+import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 import { LeftoverModal } from "@/components/leftover-modal";
@@ -38,6 +38,7 @@ export default function ProductionPlanPage() {
 
   const plan = useProductionPlan(planId);
   const planProducts = usePlanProducts(planId);
+  const planFillings = usePlanFillings(planId);
   const stepStatuses = usePlanStepStatuses(planId);
   const products = useProductsList();
   const allFillings = useFillings();
@@ -75,6 +76,7 @@ export default function ProductionPlanPage() {
       planId={planId}
       plan={plan}
       planProducts={planProducts}
+      planFillings={planFillings}
       productNames={productNames}
       productsMap={productsMap}
       fillingsMap={fillingsMap}
@@ -87,11 +89,12 @@ export default function ProductionPlanPage() {
 
 // Separate component so we can load per-product fillings via individual hooks
 function PlanContent({
-  planId, plan, planProducts, productNames, productsMap, fillingsMap, mouldsMap, statusMap, productIds,
+  planId, plan, planProducts, planFillings, productNames, productsMap, fillingsMap, mouldsMap, statusMap, productIds,
 }: {
   planId: string;
   plan: { id?: string; batchNumber?: string; batchSummary?: string; name: string; status: string; notes?: string; fillingOverrides?: string; fillingPreviousBatches?: string; createdAt: Date; completedAt?: Date };
   planProducts: PlanProduct[];
+  planFillings: PlanFilling[];
   productNames: Map<string, string>;
   productsMap: Map<string, Product>;
   fillingsMap: Map<string, Filling>;
@@ -153,14 +156,16 @@ function PlanContent({
 
   const productFillingsMap = useProductFillingsForProducts(productIds);
 
-  // Load filling ingredients for all fillings in the plan
+  // Load filling ingredients for every filling the plan touches — both via
+  // products (productFillingsMap) and via standalone PlanFilling rows.
   const planFillingIds = useMemo(() => {
     const ids = new Set<string>();
     for (const bls of productFillingsMap.values()) {
       for (const bl of bls) ids.add(bl.fillingId);
     }
+    for (const pf of planFillings) ids.add(pf.fillingId);
     return Array.from(ids);
-  }, [productFillingsMap]);
+  }, [productFillingsMap, planFillings]);
 
   const fillingIngredientsMap = useFillingIngredientsForFillings(planFillingIds);
 
@@ -179,15 +184,47 @@ function PlanContent({
     [planProducts, productNames, productFillingsMap, fillingIngredientsMap, fillingsMap, mouldsMap, fillingOverrides, fillingPreviousBatches, productsMap, shelfStableCategoryNames]
   );
 
+  /** Standalone (PlanFilling-driven) batch amounts — scaled ingredients for
+   *  each row. Empty for pure full-production plans. */
+  const standaloneAmounts = useMemo(
+    () => calculateStandaloneFillingAmounts(planFillings, fillingsMap, fillingIngredientsMap),
+    [planFillings, fillingsMap, fillingIngredientsMap],
+  );
+
   const consolidatedFillings = useMemo(
     () => consolidateSharedFillings(fillingAmounts.filter((la) => !la.isFromPreviousBatch)),
     [fillingAmounts],
   );
 
   const steps = useMemo(() =>
-    generateSteps(planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap),
-    [planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap]
+    generateSteps(planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts),
+    [planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts]
   );
+
+  /** Mode is derived from plan contents — no stored enum. */
+  const planMode: "full" | "fillings-only" | "hybrid" = useMemo(() => {
+    const hasProducts = planProducts.length > 0;
+    const hasFillings = planFillings.length > 0;
+    if (hasProducts && hasFillings) return "hybrid";
+    if (hasFillings) return "fillings-only";
+    return "full";
+  }, [planProducts.length, planFillings.length]);
+
+  /** Phases with at least one step — fillings-only plans collapse to just
+   *  the Fillings tab; hybrid plans retain the full phase list. */
+  const visiblePhases = useMemo(
+    () => PHASES.filter((p) => steps.some((s) => s.group === p.id)),
+    [steps],
+  );
+
+  // Keep activePhase valid when the default ("colour") isn't in visiblePhases
+  // (e.g. fillings-only plans). Snap to the first available phase once steps load.
+  useEffect(() => {
+    if (visiblePhases.length === 0) return;
+    if (!visiblePhases.some((p) => p.id === activePhase)) {
+      setActivePhase(visiblePhases[0].id);
+    }
+  }, [visiblePhases, activePhase]);
 
   // Decoration material IDs needed for the colour phase (on_mould steps only)
   const colouringMaterialIds = useMemo(() => {
@@ -369,6 +406,12 @@ function PlanContent({
 
   async function completePlan() {
     const completedAt = new Date();
+    // Emit FillingStock rows for every standalone filling batch whose step is
+    // marked done — one row per PlanFilling, remainingG = targetGrams. Skip
+    // PlanFillings that already have a FillingStock row for this plan+filling
+    // to keep completePlan idempotent across retries.
+    await writeFillingStockForDoneBatches(completedAt);
+
     const batchSummary = generateBatchSummary({
       batchNumber: plan.batchNumber,
       planName: plan.name,
@@ -381,8 +424,40 @@ function PlanContent({
       previousBatches: Object.keys(fillingPreviousBatches).length > 0 ? fillingPreviousBatches : undefined,
       productsMap,
       productFillingsMap,
+      standaloneFillings: standaloneAmounts,
     });
     await saveProductionPlan({ ...plan as any, id: plan.id, status: "done", completedAt, batchSummary });
+  }
+
+  /** Write FillingStock rows for every PlanFilling whose `planfilling-*` step
+   *  is marked done. Deduplicates on (planId, fillingId) so re-completing a
+   *  plan doesn't double-write stock. Re-reads step status from the DB rather
+   *  than relying on the React closure — this runs right after a toggleStep
+   *  write, and useLiveQuery may not have re-rendered yet. */
+  async function writeFillingStockForDoneBatches(completedAt: Date) {
+    if (planFillings.length === 0) return;
+    const { db } = await import("@/lib/db");
+    const [existing, liveStatuses] = await Promise.all([
+      db.fillingStock.where("planId").equals(planId).toArray(),
+      db.planStepStatus.where("planId").equals(planId).toArray(),
+    ]);
+    const doneKeys = new Set(liveStatuses.filter((s) => s.done).map((s) => s.stepKey));
+    const existingKey = new Set(existing.map((s) => `${s.planId}::${s.fillingId}`));
+    const madeAt = completedAt.toISOString().slice(0, 10);
+    for (const pf of planFillings) {
+      if (!pf.id) continue;
+      if (!doneKeys.has(`planfilling-${pf.id}`)) continue;
+      const key = `${planId}::${pf.fillingId}`;
+      if (existingKey.has(key)) continue;
+      await saveFillingStock({
+        fillingId: pf.fillingId,
+        remainingG: pf.actualYieldG ?? pf.targetGrams,
+        planId,
+        madeAt,
+        createdAt: Date.now(),
+      });
+      existingKey.add(key);
+    }
   }
 
   async function handleReset() {
@@ -706,14 +781,27 @@ function PlanContent({
 
 
       {steps.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center px-4">
-          No steps generated. Make sure the products in this plan have fillings assigned.
-        </p>
+        <div className="px-4 py-6 space-y-4">
+          <p className="text-sm text-muted-foreground text-center">
+            No steps generated. Add a filling batch below, or add products with fillings to this plan.
+          </p>
+          {/* Allow adding standalone batches even when the plan has no steps —
+              this is the path back from an emptied-out fillings-only plan. */}
+          <StandaloneBatchesPanel
+            planId={planId}
+            planFillings={planFillings}
+            fillingsMap={fillingsMap}
+            allFillings={allFillings}
+            statusMap={statusMap}
+            nextSortOrder={planFillings.reduce((m, pf) => Math.max(m, pf.sortOrder ?? 0), -1) + 1}
+          />
+        </div>
       ) : (
         <>
-          {/* Phase tab bar */}
+          {/* Phase tab bar — only phases with at least one step are shown;
+              fillings-only plans collapse to a single "Fillings" tab. */}
           <div className="flex gap-1.5 overflow-x-auto px-4 pb-1 mt-3" style={{ scrollbarWidth: "none" }}>
-            {PHASES.map(({ id, label }) => {
+            {visiblePhases.map(({ id, label }) => {
               const phaseSteps = steps.filter((s) => s.group === id);
               const phaseDone = phaseSteps.filter((s) => statusMap.get(s.key)).length;
               const allPhaseDone = phaseSteps.length > 0 && phaseDone === phaseSteps.length;
@@ -771,15 +859,31 @@ function PlanContent({
               </div>
             )}
 
-            {/* Scaled recipes link — shown only in the Fillings tab */}
-            {activePhase === "filling" && fillingAmounts.length > 0 && (
-              <Link
-                href={`/production/${encodeURIComponent(planId)}/products?back=${activePhase}`}
-                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <BookOpen className="w-4 h-4 shrink-0" />
-                Scaled recipes
-              </Link>
+            {/* Fillings-tab actions — view scaled recipes + manage standalone
+                filling batches. The Scaled-recipes button sits inline with the
+                panel's empty-state "Add filling batch" button; when the panel
+                expands (batches exist or the user is adding one) the panel
+                card occupies its own row below. */}
+            {activePhase === "filling" && (
+              <div className="flex flex-wrap items-start gap-2">
+                {(fillingAmounts.length > 0 || standaloneAmounts.length > 0) && (
+                  <Link
+                    href={`/production/${encodeURIComponent(planId)}/products?back=${activePhase}`}
+                    className="btn-secondary"
+                  >
+                    <BookOpen className="w-4 h-4 shrink-0" />
+                    Scaled recipes
+                  </Link>
+                )}
+                <StandaloneBatchesPanel
+                  planId={planId}
+                  planFillings={planFillings}
+                  fillingsMap={fillingsMap}
+                  allFillings={allFillings}
+                  statusMap={statusMap}
+                  nextSortOrder={planFillings.reduce((m, pf) => Math.max(m, pf.sortOrder ?? 0), -1) + 1}
+                />
+              </div>
             )}
 
             {/* Step checklist for active phase */}
@@ -1141,3 +1245,185 @@ function StepItem({ step, done, onToggle, materialsMap, yieldInfo }: {
   );
 }
 
+// ─── Standalone filling-batches panel (hybrid + fillings-only plans) ─────────
+// Lets the user add extra filling batches to any plan and remove ones that
+// haven't been started yet. Done batches (step marked complete) are locked —
+// a completed batch has already been written to FillingStock and must not
+// disappear silently.
+function StandaloneBatchesPanel({
+  planId,
+  planFillings,
+  fillingsMap,
+  allFillings,
+  statusMap,
+  nextSortOrder,
+}: {
+  planId: string;
+  planFillings: PlanFilling[];
+  fillingsMap: Map<string, Filling>;
+  allFillings: Filling[];
+  statusMap: Map<string, boolean>;
+  nextSortOrder: number;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [pickFillingId, setPickFillingId] = useState<string>("");
+  const [pickGrams, setPickGrams] = useState<string>("500");
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
+
+  const usedFillingIds = new Set(planFillings.map((pf) => pf.fillingId));
+  const options = allFillings
+    .filter((f) => !f.archived && !usedFillingIds.has(f.id!))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  async function handleAdd() {
+    const g = parseInt(pickGrams, 10);
+    if (!pickFillingId || !g || g <= 0) return;
+    await savePlanFilling({
+      planId,
+      fillingId: pickFillingId,
+      targetGrams: g,
+      sortOrder: nextSortOrder,
+    });
+    setAdding(false);
+    setPickFillingId("");
+    setPickGrams("500");
+  }
+
+  async function handleRemove(id: string) {
+    await deletePlanFilling(id);
+    setPendingRemoveId(null);
+  }
+
+  // Empty state: render as a pill button so it reads as a real action rather
+  // than a footnote. Matches the adjacent "Scaled recipes" button.
+  if (planFillings.length === 0 && !adding) {
+    return (
+      <button
+        onClick={() => setAdding(true)}
+        className="btn-secondary"
+      >
+        <Sprout className="w-4 h-4 shrink-0" /> Add filling batch for stock
+      </button>
+    );
+  }
+
+  // Expanded: take the full row (breaks the inline flex pair onto its own line).
+  return (
+    <div className="basis-full rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-3 py-2 border-b border-border bg-muted/40 flex items-center justify-between">
+        <p className="mono-label text-muted-foreground flex items-center gap-1.5">
+          <Sprout className="w-3.5 h-3.5" /> Filling batches for stock
+        </p>
+        <span className="text-[10px] text-muted-foreground">
+          {planFillings.length} batch{planFillings.length === 1 ? "" : "es"}
+        </span>
+      </div>
+
+      {planFillings.length > 0 && (
+        <ul className="divide-y divide-border">
+          {planFillings.map((pf) => {
+            const filling = fillingsMap.get(pf.fillingId);
+            const stepKey = `planfilling-${pf.id}`;
+            const done = statusMap.get(stepKey) ?? false;
+            const isPendingRemove = pendingRemoveId === pf.id;
+            return (
+              <li key={pf.id} className="flex items-center gap-2 px-3 py-2">
+                <Beaker className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate">{filling?.name ?? "Unknown filling"}</p>
+                  {filling?.category && (
+                    <p className="text-xs text-muted-foreground truncate">{filling.category}</p>
+                  )}
+                </div>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">{pf.targetGrams}g</span>
+                {done ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-status-ok shrink-0">
+                    <Check className="w-3 h-3" /> Made
+                  </span>
+                ) : isPendingRemove ? (
+                  <span className="flex items-center gap-1.5 text-xs shrink-0">
+                    <span className="text-muted-foreground">Remove?</span>
+                    <button onClick={() => handleRemove(pf.id!)} className="text-destructive font-medium hover:underline">
+                      Yes
+                    </button>
+                    <button onClick={() => setPendingRemoveId(null)} className="text-muted-foreground hover:underline">
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setPendingRemoveId(pf.id!)}
+                    className="p-1 rounded-full hover:bg-muted transition-colors shrink-0"
+                    aria-label={`Remove ${filling?.name ?? "filling"} batch`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {adding ? (
+        <div className="px-3 py-2.5 border-t border-border bg-muted/20 space-y-2">
+          <div>
+            <label className="label" htmlFor="batch-filling-picker">Filling</label>
+            <select
+              id="batch-filling-picker"
+              value={pickFillingId}
+              onChange={(e) => setPickFillingId(e.target.value)}
+              className="input w-full"
+              autoFocus
+            >
+              <option value="">— pick a filling —</option>
+              {options.map((f) => (
+                <option key={f.id} value={f.id!}>
+                  {f.name} {f.category ? `· ${f.category}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="batch-target-grams">Target weight (g)</label>
+            <input
+              id="batch-target-grams"
+              type="number"
+              min="1"
+              step="10"
+              value={pickGrams}
+              onChange={(e) => setPickGrams(e.target.value)}
+              className="input w-full"
+            />
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <button
+              onClick={() => { setAdding(false); setPickFillingId(""); setPickGrams("500"); }}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAdd}
+              disabled={!pickFillingId || !pickGrams || parseInt(pickGrams, 10) <= 0}
+              className="btn-primary px-3 py-1 text-xs"
+            >
+              Add batch
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="px-3 py-2 border-t border-border">
+          <button
+            onClick={() => setAdding(true)}
+            disabled={options.length === 0}
+            className="inline-flex items-center gap-1.5 text-sm text-foreground hover:opacity-70 disabled:opacity-40 transition-opacity"
+          >
+            <Plus className="w-4 h-4" />
+            {options.length === 0 ? "All fillings already batched" : "Add filling batch"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

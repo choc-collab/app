@@ -83,7 +83,7 @@ test.describe("Production wizard — alternative mould setup", () => {
     await createMould(page, "Alt Rect 15", "10", "15");
     await createMould(page, "Alt Heart 24", "8", "24");
 
-    await page.goto("/production/new");
+    await page.goto("/production/new?mode=full");
     await page.getByText("Alt Truffle").click();
     await page.getByRole("button", { name: /Continue.*selected/ }).click();
 

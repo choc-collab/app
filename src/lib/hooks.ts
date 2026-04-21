@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromGrams } from "@/lib/costCalculation";
@@ -1170,6 +1170,35 @@ export async function savePlanProduct(pb: Omit<PlanProduct, "id"> & { id?: strin
     return pb.id;
   }
   return db.planProducts.add(pb as PlanProduct) as Promise<string>;
+}
+
+// --- PlanFilling (standalone filling batches in a plan) ---
+
+/** Live list of standalone filling batches for a plan, sorted by sortOrder. */
+export function usePlanFillings(planId: string | undefined) {
+  return useLiveQuery(
+    () => planId
+      ? db.planFillings.where("planId").equals(planId).toArray().then((rows) => rows.sort((a, b) => a.sortOrder - b.sortOrder))
+      : [],
+    [planId],
+  ) ?? [];
+}
+
+export async function savePlanFilling(pf: Omit<PlanFilling, "id"> & { id?: string }): Promise<string> {
+  if (pf.id) {
+    await db.planFillings.update(pf.id, pf);
+    return pf.id;
+  }
+  return db.planFillings.add(pf as PlanFilling) as Promise<string>;
+}
+
+export async function deletePlanFilling(id: string): Promise<void> {
+  await db.planFillings.delete(id);
+}
+
+/** Bulk fetch — used by list/stats pages that aggregate across plans. */
+export function useAllPlanFillings(): PlanFilling[] {
+  return useLiveQuery(() => db.planFillings.toArray()) ?? [];
 }
 
 export function usePlanStepStatuses(planId: string | undefined) {
