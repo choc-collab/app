@@ -68,8 +68,30 @@ function attachListeners(page: Page) {
 }
 
 for (const route of ROUTES) {
-  test(`hydrates without errors: ${route}`, async ({ page }) => {
+  test(`hydrates without errors: ${route}`, async ({ page, request }) => {
     const errors = attachListeners(page);
+
+    // Contract check on the RAW HTML — runs before the browser touches it.
+    // Catches routing bugs where the server rewrites a static URL to a different
+    // page (e.g. Cloudflare's _redirects catch-all eating /production/new and
+    // returning the /production/_spa/ SPA shell). Those would still "hydrate"
+    // without errors but serve the wrong page under the right URL.
+    const raw = await request.get(route).then((r) => r.text());
+    const trailing = route.replace(/\/$/, "").split("/").filter(Boolean).pop();
+    if (trailing && trailing !== "") {
+      // The static-export route tree shows up as `"c":["","…","<segment>",…]`
+      // inside a __next_f.push payload. We assert the final URL segment is
+      // present in the served HTML and the `_spa` placeholder is NOT present.
+      const wrongShell = /["\\]+_spa["\\]+/.test(raw);
+      const routeMatches = new RegExp(`["\\\\]+${trailing}["\\\\]+`).test(raw);
+      if (wrongShell || !routeMatches) {
+        throw new Error(
+          `Server-rendered HTML for ${route} does not match the requested route. ` +
+            `This usually means a _redirects rule is over-matching and serving the ` +
+            `wrong static file. See AGENT.md → "Static-export hydration gotchas".`,
+        );
+      }
+    }
 
     await page.goto(route, { waitUntil: "load" });
     // Give React time to hydrate + Dexie's live queries time to resolve so the
