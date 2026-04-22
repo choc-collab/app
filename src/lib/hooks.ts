@@ -522,24 +522,27 @@ export async function unarchiveFillingCategory(id: string): Promise<void> {
   await db.fillingCategories.update(id, { archived: false, updatedAt: new Date() });
 }
 
-/** Idempotent — seeds any missing default filling categories. Safe to
- *  call repeatedly; uses a per-name existence check so concurrent/double
- *  invocations (e.g. React StrictMode) can't produce duplicates. */
+/** Idempotent — seeds any missing default filling categories. Transaction-
+ *  wrapped so concurrent invocations (React StrictMode double-mount, SeedLoader
+ *  racing importBackup's post-restore reconciliation, Dexie Cloud sync) can't
+ *  each observe an empty table and independently insert the same names. */
 export async function ensureDefaultFillingCategories(): Promise<void> {
   const { DEFAULT_FILLING_CATEGORIES } = await import("@/types");
-  const existing = await db.fillingCategories.toArray();
-  const existingNames = new Set(existing.map((c) => c.name));
-  const now = new Date();
-  for (const cat of DEFAULT_FILLING_CATEGORIES) {
-    if (existingNames.has(cat.name)) continue;
-    await db.fillingCategories.add({
-      name: cat.name,
-      shelfStable: cat.shelfStable,
-      createdAt: now,
-      updatedAt: now,
-    } as FillingCategory);
-    existingNames.add(cat.name);
-  }
+  await db.transaction("rw", db.fillingCategories, async () => {
+    const existing = await db.fillingCategories.toArray();
+    const existingNames = new Set(existing.map((c) => c.name));
+    const now = new Date();
+    for (const cat of DEFAULT_FILLING_CATEGORIES) {
+      if (existingNames.has(cat.name)) continue;
+      await db.fillingCategories.add({
+        name: cat.name,
+        shelfStable: cat.shelfStable,
+        createdAt: now,
+        updatedAt: now,
+      } as FillingCategory);
+      existingNames.add(cat.name);
+    }
+  });
 }
 
 // --- Filling versioning ---
@@ -1276,22 +1279,27 @@ export async function addCoating(coating: string): Promise<void> {
 /** Idempotently ensure the default seeded categories (moulded + bar) exist.
  *  Called from the seed loader on every app load — no-ops once seeded. Fresh users
  *  hit this path because the v2 upgrade hook only runs for users coming from v1. */
+/** Idempotent — seeds any missing default product categories. Transaction-
+ *  wrapped so concurrent invocations can't both observe an empty table and
+ *  independently insert the same names (see ensureDefaultShellDesigns). */
 export async function ensureDefaultProductCategories(): Promise<void> {
-  const existing = await db.productCategories.toArray();
-  const existingNames = new Set(existing.map((c) => c.name));
-  const missing = DEFAULT_PRODUCT_CATEGORIES.filter((seed) => !existingNames.has(seed.name));
-  if (missing.length === 0) return;
-  const now = new Date();
-  await db.productCategories.bulkAdd(
-    missing.map((seed) => ({
-      name: seed.name,
-      shellPercentMin: seed.shellPercentMin,
-      shellPercentMax: seed.shellPercentMax,
-      defaultShellPercent: seed.defaultShellPercent,
-      createdAt: now,
-      updatedAt: now,
-    } as ProductCategory)),
-  );
+  await db.transaction("rw", db.productCategories, async () => {
+    const existing = await db.productCategories.toArray();
+    const existingNames = new Set(existing.map((c) => c.name));
+    const missing = DEFAULT_PRODUCT_CATEGORIES.filter((seed) => !existingNames.has(seed.name));
+    if (missing.length === 0) return;
+    const now = new Date();
+    await db.productCategories.bulkAdd(
+      missing.map((seed) => ({
+        name: seed.name,
+        shellPercentMin: seed.shellPercentMin,
+        shellPercentMax: seed.shellPercentMax,
+        defaultShellPercent: seed.defaultShellPercent,
+        createdAt: now,
+        updatedAt: now,
+      } as ProductCategory)),
+    );
+  });
 }
 
 export function useProductCategories(includeArchived = false): ProductCategory[] {
@@ -1385,19 +1393,24 @@ export function useProductCategoryUsageCounts(): Map<string, number> {
 
 // --- Ingredient categories ---
 
+/** Idempotent — seeds any missing default ingredient categories. Transaction-
+ *  wrapped so concurrent invocations can't both observe an empty table and
+ *  independently insert the same names (see ensureDefaultShellDesigns). */
 export async function ensureDefaultIngredientCategories(): Promise<void> {
-  const existing = await db.ingredientCategories.toArray();
-  const existingNames = new Set(existing.map((c) => c.name));
-  const missing = DEFAULT_INGREDIENT_CATEGORIES.filter((seed) => !existingNames.has(seed.name));
-  if (missing.length === 0) return;
-  const now = new Date();
-  await db.ingredientCategories.bulkAdd(
-    missing.map((seed) => ({
-      name: seed.name,
-      createdAt: now,
-      updatedAt: now,
-    } as IngredientCategory)),
-  );
+  await db.transaction("rw", db.ingredientCategories, async () => {
+    const existing = await db.ingredientCategories.toArray();
+    const existingNames = new Set(existing.map((c) => c.name));
+    const missing = DEFAULT_INGREDIENT_CATEGORIES.filter((seed) => !existingNames.has(seed.name));
+    if (missing.length === 0) return;
+    const now = new Date();
+    await db.ingredientCategories.bulkAdd(
+      missing.map((seed) => ({
+        name: seed.name,
+        createdAt: now,
+        updatedAt: now,
+      } as IngredientCategory)),
+    );
+  });
 }
 
 export function useIngredientCategories(includeArchived = false): IngredientCategory[] {
@@ -2293,22 +2306,26 @@ export async function unarchiveDecorationCategory(id: string): Promise<void> {
   await db.decorationCategories.update(id, { archived: false, updatedAt: new Date() });
 }
 
-/** Idempotent — seeds default decoration categories if the table is empty. */
+/** Idempotent — seeds default decoration categories if the table is empty.
+ *  Transaction-wrapped so concurrent invocations can't double-seed (see the
+ *  comment on ensureDefaultShellDesigns for the full rationale). */
 export async function ensureDefaultDecorationCategories(): Promise<void> {
   const { DEFAULT_DECORATION_CATEGORIES } = await import("@/types");
-  const existing = await db.decorationCategories.toArray();
-  const existingSlugs = new Set(existing.map((c) => c.slug));
-  const now = new Date();
-  for (const cat of DEFAULT_DECORATION_CATEGORIES) {
-    if (existingSlugs.has(cat.slug)) continue;
-    await db.decorationCategories.add({
-      name: cat.name,
-      slug: cat.slug,
-      createdAt: now,
-      updatedAt: now,
-    } as DecorationCategory);
-    existingSlugs.add(cat.slug);
-  }
+  await db.transaction("rw", db.decorationCategories, async () => {
+    const existing = await db.decorationCategories.toArray();
+    const existingSlugs = new Set(existing.map((c) => c.slug));
+    const now = new Date();
+    for (const cat of DEFAULT_DECORATION_CATEGORIES) {
+      if (existingSlugs.has(cat.slug)) continue;
+      await db.decorationCategories.add({
+        name: cat.name,
+        slug: cat.slug,
+        createdAt: now,
+        updatedAt: now,
+      } as DecorationCategory);
+      existingSlugs.add(cat.slug);
+    }
+  });
 }
 
 // --- Shell Designs ---
@@ -2357,21 +2374,29 @@ export async function unarchiveShellDesign(id: string): Promise<void> {
 }
 
 /** Idempotent — seeds default shell designs if the table is empty. */
+/** Idempotent — seeds any missing default shell designs. The read + every insert
+ *  runs inside a single Dexie transaction so two concurrent invocations (React
+ *  StrictMode double-mount, SeedLoader racing with importBackup's post-restore
+ *  reconciliation, Dexie Cloud sync retry) can't each observe an empty table
+ *  and independently insert the same names, which is what caused duplicate
+ *  "Airbrushing" / "Brushing" etc. entries on the designs page. */
 export async function ensureDefaultShellDesigns(): Promise<void> {
   const { DEFAULT_SHELL_DESIGNS } = await import("@/types");
-  const existing = await db.shellDesigns.toArray();
-  const existingNames = new Set(existing.map((d) => d.name));
-  const now = new Date();
-  for (const design of DEFAULT_SHELL_DESIGNS) {
-    if (existingNames.has(design.name)) continue;
-    await db.shellDesigns.add({
-      name: design.name,
-      defaultApplyAt: design.defaultApplyAt,
-      createdAt: now,
-      updatedAt: now,
-    } as ShellDesign);
-    existingNames.add(design.name);
-  }
+  await db.transaction("rw", db.shellDesigns, async () => {
+    const existing = await db.shellDesigns.toArray();
+    const existingNames = new Set(existing.map((d) => d.name));
+    const now = new Date();
+    for (const design of DEFAULT_SHELL_DESIGNS) {
+      if (existingNames.has(design.name)) continue;
+      await db.shellDesigns.add({
+        name: design.name,
+        defaultApplyAt: design.defaultApplyAt,
+        createdAt: now,
+        updatedAt: now,
+      } as ShellDesign);
+      existingNames.add(design.name);
+    }
+  });
 }
 
 // --- Collections ---

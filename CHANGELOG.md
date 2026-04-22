@@ -6,10 +6,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-### Fixed
 
 
-## [0.2.0] — 2026-04-26
+## [0.2.0] — 2026-04-22
 
 ### Added
 - **Alternative mould setup for production plans** — the new-plan wizard has an opt-in "Alternative mould setup" disclosure on each product card (collapsed by default) for the rare cases where a product is poured into more than one mould type or only part of a mould is used. You can add additional moulds, or specify an exact cavity count instead of a mould count. Scaled recipes sum fill volume across every mould, shell/fill/cap steps are emitted per mould so the checklist tracks each physical pour, and the plan list + batch summary show a single row per product that lists every mould used (e.g. `2× Rect 15 + 12 cavities of Heart 24`). The default single-mould path is unchanged.
@@ -31,6 +30,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Hydration warning on first page load caused by the pre-hydration `data-nav-collapsed` script writing an attribute to `<html>`.
 - **Cost per gram could still be saved as `€0.0000/g` when the `g per unit` field was typed into for purchases in `g` or `kg`** — follow-on to the v0.2.0 fix. The field was auto-filled to the definitional value (1 or 1000) on load, but remained editable, so users reading "g per unit" as "grams per package" could type e.g. 2500 for a 2500 g bag and multiply the total mass by 2500× on save. The live preview and the saved record both showed `€0.0000/g`. Reopening the ingredient appeared to fix it (the field was re-coerced on load) but the underlying row was still wrong until the next save. The field is now read-only for `g`/`kg` with a locked visual style, and the cost-per-gram preview plus the saved row derive `g per unit` directly from the unit — so legacy records rendered via the detail view are corrected immediately, without re-entry, and the save path always writes a self-consistent row. `ml`, `L`, and `pcs` remain editable as before.
 - **Saving an ingredient could add two identical rows to its price history** — reproducing the bug above tended to produce a pair of price-history rows, one per save, with the same displayed `€X for Yg` line. Two independent causes: a rapid double-submit (click racing Enter) could slip past the async `saving` button-disable before React re-rendered, and the scenario above legitimately marked "price changed" on the repair-on-reopen save. The form now uses a synchronous reentrancy guard to reject overlapping submits, and `saveIngredientPriceEntry` skips the insert if the newest existing entry already has identical pricing fields.
+- **Shell designs (and other seeded default lists) could appear twice after a backup restore** — every app load runs a `ensureDefault…` pass that tops up the shell-designs, filling-categories, ingredient-categories, decoration-categories, and product-categories tables from their seed list if any entries are missing. The check-then-insert wasn't atomic, so two concurrent runs (React StrictMode's double-mount in dev, SeedLoader racing `importBackup`'s post-restore reconciliation, or a Dexie Cloud sync retry) could both observe an empty table and each independently insert the defaults, producing duplicate "Airbrushing", "Brushing", etc. rows. The check + insert now runs inside a Dexie transaction, so concurrent callers serialise and the second one sees the first's writes. Prevents new duplicates; doesn't retroactively clean up existing ones — for that, delete the extras from the list page (or ask for a one-shot cleanup utility).
+- **Shell-design dropdown on the product edit page snapped back to the first option ("Airbrushing") on every change** — the `onChange` handler called two separate state updates (`updateTechnique` then `updateApplyAt`) that each read the same stale `steps` from the closure, so the second call overwrote the first and reverted the technique change. The handler now applies both fields in a single update.
 
 ## [0.1.0] — 2026-04-19
 

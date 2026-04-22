@@ -2263,12 +2263,21 @@ function ShellDesignSection({
                     <select
                       value={step.technique}
                       onChange={(e) => {
-                        updateTechnique(i, e.target.value);
-                        // Auto-set applyAt from the design's default when switching technique
-                        const design = shellDesigns.find((d) => d.name === e.target.value);
-                        if (design?.defaultApplyAt) {
-                          updateApplyAt(i, normalizeApplyAt(design.defaultApplyAt));
-                        }
+                        // Apply both technique + default applyAt in a SINGLE update.
+                        // Splitting into two calls (updateTechnique then updateApplyAt)
+                        // caused the second to overwrite the first with stale `steps`
+                        // from the closure, reverting the technique back to the
+                        // previous value on every change.
+                        const newTechnique = e.target.value;
+                        const design = shellDesigns.find((d) => d.name === newTechnique);
+                        const newApplyAt = design?.defaultApplyAt
+                          ? normalizeApplyAt(design.defaultApplyAt)
+                          : undefined;
+                        update(steps.map((s, idx) =>
+                          idx === i
+                            ? { ...s, technique: newTechnique, ...(newApplyAt ? { applyAt: newApplyAt } : {}) }
+                            : s
+                        ));
                       }}
                       className="input"
                     >
