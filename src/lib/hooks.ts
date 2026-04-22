@@ -1550,6 +1550,19 @@ export async function setFacilityMayContain(allergens: string[]): Promise<void> 
   await updatePreference({ facilityMayContain: allergens });
 }
 
+/**
+ * Reactive read of the last app version the user saw the "What's new" banner
+ * for. `undefined` means they've never seen one (fresh install or pre-banner
+ * user). `null` is the initial loading state before Dexie returns.
+ */
+export function useLastSeenVersion(): string | null | undefined {
+  return useLiveQuery(async () => (await getPreferences()).lastSeenVersion ?? null, [], undefined);
+}
+
+export async function setLastSeenVersion(version: string): Promise<void> {
+  await updatePreference({ lastSeenVersion: version });
+}
+
 // --- Filling usage (which products use a filling) ---
 
 export function useFillingUsageCounts(): Map<string, number> {

@@ -353,6 +353,8 @@ export interface UserPreferences {
   defaultFillMode: FillMode;
   facilityMayContain: string[];
   coatings: string[];
+  /** Last app version for which the user saw (or was seeded past) the "What's new" banner. */
+  lastSeenVersion?: string;
   updatedAt: Date;
 }
 

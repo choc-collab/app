@@ -470,12 +470,23 @@ function buildImportButtonLabel(
   willRemove: boolean,
 ): string {
   if (!analysis) return `Import ${entityName}s`;
+  const willUpdate = updateExisting && analysis.willUpdateOrDup > 0;
+  const willDelete = willRemove && analysis.missingCount > 0;
+
+  // Common case — only inserting new rows, no sync options. Keep the concise
+  // "Import N entityName(s)" label; this is what e2e/csv-import.spec.ts asserts.
+  if (!willUpdate && !willDelete) {
+    const n = analysis.willInsert;
+    if (n === 0) return `Import ${entityName}s`;
+    return `Import ${n} ${entityName}${n === 1 ? "" : "s"}`;
+  }
+
+  // Compound case — multiple actions. Join them into one label.
   const parts: string[] = [];
   if (analysis.willInsert > 0) parts.push(`import ${analysis.willInsert}`);
-  if (updateExisting && analysis.willUpdateOrDup > 0) parts.push(`update ${analysis.willUpdateOrDup}`);
-  if (willRemove && analysis.missingCount > 0) parts.push(`review ${analysis.missingCount} for deletion`);
+  if (willUpdate) parts.push(`update ${analysis.willUpdateOrDup}`);
+  if (willDelete) parts.push(`review ${analysis.missingCount} for deletion`);
   if (parts.length === 0) return `Import ${entityName}s`;
-  // Capitalise first word
   const joined = parts.join(", ");
   return joined.charAt(0).toUpperCase() + joined.slice(1);
 }
