@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
 
 ## [0.2.0] — 2026-04-26
 
@@ -23,9 +25,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Settings → Backup copy updated to mention that a safety snapshot auto-downloads before any destructive operation.
 
 ### Fixed
+- **"New production plan" page got stuck on "Loading…" on Cloudflare Pages** — only the Cloudflare-deployed build was affected; localhost dev was fine. The page's `<Suspense>` had a non-null JSX fallback that, unlike every other page in the app, pre-rendered real content inside the static-export CSR-bailout marker. React 19's minified production build refused to reconcile that content on hydration and threw error #418, leaving the Suspense stuck on its fallback forever. Switched the fallback to `null` to match the pattern used elsewhere.
 - **Cost per gram was shown as 0 for ingredients priced in grams** — e.g. *2500 g at €80* displayed as `€0.000/g` instead of `€0.032/g`. The form used to silently default `g per unit` to 1000 regardless of whether the purchase unit was `g` or `kg`, inflating the total mass 1000×. The form now uses the definitional value (`g` → 1, `kg` → 1000) and the cost-per-gram calculation derives it directly from the unit, so every list, report, and detail view of an already-saved ingredient is corrected without any re-entry. Only `g` and `kg` are auto-set; `ml`, `L`, and `pcs` still take the density/piece weight you entered.
 - **CSV ingredient import flagged user-created categories as "Unknown"** — the validator only recognised the built-in seed list (Chocolate, Fats, Sugars, …) and warned on anything else, even though a category the user had created in the app was valid and saved correctly on import. The validator now consults the live `ingredientCategories` table in addition to the seed list, so only genuinely unknown names are flagged.
 - Hydration warning on first page load caused by the pre-hydration `data-nav-collapsed` script writing an attribute to `<html>`.
+- **Cost per gram could still be saved as `€0.0000/g` when the `g per unit` field was typed into for purchases in `g` or `kg`** — follow-on to the v0.2.0 fix. The field was auto-filled to the definitional value (1 or 1000) on load, but remained editable, so users reading "g per unit" as "grams per package" could type e.g. 2500 for a 2500 g bag and multiply the total mass by 2500× on save. The live preview and the saved record both showed `€0.0000/g`. Reopening the ingredient appeared to fix it (the field was re-coerced on load) but the underlying row was still wrong until the next save. The field is now read-only for `g`/`kg` with a locked visual style, and the cost-per-gram preview plus the saved row derive `g per unit` directly from the unit — so legacy records rendered via the detail view are corrected immediately, without re-entry, and the save path always writes a self-consistent row. `ml`, `L`, and `pcs` remain editable as before.
+- **Saving an ingredient could add two identical rows to its price history** — reproducing the bug above tended to produce a pair of price-history rows, one per save, with the same displayed `€X for Yg` line. Two independent causes: a rapid double-submit (click racing Enter) could slip past the async `saving` button-disable before React re-rendered, and the scenario above legitimately marked "price changed" on the repair-on-reopen save. The form now uses a synchronous reentrancy guard to reject overlapping submits, and `saveIngredientPriceEntry` skips the insert if the newest existing entry already has identical pricing fields.
 
 ## [0.1.0] — 2026-04-19
 

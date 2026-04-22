@@ -70,6 +70,29 @@ The app targets 300+ products and 1000+ fillings. Keep these rules in mind for e
 
 ---
 
+## Static-export hydration gotchas
+
+ChocCollab is deployed as a static export and served by Cloudflare Pages. `next dev` (Turbopack) does **not** produce static HTML — the dev server renders everything live on the client — so hydration mismatches that only exist in the built artefact cannot be caught by running `npm run dev` or the regular e2e suite.
+
+Known and suspected traps when changing any page under `src/app/(app)/`:
+
+- **`<Suspense fallback={<JSX/>}>` on a page that uses `useSearchParams()`.** Every other page in this app uses `fallback={null}`. A non-null JSX fallback lands real content *inside* the `BAILOUT_TO_CLIENT_SIDE_RENDERING` marker in the pre-rendered HTML. This is a suspected trigger for hydration failures on Cloudflare (see `/production/new`). The hydration smoke suite locally does not reproduce the failure with this pattern alone, but the convention is: match the null-fallback pattern used elsewhere.
+- **Non-deterministic render values** — `Date.now()`, `Math.random()`, `new Date()` inside JSX (not inside handlers/effects), locale-dependent `toLocaleString` without a fixed locale.
+- **`typeof window !== 'undefined'` branching** during render.
+- **Invalid HTML tag nesting** — `<div>` inside `<p>`, block-level elements inside inline, `<tr>` outside a `<table>`.
+- **External data read during render that differs between server build and client load** (e.g. time-based flags).
+
+### Catching hydration failures
+
+Two layers, both wired into the repo:
+
+1. `src/app/hydration-patterns.test.ts` — fast vitest guard. Grep-level check that fails loudly the moment a forbidden pattern is introduced into `src/app/`. Add a rule here every time a hydration bug teaches us a new anti-pattern.
+2. `npm run test:e2e:prod` — builds the static export, serves `out/` via `scripts/serve-static.mjs`, and loads every top-level route through Playwright ([e2e/hydration.spec.ts](e2e/hydration.spec.ts)) asserting no React error, no `pageerror`, and that `<main>` has non-empty content. Configuration is in `playwright.prod.config.ts`.
+
+Both layers have known limits. The vitest check only catches patterns we already know about. The smoke suite only catches failures that reproduce under a plain Node static server — some failures are specific to the Cloudflare Pages edge (HTTP/2, Brotli, CSP headers, Cloudflare's HTML transformers) and won't surface locally. Treat `test:e2e:prod` as "did the static build render at all", not as "this will behave identically on Cloudflare". When a page works locally but fails on Cloudflare, start by comparing the served HTML byte-for-byte against a working page, and check Cloudflare's Speed → Optimization settings for HTML-modifying features.
+
+Run `npm run test:e2e:prod` before any release. Run `npm test` (which includes `hydration-patterns.test.ts`) on every change.
+
 ## Keeping Docs in Sync
 
 **Non-negotiable: every user-visible change — feature, UX tweak, or bug fix — ships with a `CHANGELOG.md` entry in the same change.** Add it under `## [Unreleased]` (create the section if absent) at the time you make the code change, not as a follow-up. The only things that don't need an entry are changes the user will never notice: internal refactors with no behavior change, test-only edits, tooling, and `AGENT.md`/contributor-doc tweaks. When in doubt, write the entry. It is easier for a reviewer to delete an unnecessary line than to realise after release that a user-affecting change went undocumented.

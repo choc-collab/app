@@ -7,7 +7,7 @@ import { useSpaId } from "@/lib/use-spa-id";
 import { useIngredient, useIngredients, useIngredientUsage, saveIngredient, deleteIngredient, archiveIngredient, unarchiveIngredient, checkIngredientBeforeDelete, useIngredientPriceHistory, deleteIngredientPriceHistoryEntry, setIngredientLowStock, setIngredientOutOfStock, markIngredientOrdered, useCurrencySymbol, useCurrentCoatingMappings } from "@/lib/hooks";
 import type { IngredientDeleteCheck } from "@/lib/hooks";
 import { IngredientForm } from "@/components/ingredient-form";
-import { COMPOSITION_FIELDS, allergenLabel, type Ingredient } from "@/types";
+import { COMPOSITION_FIELDS, allergenLabel, costPerGram as computeCostPerGram, type Ingredient } from "@/types";
 import { ArrowLeft, Pencil, Layers, Trash2, ChevronDown, X, AlertTriangle, Archive, ArchiveRestore } from "lucide-react";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
@@ -108,13 +108,9 @@ export default function IngredientDetailPage() {
 
   const tags = ingredient.allergens.filter(Boolean);
 
-  const costPerGram =
-    ingredient.purchaseCost != null &&
-    ingredient.purchaseQty != null &&
-    ingredient.gramsPerUnit != null &&
-    ingredient.purchaseQty * ingredient.gramsPerUnit > 0
-      ? ingredient.purchaseCost / (ingredient.purchaseQty * ingredient.gramsPerUnit)
-      : null;
+  // Use the shared utility — it derives gramsPerUnit from the unit for g/kg, so
+  // legacy records with a wrong stored gramsPerUnit still render the right value.
+  const costPerGram = computeCostPerGram(ingredient);
 
   return (
     <div>

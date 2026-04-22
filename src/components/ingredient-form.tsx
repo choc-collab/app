@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import type { Ingredient, CompositionKey } from "@/types";
 import { getAllergensByRegion, COMPOSITION_FIELDS, migrateAllergens } from "@/types";
 import { saveIngredient, useMarketRegion, useCurrencySymbol, useCoatings, useCurrentCoatingMappings, saveCoatingChocolateMapping, addCoating, updateCoatingTemperingFlag, useIngredientCategoryNames } from "@/lib/hooks";
@@ -177,19 +177,37 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
     setComp((prev) => ({ ...prev, [key]: value }));
   }
 
+  // For g/kg the field is locked; derive the effective value from the unit so the
+  // preview and the save path stay correct even if state is briefly stale or a
+  // legacy record has a wrong stored gramsPerUnit.
+  const gramsPerUnitLocked = autoGramsPerUnit(purchaseUnit) !== null;
+  const effectiveGramsPerUnit = useMemo(() => {
+    const auto = autoGramsPerUnit(purchaseUnit);
+    if (auto !== null) return auto;
+    const parsed = parseFloat(gramsPerUnit);
+    return isNaN(parsed) ? null : parsed;
+  }, [purchaseUnit, gramsPerUnit]);
+
   // Derived cost per gram for preview
   const derivedCostPerGram = useMemo(() => {
     const cost = parseFloat(purchaseCost);
     const qtyVal = parseFloat(purchaseQty);
-    const gpuVal = parseFloat(gramsPerUnit);
-    if (!cost || !qtyVal || qtyVal <= 0 || !gpuVal || gpuVal <= 0) return null;
-    return cost / (qtyVal * gpuVal);
-  }, [purchaseCost, purchaseQty, gramsPerUnit]);
+    if (!cost || !qtyVal || qtyVal <= 0) return null;
+    if (!effectiveGramsPerUnit || effectiveGramsPerUnit <= 0) return null;
+    return cost / (qtyVal * effectiveGramsPerUnit);
+  }, [purchaseCost, purchaseQty, effectiveGramsPerUnit]);
+
+  // Synchronous reentrancy guard — `saving` state updates asynchronously, so rapid
+  // re-submits (double-click, Enter racing a click) can both pass through setSaving.
+  // The ref flips immediately and blocks the second call at the door.
+  const savingRef = useRef(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (savingRef.current) return;
     if (!name.trim()) return;
     if (!compEmpty && !compValid) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       // Build nutrition data from local string state
@@ -221,7 +239,10 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
         purchaseDate: purchaseDate || undefined,
         purchaseQty: parseFloat(purchaseQty) || undefined,
         purchaseUnit: purchaseUnit || undefined,
-        gramsPerUnit: parseFloat(gramsPerUnit) || undefined,
+        // For g/kg the value is definitional — use the derived value so the DB
+        // row is self-consistent even if the state or a legacy record had a wrong
+        // gramsPerUnit (e.g. 2500 typed into a locked-by-definition field).
+        gramsPerUnit: effectiveGramsPerUnit ?? undefined,
         cacaoFat: parseFloat(comp.cacaoFat) || 0,
         sugar: parseFloat(comp.sugar) || 0,
         milkFat: parseFloat(comp.milkFat) || 0,
@@ -247,6 +268,7 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
       onSaved();
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   }
 
@@ -545,7 +567,9 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
             <div>
               <label
                 className="label"
-                title="Net weight in grams of a single unit (from packaging). For liquids, use density: water ≈ 1000 g/L, milk ≈ 1030, cream 35% ≈ 995, honey ≈ 1420, oil ≈ 920."
+                title={gramsPerUnitLocked
+                  ? `Fixed by the unit — 1 ${purchaseUnit} = ${autoGramsPerUnit(purchaseUnit)} g.`
+                  : "Net weight in grams of a single unit (from packaging). For liquids, use density: water ≈ 1000 g/L, milk ≈ 1030, cream 35% ≈ 995, honey ≈ 1420, oil ≈ 920."}
               >
                 g per unit
               </label>
@@ -555,9 +579,13 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
                 min="0"
                 value={gramsPerUnit}
                 onChange={(e) => { setGramsPerUnit(e.target.value); setGramsPerUnitTouched(true); }}
-                className="input"
+                readOnly={gramsPerUnitLocked}
+                className={cn("input", gramsPerUnitLocked && "bg-muted/40 text-muted-foreground cursor-not-allowed")}
                 placeholder="e.g. 1000"
-                title="Net weight in grams of a single unit (from packaging). For liquids, use density: water ≈ 1000 g/L, milk ≈ 1030, cream 35% ≈ 995, honey ≈ 1420, oil ≈ 920."
+                aria-readonly={gramsPerUnitLocked || undefined}
+                title={gramsPerUnitLocked
+                  ? `Fixed by the unit — 1 ${purchaseUnit} = ${autoGramsPerUnit(purchaseUnit)} g.`
+                  : "Net weight in grams of a single unit (from packaging). For liquids, use density: water ≈ 1000 g/L, milk ≈ 1030, cream 35% ≈ 995, honey ≈ 1420, oil ≈ 920."}
               />
             </div>
           </div>

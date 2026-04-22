@@ -30,6 +30,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
+    "test:e2e:prod": "next build && playwright test --config=playwright.prod.config.ts",
     "docs:screenshots": "PLAYWRIGHT_DOCS=1 playwright test e2e/docs-screenshots.spec.ts",
     "audit": "npm audit --audit-level=moderate"
   },

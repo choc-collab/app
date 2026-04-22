@@ -1612,6 +1612,23 @@ export function useIngredientPriceHistory(ingredientId: string | undefined): Ing
 async function saveIngredientPriceEntry(ingredientId: string, ingredient: Ingredient): Promise<void> {
   const cpg = deriveIngredientCostPerGram(ingredient);
   if (cpg === null) return;
+  // Defence against duplicate rows from re-entrant saves (form double-submit,
+  // concurrent code paths): if the newest entry already has identical pricing
+  // fields, skip. The form's savingRef is the primary guard; this is backstop.
+  const prior = await db.ingredientPriceHistory
+    .where("ingredientId").equals(ingredientId).toArray();
+  if (prior.length > 0) {
+    prior.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+    const newest = prior[0];
+    if (
+      newest.purchaseCost === ingredient.purchaseCost &&
+      newest.purchaseQty === ingredient.purchaseQty &&
+      newest.purchaseUnit === ingredient.purchaseUnit &&
+      newest.gramsPerUnit === ingredient.gramsPerUnit
+    ) {
+      return;
+    }
+  }
   await db.ingredientPriceHistory.add({
     ingredientId,
     costPerGram: cpg,

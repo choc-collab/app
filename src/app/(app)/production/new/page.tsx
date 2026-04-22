@@ -18,8 +18,12 @@ interface IngredientIssue {
 }
 
 export default function NewProductionPlanPage() {
+  // fallback={null} matches every other app page that uses useSearchParams. Non-null
+  // JSX here lands inside the CSR-bailout Suspense in the pre-rendered HTML, which
+  // React 19's minified production build fails to reconcile — surfacing as error #418
+  // on Cloudflare Pages (but not on localhost dev, which skips static export).
   return (
-    <Suspense fallback={<div className="px-4 pt-6"><p className="text-sm text-muted-foreground">Loading…</p></div>}>
+    <Suspense fallback={null}>
       <NewPlanContent />
     </Suspense>
   );
