@@ -84,8 +84,16 @@ export interface Ingredient {
  *  purchaseQty defaults to 1 when absent — supports the simplified "price for X grams" model. */
 export function costPerGram(ing: Ingredient): number | null {
   if (ing.pricingIrrelevant) return 0;
-  const { purchaseCost, purchaseQty, gramsPerUnit } = ing;
-  if (!purchaseCost || !gramsPerUnit) return null;
+  const { purchaseCost, purchaseQty, purchaseUnit } = ing;
+  if (!purchaseCost) return null;
+  // For unambiguous units (g, kg), derive gramsPerUnit from the unit itself rather
+  // than trusting the stored value — repairs ingredients saved with a stale default
+  // (pre-fix, new ingredients defaulted gramsPerUnit=1000 even when the unit was g).
+  const gramsPerUnit =
+    purchaseUnit === "g" ? 1 :
+    purchaseUnit === "kg" ? 1000 :
+    ing.gramsPerUnit;
+  if (!gramsPerUnit) return null;
   const totalGrams = (purchaseQty ?? 1) * gramsPerUnit;
   if (totalGrams <= 0) return null;
   return purchaseCost / totalGrams;
@@ -241,6 +249,11 @@ export interface Filling {
   instructions: string;
   status?: FillingStatus;
   shelfLifeWeeks?: number; // shelf life in weeks — relevant for shelf-stable categories (Pralines, Fruit-Based)
+  /** Measured cooked yield in grams — what the pan weighs after cooking, tare subtracted.
+   *  When set, rescaling math uses this as the base instead of the raw ingredient sum,
+   *  so "produce 600 g of filling" means 600 g on the scale after reducing. Optional —
+   *  fillings without cook-loss (ganaches, pralinés) can leave this undefined. */
+  measuredYieldG?: number;
   // Versioning fields
   rootId?: string;        // undefined for unforked fillings; set to v1.id once any fork is made
   version?: number;       // 1-indexed; undefined = legacy unforked filling (treat as v1)

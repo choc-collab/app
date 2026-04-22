@@ -445,9 +445,11 @@ export function calculateFillingAmounts(
         });
         continue;
       } else if (isShelfStable) {
-        // Use base product weight × user-supplied multiplier (default 1)
+        // Use base cooked yield × user-supplied multiplier (default 1). Measured yield is
+        // preferred over raw ingredient sum when set, so the label reflects pan output.
         const multiplier = fillingOverrides[lw.fillingId] ?? 1;
-        weightG = Math.round(lw.totalWeight * multiplier);
+        const baseYield = filling.measuredYieldG ?? lw.totalWeight;
+        weightG = Math.round(baseYield * multiplier);
       } else if (isGramsMode) {
         // Grams mode: fillGrams per cavity × total cavities across all slots
         weightG = Math.round(bl.fillGrams! * totalCavities);
@@ -457,9 +459,13 @@ export function calculateFillingAmounts(
         weightG = Math.round(fillWeightG * fillPct);
       }
 
-      // Scale each ingredient from product weight to required weight
+      // Scale each ingredient from the recipe's cooked yield to the required weight.
+      // When measuredYieldG is set, raw ingredients scale up to account for cook-loss
+      // (e.g. a caramel recipe yielding 503 g cooked from 688 g raw at 1× is correctly
+      // scaled up by ~1.37× to produce 688 g cooked when requested).
+      const baseYield = filling.measuredYieldG ?? lw.totalWeight;
+      const scaleFactor = baseYield > 0 ? weightG / baseYield : 1;
       const scaledIngredients: ScaledIngredient[] = lw.ingredients.map((li) => {
-        const scaleFactor = lw.totalWeight > 0 ? weightG / lw.totalWeight : 1;
         return {
           ingredientId: li.ingredientId,
           amount: Math.round(li.amount * scaleFactor * 10) / 10,
@@ -497,7 +503,10 @@ export type StandaloneFillingAmount = {
 };
 
 /** Compute ingredient amounts for each PlanFilling row.
- *  Scale factor = targetGrams ÷ (sum of FillingIngredient.amount for that filling). */
+ *  Scale factor = targetGrams ÷ cooked yield. When `filling.measuredYieldG` is set it
+ *  is used as the yield; otherwise the raw ingredient sum is used as a fallback.
+ *  This means `targetGrams` always refers to grams of finished filling (on the scale
+ *  after cooking) — raw ingredients scale up to account for cook-loss. */
 export function calculateStandaloneFillingAmounts(
   planFillings: PlanFilling[],
   fillingsMap: Map<string, Filling>,
@@ -508,8 +517,9 @@ export function calculateStandaloneFillingAmounts(
     const filling = fillingsMap.get(pf.fillingId);
     if (!filling || !pf.id) continue;
     const lis = fillingIngredientsMap.get(pf.fillingId) ?? [];
-    const baseTotal = lis.reduce((s, li) => s + li.amount, 0);
-    const multiplier = baseTotal > 0 ? pf.targetGrams / baseTotal : 0;
+    const rawTotal = lis.reduce((s, li) => s + li.amount, 0);
+    const baseYield = filling.measuredYieldG ?? rawTotal;
+    const multiplier = baseYield > 0 ? pf.targetGrams / baseYield : 0;
     const scaledIngredients: ScaledIngredient[] = lis.map((li) => ({
       ingredientId: li.ingredientId,
       amount: Math.round(li.amount * multiplier * 10) / 10,

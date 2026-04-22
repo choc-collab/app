@@ -287,6 +287,50 @@ describe("calculateFillingAmounts", () => {
     expect(tripleResult[0].weightG).toBe(Math.round(fillWeight * 3));
     expect(tripleResult[0].weightG).toBeGreaterThan(singleResult[0].weightG * 2);
   });
+
+  it("scales raw ingredients up to hit the cavity weight when measuredYieldG is set (fill-scaled)", () => {
+    // Cavity weight target ≈ 113.4 g. Recipe: 200 g raw → 150 g cooked (25% loss).
+    // scaleFactor = 113.4 / 150 ≈ 0.756, so raw ingredient scales to 200 × 0.756 ≈ 151.2.
+    const filling = makeFilling({ measuredYieldG: 150 });
+    const result = calculateFillingAmounts(
+      [makePlanProduct()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [makeProductFilling({ fillPercentage: 100 })]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 200 })]]]),
+      new Map([["1", filling]]),
+      new Map([["1", mould]]),
+    );
+    const expectedFillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR * DENSITY_G_PER_ML;
+    expect(result[0].weightG).toBe(Math.round(expectedFillWeight));
+    // Ingredient scaled from raw 200 g up to produce `weightG` of cooked filling
+    const expectedAmount = Math.round(200 * (Math.round(expectedFillWeight) / 150) * 10) / 10;
+    expect(result[0].scaledIngredients[0].amount).toBe(expectedAmount);
+  });
+
+  it("uses measuredYieldG for the shelf-stable weight label so it reflects cooked yield × multiplier", () => {
+    // Pâte de fruit recipe: 300 g raw → 200 g cooked. Multiplier = 2× gives 400 g cooked, not 600 g raw.
+    const filling = makeFilling({
+      category: "Fruit-Based (Pectins & Acids)",
+      name: "Raspberry gel",
+      measuredYieldG: 200,
+    });
+    const bl = makeProductFilling({ fillPercentage: 100 });
+    const li = makeFillingIngredient({ amount: 300 });
+
+    const result = calculateFillingAmounts(
+      [makePlanProduct()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [bl]]]),
+      new Map([["1", [li]]]),
+      new Map([["1", filling]]),
+      new Map([["1", mould]]),
+      { "1": 2 },
+    );
+
+    expect(result[0].weightG).toBe(400); // 200 g cooked × 2, not 300 g raw × 2
+    // Raw ingredient still scales by 2× (the "× base recipe" multiplier the user set)
+    expect(result[0].scaledIngredients[0].amount).toBe(600);
+  });
 });
 
 // ─── consolidateSharedFillings ──────────────────────────────────────────────
@@ -1475,6 +1519,38 @@ describe("calculateStandaloneFillingAmounts", () => {
     const li = makeFillingIngredient({ amount: 100, unit: "ml", note: "room temp" });
     const [out] = calculateStandaloneFillingAmounts([pf], new Map([["1", filling]]), new Map([["1", [li]]]));
     expect(out.scaledIngredients[0]).toMatchObject({ unit: "ml", note: "room temp", amount: 100 });
+  });
+
+  it("scales by measuredYieldG when set, accounting for cook-loss", () => {
+    // Raw sum = 688 g, cooked yield = 503 g (26.9% loss). Target = 600 g cooked
+    // → multiplier = 600 / 503 ≈ 1.193 (not 600/688 = 0.872).
+    const pf = makePlanFilling({ targetGrams: 600 });
+    const filling = makeFilling({ id: "1", name: "Caramel", measuredYieldG: 503 });
+    const sugar: FillingIngredient = { id: "s", fillingId: "1", ingredientId: "sugar", amount: 400, unit: "g", sortOrder: 0 };
+    const cream: FillingIngredient = { id: "c", fillingId: "1", ingredientId: "cream", amount: 288, unit: "g", sortOrder: 1 };
+
+    const [out] = calculateStandaloneFillingAmounts(
+      [pf],
+      new Map([["1", filling]]),
+      new Map([["1", [sugar, cream]]]),
+    );
+
+    expect(out.multiplier).toBe(1.19); // 600/503 ≈ 1.1928, rounded to 2dp for display
+    // Raw ingredients scale by full-precision multiplier (1.1928…), each rounded to 1dp:
+    //   400 × 1.1928 = 477.13 → 477.1
+    //   288 × 1.1928 = 343.53 → 343.5
+    expect(out.scaledIngredients[0].amount).toBe(477.1);
+    expect(out.scaledIngredients[1].amount).toBe(343.5);
+  });
+
+  it("falls back to raw ingredient total when measuredYieldG is undefined", () => {
+    // Pure ganache — no cook-loss. target = raw sum → multiplier = 1.
+    const pf = makePlanFilling({ targetGrams: 150 });
+    const filling = makeFilling({ id: "1" }); // no measuredYieldG
+    const li = makeFillingIngredient({ amount: 150 });
+    const [out] = calculateStandaloneFillingAmounts([pf], new Map([["1", filling]]), new Map([["1", [li]]]));
+    expect(out.multiplier).toBe(1);
+    expect(out.scaledIngredients[0].amount).toBe(150);
   });
 });
 

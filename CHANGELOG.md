@@ -6,6 +6,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+- **Measured cooked yield on fillings** — fillings that lose mass during cooking (caramels, pâtes de fruits, anything reduced on the stove) now have an optional *Measured yield (g)* field on the edit form. Weigh the pan empty, cook the recipe, weigh the pan full, enter the difference once. The filling detail page then shows the raw-to-cooked reckoning under the ingredient total (e.g. `688g raw → 503g cooked · −185g (26.9%)`). When rescaling, ChocCollab uses the cooked yield as the base: asking for *600 g of caramel* in a production plan now produces 600 g on the scale after reducing, not 600 g of raw ingredients that cook down to ~440 g. Fillings without cook-loss (ganaches, pralinés) can leave the field blank and keep using the raw ingredient total as before — behaviour is unchanged until you enter a yield.
+
 ## [0.2.0] — 2026-04-26
 
 ### Added

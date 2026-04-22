@@ -43,6 +43,7 @@ export default function FillingDetailPage() {
   const [instructions, setInstructions] = useState("");
   const [status, setStatus] = useState("");
   const [shelfLifeWeeks, setShelfLifeWeeks] = useState<string>("");
+  const [measuredYieldG, setMeasuredYieldG] = useState<string>("");
   const [syncedId, setSyncedId] = useState<string | null>(null);
 
   // Fork state
@@ -85,6 +86,7 @@ export default function FillingDetailPage() {
     setInstructions(filling.instructions || "");
     setStatus(filling.status || "");
     setShelfLifeWeeks(filling.shelfLifeWeeks != null ? String(filling.shelfLifeWeeks) : "");
+    setMeasuredYieldG(filling.measuredYieldG != null ? String(filling.measuredYieldG) : "");
     setSyncedId(filling.id);
   }
 
@@ -101,7 +103,8 @@ export default function FillingDetailPage() {
     description !== (filling.description || "") ||
     instructions !== (filling.instructions || "") ||
     status !== (filling.status || "") ||
-    shelfLifeWeeks !== (filling.shelfLifeWeeks != null ? String(filling.shelfLifeWeeks) : "")
+    shelfLifeWeeks !== (filling.shelfLifeWeeks != null ? String(filling.shelfLifeWeeks) : "") ||
+    measuredYieldG !== (filling.measuredYieldG != null ? String(filling.measuredYieldG) : "")
   );
   const isDirty = (isNew && !savedOnce) || formDirty;
 
@@ -161,6 +164,7 @@ export default function FillingDetailPage() {
   async function handleSave() {
     if (!fillingId) return;
     const parsedShelfLife = parseFloat(shelfLifeWeeks);
+    const parsedYield = parseFloat(measuredYieldG);
     await saveFilling({
       ...filling!,
       category: category || "",
@@ -168,6 +172,7 @@ export default function FillingDetailPage() {
       instructions: (instructions || "").trim(),
       status: status.trim() || undefined,
       shelfLifeWeeks: !isNaN(parsedShelfLife) && parsedShelfLife > 0 ? parsedShelfLife : undefined,
+      measuredYieldG: !isNaN(parsedYield) && parsedYield > 0 ? parsedYield : undefined,
     });
     setEditing(false);
     setSavedOnce(true);
@@ -180,6 +185,7 @@ export default function FillingDetailPage() {
     setInstructions(filling!.instructions);
     setStatus(filling!.status || "");
     setShelfLifeWeeks(filling!.shelfLifeWeeks != null ? String(filling!.shelfLifeWeeks) : "");
+    setMeasuredYieldG(filling!.measuredYieldG != null ? String(filling!.measuredYieldG) : "");
     setEditing(false);
     if (isNew && fillingId) router.replace(`/fillings/${encodeURIComponent(fillingId)}`);
   }
@@ -190,6 +196,7 @@ export default function FillingDetailPage() {
     setInstructions(filling!.instructions);
     setStatus(filling!.status || "");
     setShelfLifeWeeks(filling!.shelfLifeWeeks != null ? String(filling!.shelfLifeWeeks) : "");
+    setMeasuredYieldG(filling!.measuredYieldG != null ? String(filling!.measuredYieldG) : "");
     setEditing(true);
   }
 
@@ -316,6 +323,23 @@ export default function FillingDetailPage() {
               <p className="text-xs text-muted-foreground mt-1">How long this filling stays fresh. Used to auto-suggest product shelf life and track previous batch freshness.</p>
             </div>
             <div>
+              <label className="label">Measured yield (g)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={measuredYieldG}
+                onChange={(e) => setMeasuredYieldG(e.target.value)}
+                placeholder="e.g. 503"
+                className="input w-32"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Cooked weight after reducing — weigh the pan full, subtract the empty pan.
+                Leave blank for fillings that don&rsquo;t cook down (ganaches, pralinés); the raw
+                ingredient total will be used for scaling instead.
+              </p>
+            </div>
+            <div>
               <label className="label">Instructions</label>
               <StepListEditor
                 value={instructions}
@@ -408,9 +432,24 @@ export default function FillingDetailPage() {
               Ingredients ({fillingIngredients.length})
             </h2>
             {totalGrams > 0 && (
-              <span className="text-xs text-muted-foreground">
-                Total: {totalGrams % 1 === 0 ? totalGrams : totalGrams.toFixed(1)}g
-              </span>
+              <div className="text-right">
+                <div className="text-xs text-muted-foreground">
+                  Total: {totalGrams % 1 === 0 ? totalGrams : totalGrams.toFixed(1)}g
+                  {filling.measuredYieldG != null && " raw"}
+                </div>
+                {filling.measuredYieldG != null && (() => {
+                  const loss = totalGrams - filling.measuredYieldG;
+                  const pct = (loss / totalGrams) * 100;
+                  return (
+                    <div className="text-xs text-muted-foreground">
+                      → {filling.measuredYieldG}g cooked
+                      {loss > 0 && (
+                        <span className="text-warning"> · −{loss % 1 === 0 ? loss : loss.toFixed(1)}g ({pct.toFixed(1)}%)</span>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
             )}
           </div>
           {editing && filling.status === "confirmed" && (

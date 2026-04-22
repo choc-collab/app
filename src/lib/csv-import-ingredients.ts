@@ -100,7 +100,10 @@ export function mapIngredientRow(row: Record<string, string>): Omit<Ingredient, 
 // Validator
 // ---------------------------------------------------------------------------
 
-export function validateIngredientRow(data: Omit<Ingredient, "id">): RowIssue[] {
+export function validateIngredientRow(
+  data: Omit<Ingredient, "id">,
+  knownCategories: ReadonlySet<string> = new Set(INGREDIENT_CATEGORIES),
+): RowIssue[] {
   const issues: RowIssue[] = [];
 
   // Required: name
@@ -108,8 +111,9 @@ export function validateIngredientRow(data: Omit<Ingredient, "id">): RowIssue[] 
     issues.push({ field: "name", message: "Name is required", severity: "error" });
   }
 
-  // Category: warn if unrecognised (still importable)
-  if (data.category && !(INGREDIENT_CATEGORIES as readonly string[]).includes(data.category)) {
+  // Category: warn if unrecognised (still importable). `knownCategories` should include
+  // both the built-in seed list AND any user-created categories from the live DB table.
+  if (data.category && !knownCategories.has(data.category)) {
     issues.push({
       field: "category",
       message: `Unknown category "${data.category}"`,
@@ -153,24 +157,80 @@ export function validateIngredientRow(data: Omit<Ingredient, "id">): RowIssue[] 
 // Config
 // ---------------------------------------------------------------------------
 
-export const ingredientImportConfig: CSVImportConfig<Omit<Ingredient, "id">> = {
-  entityName: "ingredient",
-  templateColumns: INGREDIENT_TEMPLATE_COLUMNS,
-  templateUrl: "/seed/ingredients.csv",
-  mapRow: mapIngredientRow,
-  validateRow: (data, _rowIndex) => validateIngredientRow(data),
-  dedupKey: (data) => `${data.name.toLowerCase().trim()}::${(data.manufacturer || "").toLowerCase().trim()}`,
-  commitBatch: async (items) => {
-    await db.ingredients.bulkAdd(items);
-    return items.length;
-  },
-};
+const ingredientKey = (i: Pick<Ingredient, "name" | "manufacturer">) =>
+  `${i.name.toLowerCase().trim()}::${(i.manufacturer || "").toLowerCase().trim()}`;
+
+/**
+ * Build an ingredient CSV import config. Accepts the user's live category names
+ * so the validator doesn't falsely flag user-created categories as "Unknown".
+ * Falls back to just the built-in seed list when nothing is passed.
+ */
+export function makeIngredientImportConfig(
+  options: { liveCategoryNames?: readonly string[] } = {},
+): CSVImportConfig<Omit<Ingredient, "id">> {
+  const knownCategories = new Set<string>([
+    ...INGREDIENT_CATEGORIES,
+    ...(options.liveCategoryNames ?? []),
+  ]);
+  return {
+    entityName: "ingredient",
+    templateColumns: INGREDIENT_TEMPLATE_COLUMNS,
+    templateUrl: "/seed/ingredients.csv",
+    mapRow: mapIngredientRow,
+    validateRow: (data, _rowIndex) => validateIngredientRow(data, knownCategories),
+    dedupKey: ingredientKey,
+    commitBatch: async (items) => {
+      await db.ingredients.bulkAdd(items);
+      return items.length;
+    },
+    updateOne: async (id, data) => {
+      await db.ingredients.update(id, { ...data, updatedAt: new Date() });
+    },
+    removeUnreferenced: async (ids) => {
+      let removed = 0;
+      let keptReferenced = 0;
+      for (const id of ids) {
+        if (await isIngredientReferenced(id)) {
+          keptReferenced++;
+        } else {
+          await db.ingredients.delete(id);
+          removed++;
+        }
+      }
+      return { removed, keptReferenced };
+    },
+  };
+}
+
+/** Back-compat static export that uses only the built-in category list. */
+export const ingredientImportConfig: CSVImportConfig<Omit<Ingredient, "id">> = makeIngredientImportConfig();
 
 // ---------------------------------------------------------------------------
-// Existing keys loader (for dedup)
+// Existing index loader (key → id) for dedup + upsert + remove-missing
 // ---------------------------------------------------------------------------
 
-export async function getExistingIngredientKeys(): Promise<Set<string>> {
+export async function getExistingIngredientIndex(): Promise<Map<string, string>> {
   const all = await db.ingredients.toArray();
-  return new Set(all.map((i) => `${i.name.toLowerCase().trim()}::${(i.manufacturer || "").toLowerCase().trim()}`));
+  const map = new Map<string, string>();
+  for (const i of all) if (i.id) map.set(ingredientKey(i), i.id);
+  return map;
+}
+
+/**
+ * Reports whether an ingredient is referenced anywhere that deletion would break:
+ *   - any filling (active OR superseded — superseded fillings back production history)
+ *   - any product's shellIngredientId
+ *   - any coating-chocolate mapping
+ * When any of these are true, the CSV importer keeps the ingredient rather than deleting it.
+ */
+async function isIngredientReferenced(ingredientId: string): Promise<boolean> {
+  const fillingUses = await db.fillingIngredients.where("ingredientId").equals(ingredientId).count();
+  if (fillingUses > 0) return true;
+  const shellUses = await db.products.where("shellIngredientId").equals(ingredientId).count();
+  if (shellUses > 0) return true;
+  // coatingChocolateMappings is not indexed on ingredientId — full-table scan is fine, the
+  // table has one row per coating name (typically 2-5 rows total).
+  const coatingUses = await db.coatingChocolateMappings.filter((m) => m.ingredientId === ingredientId).count();
+  if (coatingUses > 0) return true;
+  return false;
 }

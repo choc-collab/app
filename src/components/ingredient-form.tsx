@@ -9,8 +9,10 @@ import { ALL_NUTRIENT_FIELDS, getNutrientsByMarket, fillDerivedNutrition, type N
 
 const PURCHASE_UNITS = ["g", "kg", "ml", "L", "pcs"] as const;
 
-// Grams per purchase unit for units where it's unambiguous
+// Grams per purchase unit for units where it's unambiguous.
+// ml / L / pcs depend on density or piece size and must be entered manually.
 function autoGramsPerUnit(purchaseUnit: string): number | null {
+  if (purchaseUnit === "g") return 1;
   if (purchaseUnit === "kg") return 1000;
   return null;
 }
@@ -66,9 +68,15 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
   const [purchaseCost, setPurchaseCost] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [purchaseQty, setPurchaseQty] = useState("1");
-  const [purchaseUnit, setPurchaseUnit] = useState("g");
-  // Default "1000" only for new ingredients; existing values are loaded via useEffect below
-  const [gramsPerUnit, setGramsPerUnit] = useState(() => (ingredient?.gramsPerUnit != null ? String(ingredient.gramsPerUnit) : "1000"));
+  const [purchaseUnit, setPurchaseUnit] = useState(ingredient?.purchaseUnit ?? "g");
+  // For g/kg the value is fully determined by the unit, so always use the auto value —
+  // this both sets a correct default for new ingredients and repairs existing records
+  // saved with the old buggy default (purchaseUnit=g, gramsPerUnit=1000).
+  const [gramsPerUnit, setGramsPerUnit] = useState(() => {
+    const auto = autoGramsPerUnit(ingredient?.purchaseUnit ?? "g");
+    if (auto != null) return String(auto);
+    return ingredient?.gramsPerUnit != null ? String(ingredient.gramsPerUnit) : "";
+  });
   // Track whether the user has manually edited gramsPerUnit — if so, don't auto-fill on unit change
   const [gramsPerUnitTouched, setGramsPerUnitTouched] = useState(() => ingredient?.gramsPerUnit != null);
 
@@ -108,9 +116,18 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
       setPurchaseCost(ingredient.purchaseCost != null ? String(ingredient.purchaseCost) : "");
       setPurchaseDate(ingredient.purchaseDate ?? new Date().toISOString().split("T")[0]);
       setPurchaseQty(ingredient.purchaseQty != null ? String(ingredient.purchaseQty) : "1");
-      setPurchaseUnit(ingredient.purchaseUnit ?? "g");
-      setGramsPerUnit(ingredient.gramsPerUnit != null ? String(ingredient.gramsPerUnit) : "");
-      setGramsPerUnitTouched(ingredient.gramsPerUnit != null);
+      const loadedUnit = ingredient.purchaseUnit ?? "g";
+      setPurchaseUnit(loadedUnit);
+      // For g/kg, override any stored value with the definitional auto value (repairs
+      // records saved with the old buggy default).
+      const autoLoaded = autoGramsPerUnit(loadedUnit);
+      if (autoLoaded != null) {
+        setGramsPerUnit(String(autoLoaded));
+        setGramsPerUnitTouched(false);
+      } else {
+        setGramsPerUnit(ingredient.gramsPerUnit != null ? String(ingredient.gramsPerUnit) : "");
+        setGramsPerUnitTouched(ingredient.gramsPerUnit != null);
+      }
       // Nutrition
       const nStr: Record<string, string> = {};
       if (ingredient.nutrition) {
@@ -124,13 +141,20 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ingredient?.id]);
 
-  // Auto-fill gramsPerUnit when purchaseUnit changes, but only if the user
-  // hasn't manually entered a value — prevents overwriting data the user has typed
+  // Auto-fill gramsPerUnit when purchaseUnit changes.
+  //   - For g / kg: the value is fully determined by the unit (1 / 1000) — always
+  //     enforce, overriding any stored or user-entered value.
+  //   - For ml / L / pcs: the value depends on density / piece weight — only auto-fill
+  //     when the user hasn't manually edited it.
   useEffect(() => {
-    if (gramsPerUnitTouched) return;
     const auto = autoGramsPerUnit(purchaseUnit);
-    if (auto !== null) setGramsPerUnit(String(auto));
-  }, [purchaseUnit, gramsPerUnitTouched]);
+    if (auto !== null) {
+      setGramsPerUnit(String(auto));
+      setGramsPerUnitTouched(false);
+      return;
+    }
+    // No auto value for this unit; leave whatever's there unless we have a touched override.
+  }, [purchaseUnit]);
 
   const compTotal = useMemo(() => {
     return COMPOSITION_FIELDS.reduce((sum, f) => {

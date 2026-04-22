@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/page-header";
 import { exportBackup, importBackup, clearAllData } from "@/lib/backup";
-import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode } from "@/lib/hooks";
+import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames } from "@/lib/hooks";
 import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, type CurrencyCode, type MarketRegion, type FillMode } from "@/types";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
@@ -12,7 +12,7 @@ import { getStorageStatus, requestPersistentStorage, formatBytes, type StorageSt
 import { readLastSnapshotMetadata, dismissLastSnapshotMetadata, type LastSnapshotMetadata } from "@/lib/upgrade-snapshot";
 import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive } from "lucide-react";
 import { CSVImport } from "@/components/csv-import";
-import { ingredientImportConfig, getExistingIngredientKeys } from "@/lib/csv-import-ingredients";
+import { makeIngredientImportConfig, getExistingIngredientIndex } from "@/lib/csv-import-ingredients";
 import type { Ingredient } from "@/types";
 
 type ImportState = "idle" | "confirm" | "importing" | "done" | "error";
@@ -987,13 +987,24 @@ function ImportTab() {
 
       {/* Ingredients */}
       <section className="rounded-lg border border-border bg-card p-4">
-        <CSVImport
-          config={ingredientImportConfig}
-          getExistingKeys={getExistingIngredientKeys}
-          previewColumns={INGREDIENT_PREVIEW_COLUMNS}
-          description="Import ingredients with composition, allergens, nutrition, and pricing data."
-        />
+        <IngredientCSVImportSection />
       </section>
     </div>
+  );
+}
+
+function IngredientCSVImportSection() {
+  const liveCategoryNames = useIngredientCategoryNames();
+  const importConfig = useMemo(
+    () => makeIngredientImportConfig({ liveCategoryNames }),
+    [liveCategoryNames],
+  );
+  return (
+    <CSVImport
+      config={importConfig}
+      getExistingIndex={getExistingIngredientIndex}
+      previewColumns={INGREDIENT_PREVIEW_COLUMNS}
+      description="Import ingredients with composition, allergens, nutrition, and pricing data."
+    />
   );
 }

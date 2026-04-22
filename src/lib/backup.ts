@@ -201,7 +201,7 @@ export async function exportBackup(options?: ExportBackupOptions): Promise<void>
 // a misclick or a bad backup file is always recoverable. No-op if the DB is
 // empty. Errors are swallowed — the snapshot is a best-effort safety net and
 // should never block the operation the user actually asked for.
-async function writeSafetySnapshot(filenamePrefix: string): Promise<void> {
+export async function writeSafetySnapshot(filenamePrefix: string): Promise<void> {
   try {
     const data = await buildBackupData();
     if (!hasAnyData(data)) return;

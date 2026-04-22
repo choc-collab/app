@@ -11,22 +11,23 @@
  * Parameterised by a CSVImportConfig<T> — one component, many entity types.
  */
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useMemo } from "react";
 import { Download, Upload, AlertTriangle, CheckCircle, X, FileSpreadsheet } from "lucide-react";
 import { parseCSV } from "@/lib/csv";
-import type { CSVImportConfig, CSVParseResult, CSVImportResult, ParsedRow } from "@/lib/csv-import";
+import type { CSVImportConfig, CSVParseResult, CSVImportResult, ParsedRow, CSVImportOptions } from "@/lib/csv-import";
 import { parseCSVImport, commitCSVImport, downloadTemplate } from "@/lib/csv-import";
+import { writeSafetySnapshot } from "@/lib/backup";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ImportPhase = "idle" | "preview" | "importing" | "done" | "error";
+type ImportPhase = "idle" | "preview" | "confirmDelete" | "importing" | "done" | "error";
 
 interface CSVImportProps<T> {
   config: CSVImportConfig<T>;
-  /** Load existing dedup keys from the DB. Called once before commit. */
-  getExistingKeys: () => Promise<Set<string>>;
+  /** Load existing records as a key → id map. Called when a file is parsed and again on commit. */
+  getExistingIndex: () => Promise<Map<string, string>>;
   /** Preview columns to show in the table (subset of templateColumns). */
   previewColumns: { key: string; label: string; accessor: (data: T) => string }[];
   /** Optional description shown above the upload area. */
@@ -37,13 +38,19 @@ interface CSVImportProps<T> {
 // Component
 // ---------------------------------------------------------------------------
 
-export function CSVImport<T>({ config, getExistingKeys, previewColumns, description }: CSVImportProps<T>) {
+export function CSVImport<T>({ config, getExistingIndex, previewColumns, description }: CSVImportProps<T>) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<ImportPhase>("idle");
   const [parseResult, setParseResult] = useState<CSVParseResult<T> | null>(null);
+  const [existingIndex, setExistingIndex] = useState<Map<string, string> | null>(null);
   const [importResult, setImportResult] = useState<CSVImportResult | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [fileName, setFileName] = useState("");
+  const [updateExisting, setUpdateExisting] = useState(false);
+  const [removeUnreferencedMissing, setRemoveUnreferencedMissing] = useState(false);
+
+  const canUpsert = Boolean(config.updateOne);
+  const canRemove = Boolean(config.removeUnreferenced);
 
   const handleFileSelected = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,7 +60,7 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
       e.target.value = "";
 
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         try {
           const text = reader.result as string;
 
@@ -66,7 +73,10 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
           }
 
           const result = parseCSVImport(text, config);
+          // Load existing index up-front so the preview can show accurate update/remove counts.
+          const index = await getExistingIndex();
           setParseResult(result);
+          setExistingIndex(index);
           setPhase("preview");
           setErrorMessage("");
         } catch (err) {
@@ -80,29 +90,72 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
       };
       reader.readAsText(file);
     },
-    [config],
+    [config, getExistingIndex],
   );
 
-  const handleConfirmImport = useCallback(async () => {
-    if (!parseResult) return;
+  // Pre-commit analysis — derived from existingIndex + parsed CSV keys
+  const analysis = useMemo(() => {
+    if (!parseResult || !existingIndex) return null;
+    const csvKeys = new Set<string>();
+    let willInsert = 0;
+    let willUpdateOrDup = 0;
+    for (const row of parseResult.rows) {
+      const hasError = row.issues.some((i) => i.severity === "error");
+      if (hasError) continue;
+      const key = config.dedupKey(row.data);
+      if (csvKeys.has(key)) continue; // intra-file dup
+      csvKeys.add(key);
+      if (existingIndex.has(key)) willUpdateOrDup++;
+      else willInsert++;
+    }
+    let missingCount = 0;
+    for (const key of existingIndex.keys()) {
+      if (!csvKeys.has(key)) missingCount++;
+    }
+    return { willInsert, willUpdateOrDup, missingCount };
+  }, [parseResult, existingIndex, config]);
+
+  const runCommit = useCallback(async () => {
+    if (!parseResult || !existingIndex) return;
     setPhase("importing");
     try {
-      const existingKeys = await getExistingKeys();
-      const result = await commitCSVImport(parseResult, config, existingKeys);
+      // Safety snapshot before any destructive operation (removal flow only).
+      if (updateExisting && removeUnreferencedMissing && canRemove && (analysis?.missingCount ?? 0) > 0) {
+        await writeSafetySnapshot("choc-collab-snapshot-before-csv-import");
+      }
+      const options: CSVImportOptions = {
+        updateExisting: updateExisting && canUpsert,
+        removeUnreferencedMissing: updateExisting && removeUnreferencedMissing && canRemove,
+      };
+      const result = await commitCSVImport(parseResult, config, existingIndex, options);
       setImportResult(result);
       setPhase("done");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "Import failed.");
       setPhase("error");
     }
-  }, [parseResult, config, getExistingKeys]);
+  }, [parseResult, existingIndex, config, updateExisting, removeUnreferencedMissing, canUpsert, canRemove, analysis]);
+
+  const handleImportClick = useCallback(() => {
+    // Two-step confirmation required when the import will (potentially) delete records.
+    const willDelete =
+      updateExisting && removeUnreferencedMissing && canRemove && (analysis?.missingCount ?? 0) > 0;
+    if (willDelete) {
+      setPhase("confirmDelete");
+      return;
+    }
+    void runCommit();
+  }, [updateExisting, removeUnreferencedMissing, canRemove, analysis, runCommit]);
 
   const handleReset = useCallback(() => {
     setPhase("idle");
     setParseResult(null);
+    setExistingIndex(null);
     setImportResult(null);
     setErrorMessage("");
     setFileName("");
+    setUpdateExisting(false);
+    setRemoveUnreferencedMissing(false);
   }, []);
 
   // Counts for the preview summary
@@ -200,6 +253,66 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
             )}
           </div>
 
+          {/* Sync options */}
+          {(canUpsert || canRemove) && (
+            <div className="rounded-md border border-border bg-card px-3 py-2 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Sync options</p>
+              {canUpsert && (
+                <label className="flex items-start gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={updateExisting}
+                    onChange={(e) => {
+                      setUpdateExisting(e.target.checked);
+                      if (!e.target.checked) setRemoveUnreferencedMissing(false);
+                    }}
+                    className="mt-0.5 accent-[var(--color-primary)]"
+                  />
+                  <span>
+                    <span className="font-medium text-foreground">Update existing {config.entityName}s</span>
+                    <span className="text-muted-foreground">
+                      {" "}— rows matching an existing record (by name + manufacturer) overwrite that record instead of being skipped.
+                    </span>
+                  </span>
+                </label>
+              )}
+              {canRemove && (
+                <label className={`flex items-start gap-2 text-xs cursor-pointer ${!updateExisting ? "opacity-50" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={removeUnreferencedMissing}
+                    disabled={!updateExisting}
+                    onChange={(e) => setRemoveUnreferencedMissing(e.target.checked)}
+                    className="mt-0.5 accent-[var(--color-primary)]"
+                  />
+                  <span>
+                    <span className="font-medium text-foreground">Remove {config.entityName}s not in this file</span>
+                    <span className="text-muted-foreground">
+                      {" "}— only if they aren't referenced anywhere (fillings, shells, coating mappings). Referenced ones are kept. A safety snapshot is auto-downloaded first.
+                    </span>
+                  </span>
+                </label>
+              )}
+
+              {/* Live sync summary */}
+              {analysis && (
+                <div className="pt-1 mt-1 border-t border-border flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                  <span className="text-status-ok">{analysis.willInsert} new</span>
+                  {updateExisting ? (
+                    <span className="text-primary">{analysis.willUpdateOrDup} will update existing</span>
+                  ) : (
+                    <span className="text-muted-foreground">{analysis.willUpdateOrDup} already exist (will skip)</span>
+                  )}
+                  {updateExisting && removeUnreferencedMissing && (
+                    <span className="text-destructive">
+                      {analysis.missingCount} not in file (removed if unreferenced)
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Preview table */}
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full text-xs">
@@ -230,10 +343,10 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
           <div className="flex gap-2">
             {validCount > 0 ? (
               <button
-                onClick={handleConfirmImport}
+                onClick={handleImportClick}
                 className="flex-1 rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium"
               >
-                Import {validCount} {config.entityName}{validCount !== 1 ? "s" : ""}
+                {buildImportButtonLabel(config.entityName, analysis, updateExisting, removeUnreferencedMissing && canRemove)}
               </button>
             ) : (
               <div className="flex-1 text-sm text-destructive text-center py-2">
@@ -250,6 +363,33 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
         </div>
       )}
 
+      {/* Phase: confirmDelete — explicit two-step for destructive path */}
+      {phase === "confirmDelete" && analysis && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+          <p className="text-sm font-medium text-destructive">Confirm sync with deletion</p>
+          <p className="text-xs text-muted-foreground">
+            This will import <strong>{analysis.willInsert}</strong> new {config.entityName}
+            {analysis.willInsert !== 1 ? "s" : ""}, update <strong>{analysis.willUpdateOrDup}</strong> existing,
+            and delete up to <strong>{analysis.missingCount}</strong> {config.entityName}
+            {analysis.missingCount !== 1 ? "s" : ""} that aren't in this file. Referenced records are kept automatically.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            A safety snapshot of your current data will download before anything is changed.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => void runCommit()}
+              className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-4 py-2 text-sm font-medium transition-colors hover:bg-destructive/90"
+            >
+              Yes, sync and delete
+            </button>
+            <button onClick={() => setPhase("preview")} className="rounded-full border border-border px-4 py-2 text-sm">
+              Back
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Phase: importing */}
       {phase === "importing" && (
         <div className="py-3 text-center text-sm text-muted-foreground">Importing…</div>
@@ -261,15 +401,38 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
           <div className="flex items-start gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
             <CheckCircle className="w-4 h-4 text-status-ok shrink-0 mt-0.5" />
             <div className="text-xs text-status-ok space-y-0.5">
-              <p>
-                <strong>{importResult.imported}</strong> {config.entityName}{importResult.imported !== 1 ? "s" : ""} imported.
-              </p>
+              {importResult.imported > 0 && (
+                <p>
+                  <strong>{importResult.imported}</strong> {config.entityName}
+                  {importResult.imported !== 1 ? "s" : ""} imported.
+                </p>
+              )}
+              {importResult.updated > 0 && (
+                <p>
+                  <strong>{importResult.updated}</strong> {config.entityName}
+                  {importResult.updated !== 1 ? "s" : ""} updated.
+                </p>
+              )}
+              {importResult.removed > 0 && (
+                <p>
+                  <strong>{importResult.removed}</strong> {config.entityName}
+                  {importResult.removed !== 1 ? "s" : ""} removed.
+                </p>
+              )}
+              {importResult.removalsSkipped > 0 && (
+                <p>{importResult.removalsSkipped} kept because they're still referenced.</p>
+              )}
               {importResult.skipped > 0 && (
                 <p>{importResult.skipped} skipped (validation errors).</p>
               )}
               {importResult.duplicates > 0 && (
                 <p>{importResult.duplicates} skipped (already exist).</p>
               )}
+              {importResult.imported === 0 &&
+                importResult.updated === 0 &&
+                importResult.removed === 0 &&
+                importResult.skipped === 0 &&
+                importResult.duplicates === 0 && <p>No changes.</p>}
             </div>
           </div>
           <button
@@ -298,6 +461,23 @@ export function CSVImport<T>({ config, getExistingKeys, previewColumns, descript
       )}
     </div>
   );
+}
+
+function buildImportButtonLabel(
+  entityName: string,
+  analysis: { willInsert: number; willUpdateOrDup: number; missingCount: number } | null,
+  updateExisting: boolean,
+  willRemove: boolean,
+): string {
+  if (!analysis) return `Import ${entityName}s`;
+  const parts: string[] = [];
+  if (analysis.willInsert > 0) parts.push(`import ${analysis.willInsert}`);
+  if (updateExisting && analysis.willUpdateOrDup > 0) parts.push(`update ${analysis.willUpdateOrDup}`);
+  if (willRemove && analysis.missingCount > 0) parts.push(`review ${analysis.missingCount} for deletion`);
+  if (parts.length === 0) return `Import ${entityName}s`;
+  // Capitalise first word
+  const joined = parts.join(", ");
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
 }
 
 // ---------------------------------------------------------------------------

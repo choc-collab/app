@@ -69,6 +69,33 @@ describe("costPerGram", () => {
     expect(costPerGram(makeIngredient({ pricingIrrelevant: true, purchaseCost: 10, gramsPerUnit: 1000 }))).toBe(0);
   });
 
+  it("derives gramsPerUnit=1 from purchaseUnit='g' — reported bug: 2500g at €80 should be €0.032/g", () => {
+    // Regression: a beta tester entered purchaseUnit=g, purchaseQty=2500, purchaseCost=80, but
+    // gramsPerUnit silently defaulted to 1000 from the form — making cost/gram = 0.000032 ≈ 0.
+    // The function now derives gramsPerUnit from the unit (g → 1) and ignores the stale stored value.
+    const result = costPerGram(
+      makeIngredient({ purchaseCost: 80, purchaseQty: 2500, purchaseUnit: "g", gramsPerUnit: 1000 }),
+    );
+    expect(result).toBeCloseTo(0.032);
+  });
+
+  it("derives gramsPerUnit=1000 from purchaseUnit='kg' regardless of stored value", () => {
+    // 2 kg at €20 → €0.01/g, even if gramsPerUnit was stored as something else.
+    const result = costPerGram(
+      makeIngredient({ purchaseCost: 20, purchaseQty: 2, purchaseUnit: "kg", gramsPerUnit: 500 }),
+    );
+    expect(result).toBeCloseTo(0.01);
+  });
+
+  it("respects stored gramsPerUnit for units whose density varies (ml, L, pcs)", () => {
+    // For ml/L/pcs, the density is genuinely user-supplied — don't override.
+    // 1 L of honey (≈1420 g) at €14.20 → €0.01/g
+    const result = costPerGram(
+      makeIngredient({ purchaseCost: 14.2, purchaseQty: 1, purchaseUnit: "L", gramsPerUnit: 1420 }),
+    );
+    expect(result).toBeCloseTo(0.01);
+  });
+
   it("returns null (not 0) for an ingredient without pricing data and pricingIrrelevant not set", () => {
     expect(costPerGram(makeIngredient({ pricingIrrelevant: false }))).toBeNull();
   });

@@ -92,6 +92,24 @@ export default function LandingPage() {
         <div className="mono-label text-muted-foreground mb-4">
           Open source · Local-first · Built by a chocolatier
         </div>
+        <a
+          href="https://github.com/choc-collab/app/blob/main/CHANGELOG.md"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 mb-6 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+        >
+          <span
+            aria-hidden
+            className="inline-block w-1.5 h-1.5 rounded-full"
+            style={{ background: "var(--accent-terracotta-ink)" }}
+          />
+          <span>
+            <strong className="font-medium text-foreground">Latest release · v0.2</strong>
+            <span className="mx-1.5 text-border">·</span>
+            What&apos;s new
+          </span>
+          <span aria-hidden className="text-muted-foreground">→</span>
+        </a>
         <h1
           className="text-4xl sm:text-5xl font-[450] tracking-tight leading-[1.05] mb-5"
           style={{ fontFamily: "var(--font-display)", letterSpacing: "-0.035em" }}
