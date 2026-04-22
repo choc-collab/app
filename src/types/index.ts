@@ -84,8 +84,16 @@ export interface Ingredient {
  *  purchaseQty defaults to 1 when absent — supports the simplified "price for X grams" model. */
 export function costPerGram(ing: Ingredient): number | null {
   if (ing.pricingIrrelevant) return 0;
-  const { purchaseCost, purchaseQty, gramsPerUnit } = ing;
-  if (!purchaseCost || !gramsPerUnit) return null;
+  const { purchaseCost, purchaseQty, purchaseUnit } = ing;
+  if (!purchaseCost) return null;
+  // For unambiguous units (g, kg), derive gramsPerUnit from the unit itself rather
+  // than trusting the stored value — repairs ingredients saved with a stale default
+  // (pre-fix, new ingredients defaulted gramsPerUnit=1000 even when the unit was g).
+  const gramsPerUnit =
+    purchaseUnit === "g" ? 1 :
+    purchaseUnit === "kg" ? 1000 :
+    ing.gramsPerUnit;
+  if (!gramsPerUnit) return null;
   const totalGrams = (purchaseQty ?? 1) * gramsPerUnit;
   if (totalGrams <= 0) return null;
   return purchaseCost / totalGrams;
@@ -241,6 +249,11 @@ export interface Filling {
   instructions: string;
   status?: FillingStatus;
   shelfLifeWeeks?: number; // shelf life in weeks — relevant for shelf-stable categories (Pralines, Fruit-Based)
+  /** Measured cooked yield in grams — what the pan weighs after cooking, tare subtracted.
+   *  When set, rescaling math uses this as the base instead of the raw ingredient sum,
+   *  so "produce 600 g of filling" means 600 g on the scale after reducing. Optional —
+   *  fillings without cook-loss (ganaches, pralinés) can leave this undefined. */
+  measuredYieldG?: number;
   // Versioning fields
   rootId?: string;        // undefined for unforked fillings; set to v1.id once any fork is made
   version?: number;       // 1-indexed; undefined = legacy unforked filling (treat as v1)
@@ -390,12 +403,29 @@ export interface ProductionPlan {
  *  Kept as a legacy fallback (used only when the FillingCategory record is missing). */
 export const SHELF_STABLE_CATEGORIES = ["Fruit-Based (Pectins & Acids)", "Pralines & Giandujas (Nut-Based)"] as const;
 
+/** Additional mould entry for a plan product — used for the rare case where a
+ *  user pours the same product into more than one mould type, or wants to fill
+ *  only part of a mould. Populated from the "Alternative mould setup" disclosure
+ *  in the new-plan wizard; undefined/empty for the default single-mould path. */
+export interface PlanProductAdditionalMould {
+  mouldId: string;
+  /** Number of physical moulds to fill at full capacity. Ignored when `partialCavities` is set. */
+  quantity: number;
+  /** When set, fill exactly this many cavities (overrides quantity × numberOfCavities). */
+  partialCavities?: number;
+}
+
 export interface PlanProduct {
   id?: string;
   planId: string;
   productId: string;
   mouldId: string;
   quantity: number; // number of moulds used
+  /** When set, only fill this many cavities of the primary mould (overrides
+   *  quantity × numberOfCavities for cavity/volume math). Undefined = full fill. */
+  partialCavities?: number;
+  /** Extra mould types used for the same product. Summed into total cavity count. */
+  additionalMoulds?: PlanProductAdditionalMould[];
   sortOrder: number;
   notes?: string;
   stockStatus?: "low" | "gone"; // undefined = in stock
@@ -422,7 +452,8 @@ export interface PlanProduct {
 // stepKey formats:
 //   "color-{mouldId}"                 — colour/brush mould
 //   "shell-{mouldId}"                 — shell mould
-//   "filling-{planProductId}-{fillingId}" — make a filling
+//   "filling-{planProductId}-{fillingId}" — make a filling (product-driven)
+//   "planfilling-{planFillingId}"    — make a standalone filling batch (filling-only / hybrid plans)
 //   "fill-{planProductId}"            — fill shells for a product
 //   "cap-{mouldId}"                   — cap mould
 export interface PlanStepStatus {
@@ -431,6 +462,28 @@ export interface PlanStepStatus {
   stepKey: string;
   done: boolean;
   doneAt?: Date;
+}
+
+/** A standalone filling batch scheduled in a production plan.
+ *  Produces FillingStock on completion. Coexists with PlanProduct in the same
+ *  plan — a plan with PlanProducts only is "full", PlanFillings only is
+ *  "fillings-only", both is "hybrid". The mode is derived, not stored. */
+export interface PlanFilling {
+  id?: string;
+  planId: string;
+  fillingId: string;
+  /** Target weight of this batch in grams. Multiplier vs the recipe's base
+   *  total grams is derived for display. Free-form so users can top up stock
+   *  to any amount. */
+  targetGrams: number;
+  sortOrder: number;
+  notes?: string;
+  /** Actual yield captured at finalize-time. When the plan is marked done,
+   *  a FillingStock row is written with remainingG = actualYieldG ?? targetGrams. */
+  actualYieldG?: number;
+  /** Ingredient stock status for this filling's recipe — shown in the plan
+   *  warning summary the same way PlanProduct.stockStatus does. */
+  stockStatus?: "low" | "gone";
 }
 
 // --- Filling Stock (leftover filling) ---

@@ -42,8 +42,27 @@ export interface CSVParseResult<T> {
 /** Import outcome after committing. */
 export interface CSVImportResult {
   imported: number;
+  /** Existing rows matched by dedupKey and updated in-place (only when options.updateExisting). */
+  updated: number;
   skipped: number;
+  /** Rows matching existing records that were skipped (only when options.updateExisting is false). */
   duplicates: number;
+  /** Existing records removed because they were missing from the CSV (only when options.removeUnreferencedMissing). */
+  removed: number;
+  /** Existing records kept despite being missing from the CSV because they're referenced elsewhere. */
+  removalsSkipped: number;
+}
+
+/** Runtime options for commitCSVImport — toggle upsert and delete-missing behaviors. */
+export interface CSVImportOptions {
+  /** When true, rows matching an existing dedupKey are updated instead of skipped as duplicates. */
+  updateExisting?: boolean;
+  /**
+   * When true, existing records whose dedupKey is NOT present in the CSV are removed —
+   * but only if the config's removeUnreferenced hook reports them safe to delete.
+   * Ignored unless updateExisting is also true (otherwise "missing from CSV" is meaningless).
+   */
+  removeUnreferencedMissing?: boolean;
 }
 
 /**
@@ -63,8 +82,16 @@ export interface CSVImportConfig<T> {
   validateRow: (data: T, rowIndex: number) => RowIssue[];
   /** Extract the dedup key from an entity (typically the name, lowercased). */
   dedupKey: (data: T) => string;
-  /** Commit a batch of valid entities to the database. Returns count imported. */
+  /** Commit a batch of valid NEW entities to the database. Returns count imported. */
   commitBatch: (items: T[]) => Promise<number>;
+  /** Update an existing entity by id. Required when updateExisting is enabled. */
+  updateOne?: (id: string, data: T) => Promise<void>;
+  /**
+   * Delete the given ids, but only those that are unreferenced by other tables.
+   * Returns counts of actually-removed vs kept-because-referenced.
+   * Required when removeUnreferencedMissing is enabled.
+   */
+  removeUnreferenced?: (ids: string[]) => Promise<{ removed: number; keptReferenced: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,20 +160,28 @@ export function parseCSVImport<T>(
 // ---------------------------------------------------------------------------
 
 /**
- * Commit parsed rows, skipping those with errors and deduplicating by name.
- * `existingKeys` is the set of dedup keys already in the DB.
+ * Commit parsed rows. Existing records are identified via `existingIndex` (key → id).
+ * Behavior varies by options:
+ *   - default: matching keys are skipped as duplicates (preserves existing records)
+ *   - updateExisting: matching keys are updated in-place via config.updateOne
+ *   - removeUnreferencedMissing (requires updateExisting): existing records whose key is
+ *     absent from the CSV are deleted if safe, via config.removeUnreferenced
  */
 export async function commitCSVImport<T>(
   parsed: CSVParseResult<T>,
   config: CSVImportConfig<T>,
-  existingKeys: Set<string>,
+  existingIndex: Map<string, string>,
+  options?: CSVImportOptions,
 ): Promise<CSVImportResult> {
+  const updateExisting = options?.updateExisting === true;
+  const removeMissing = updateExisting && options?.removeUnreferencedMissing === true;
+
   let duplicates = 0;
   let skipped = 0;
 
-  const toImport: T[] = [];
+  const toInsert: T[] = [];
+  const toUpdate: { id: string; data: T }[] = [];
 
-  // Track keys we've already seen in this batch to avoid intra-file duplicates
   const seenKeys = new Set<string>();
 
   for (const row of parsed.rows) {
@@ -157,18 +192,56 @@ export async function commitCSVImport<T>(
     }
 
     const key = config.dedupKey(row.data);
-    if (existingKeys.has(key) || seenKeys.has(key)) {
+    if (seenKeys.has(key)) {
+      // Intra-file duplicate — always skip, regardless of mode
       duplicates++;
       continue;
     }
-
     seenKeys.add(key);
-    toImport.push(row.data);
+
+    const existingId = existingIndex.get(key);
+    if (existingId) {
+      if (updateExisting) {
+        toUpdate.push({ id: existingId, data: row.data });
+      } else {
+        duplicates++;
+      }
+    } else {
+      toInsert.push(row.data);
+    }
   }
 
-  const imported = toImport.length > 0 ? await config.commitBatch(toImport) : 0;
+  const imported = toInsert.length > 0 ? await config.commitBatch(toInsert) : 0;
 
-  return { imported, skipped, duplicates };
+  let updated = 0;
+  if (toUpdate.length > 0) {
+    if (!config.updateOne) {
+      throw new Error("updateExisting requires config.updateOne to be defined");
+    }
+    for (const { id, data } of toUpdate) {
+      await config.updateOne(id, data);
+      updated++;
+    }
+  }
+
+  let removed = 0;
+  let removalsSkipped = 0;
+  if (removeMissing) {
+    if (!config.removeUnreferenced) {
+      throw new Error("removeUnreferencedMissing requires config.removeUnreferenced to be defined");
+    }
+    const missingIds: string[] = [];
+    for (const [key, id] of existingIndex) {
+      if (!seenKeys.has(key)) missingIds.push(id);
+    }
+    if (missingIds.length > 0) {
+      const res = await config.removeUnreferenced(missingIds);
+      removed = res.removed;
+      removalsSkipped = res.keptReferenced;
+    }
+  }
+
+  return { imported, updated, skipped, duplicates, removed, removalsSkipped };
 }
 
 // ---------------------------------------------------------------------------

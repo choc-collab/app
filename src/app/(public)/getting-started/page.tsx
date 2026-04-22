@@ -436,6 +436,15 @@ const SECTIONS: Section[] = [
             the card header — no need to re-tick anything.
           </li>
           <li>
+            <strong>Cook-loss? Record the measured yield.</strong> Caramels, pâtes de fruit and
+            anything you reduce on the stove lose mass while cooking. Weigh the pan before and
+            after once, enter the cooked weight in <em>Measured yield (g)</em>, and the app uses
+            that as the base for rescaling from then on — asking for <em>600&nbsp;g of caramel</em>
+            in a production plan produces 600&nbsp;g on the scale after reducing, not 600&nbsp;g of
+            raw ingredients that cook down to a smaller batch. Ganaches and pralinés that
+            don&apos;t reduce can leave the field blank.
+          </li>
+          <li>
             <strong>Changing an existing recipe?</strong> Hit <strong>Fork version</strong>.
             <ul>
               <li>The app shows which products currently use this filling.</li>
@@ -506,12 +515,17 @@ const SECTIONS: Section[] = [
             {
               title: "Pick products and mould them",
               body:
-                "Select the products you want to produce. For each, choose a mould and a quantity (moulds, not pieces — the app knows cavity counts).",
+                "Select the products you want to produce. For each, choose a mould and a quantity (moulds, not pieces — the app knows cavity counts). For the rare case where a product is poured into more than one mould type, or only part of a mould, open the \"Alternative mould setup\" disclosure on the product card to add extra moulds or enter an exact cavity count.",
+            },
+            {
+              title: "Or: fillings-only and hybrid plans",
+              body:
+                "You can skip products entirely and plan standalone filling batches — useful for topping up shelf-stable fillings (pâtes de fruits, pralines) before the products that use them. Product batches and standalone filling batches can coexist in the same plan (\"hybrid\") so a big production day only needs one checklist.",
             },
             {
               title: "Review scaling",
               body:
-                "The app shows you the total fill weight, shell weight, and ingredient demand. Shared fillings across products are consolidated into one step with combined weight.",
+                "The app shows you the total fill weight, shell weight, and ingredient demand. Shared fillings across products are consolidated into one step with combined weight. Fillings with a measured yield recorded are scaled from cooked weight, so target grams always refer to what comes out of the pan.",
             },
             {
               title: "Step-by-step checklist",

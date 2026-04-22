@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { useSpaId } from "@/lib/use-spa-id";
 import { useIngredient, useIngredients, useIngredientUsage, saveIngredient, deleteIngredient, archiveIngredient, unarchiveIngredient, checkIngredientBeforeDelete, useIngredientPriceHistory, deleteIngredientPriceHistoryEntry, setIngredientLowStock, setIngredientOutOfStock, markIngredientOrdered, useCurrencySymbol, useCurrentCoatingMappings } from "@/lib/hooks";
 import type { IngredientDeleteCheck } from "@/lib/hooks";
 import { IngredientForm } from "@/components/ingredient-form";
-import { COMPOSITION_FIELDS, allergenLabel, type Ingredient } from "@/types";
+import { COMPOSITION_FIELDS, allergenLabel, costPerGram as computeCostPerGram, type Ingredient } from "@/types";
 import { ArrowLeft, Pencil, Layers, Trash2, ChevronDown, X, AlertTriangle, Archive, ArchiveRestore } from "lucide-react";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
@@ -41,7 +41,29 @@ export default function IngredientDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteCheck, setDeleteCheck] = useState<IngredientDeleteCheck | null>(null);
   const [activeTab, setActiveTab] = useState<"details" | "composition" | "allergens" | "pricing" | "nutrition" | "shell">("details");
+  const [draftCategory, setDraftCategory] = useState("");
+  const [shellRevealCount, setShellRevealCount] = useState(0); // increments each time the tab unlocks mid-session
   const market = useMarketRegion();
+
+  // While editing, tabs follow the in-progress form value; otherwise the saved value.
+  const effectiveCategory = editing ? draftCategory : (ingredient?.category ?? "");
+  const showShellTab = effectiveCategory === "Chocolate";
+
+  // If the user switches away from Chocolate while sitting on the shell tab, step back to details.
+  useEffect(() => {
+    if (!showShellTab && activeTab === "shell") setActiveTab("details");
+  }, [showShellTab, activeTab]);
+
+  // Bump reveal counter when the tab transitions from hidden → visible (not on initial load).
+  const hasMountedRef = useRef(false);
+  const prevShowShellRef = useRef(showShellTab);
+  useEffect(() => {
+    if (hasMountedRef.current && showShellTab && !prevShowShellRef.current) {
+      setShellRevealCount((n) => n + 1);
+    }
+    hasMountedRef.current = true;
+    prevShowShellRef.current = showShellTab;
+  }, [showShellTab]);
 
   const [savedOnce, setSavedOnce] = useState(false);
   const formIsDirty = editing && formDirty;
@@ -86,13 +108,9 @@ export default function IngredientDetailPage() {
 
   const tags = ingredient.allergens.filter(Boolean);
 
-  const costPerGram =
-    ingredient.purchaseCost != null &&
-    ingredient.purchaseQty != null &&
-    ingredient.gramsPerUnit != null &&
-    ingredient.purchaseQty * ingredient.gramsPerUnit > 0
-      ? ingredient.purchaseCost / (ingredient.purchaseQty * ingredient.gramsPerUnit)
-      : null;
+  // Use the shared utility — it derives gramsPerUnit from the unit for g/kg, so
+  // legacy records with a wrong stored gramsPerUnit still render the right value.
+  const costPerGram = computeCostPerGram(ingredient);
 
   return (
     <div>
@@ -171,11 +189,7 @@ export default function IngredientDetailPage() {
 
       {/* Tab strip — always visible */}
       <div className="flex border-b border-border mb-4 px-4 overflow-x-auto">
-        {(
-          ingredient.category === "Chocolate"
-            ? ["details", "shell", "composition", "allergens", "pricing", "nutrition"] as const
-            : ["details", "composition", "allergens", "pricing", "nutrition"] as const
-        ).map((tab) => (
+        {(["details", "composition", "allergens", "pricing", "nutrition"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -183,11 +197,19 @@ export default function IngredientDetailPage() {
               activeTab === tab
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
+            } ${tab === "details" ? "order-1" : tab === "composition" ? "order-3" : tab === "allergens" ? "order-4" : tab === "pricing" ? "order-5" : "order-6"}`}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
+        {showShellTab && (
+          <ShellTabButton
+            key={`shell-${shellRevealCount}`}
+            active={activeTab === "shell"}
+            animate={shellRevealCount > 0}
+            onClick={() => setActiveTab("shell")}
+          />
+        )}
       </div>
 
       <div className="px-4 pb-6">
@@ -201,6 +223,7 @@ export default function IngredientDetailPage() {
             onSaved={handleSaved}
             onCancel={handleCancel}
             onDirtyChange={setFormDirty}
+            onCategoryChange={setDraftCategory}
             activeSection={activeTab}
           />
         ) : (
@@ -423,6 +446,30 @@ export default function IngredientDetailPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function ShellTabButton({ active, animate, onClick }: { active: boolean; animate: boolean; onClick: () => void }) {
+  // When `animate` is true (user just unlocked the tab by setting category=Chocolate mid-session),
+  // fade in and briefly flash the primary tint so the new tab is noticed. On initial page load
+  // for an already-chocolate ingredient, skip the effect and render steady.
+  const [mounted, setMounted] = useState(!animate);
+  useEffect(() => {
+    if (!animate) return;
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, [animate]);
+  return (
+    <button
+      onClick={onClick}
+      className={`order-2 px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 rounded-t-sm transition-[opacity,transform,background-color,color,border-color] duration-500 ease-out ${
+        active
+          ? "border-primary text-primary"
+          : "border-transparent text-muted-foreground hover:text-foreground"
+      } ${mounted ? "opacity-100 translate-y-0 bg-transparent" : "opacity-0 -translate-y-0.5 bg-primary/15"}`}
+    >
+      Shell
+    </button>
   );
 }
 

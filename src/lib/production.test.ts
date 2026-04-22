@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { calculateFillingAmounts, consolidateSharedFillings, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
-import type { ColorTask, FillingAmount, ConsolidatedFilling, IngredientRef } from "./production";
-import type { PlanProduct, ProductFilling, Filling, FillingIngredient, Mould, Product, DecorationMaterial } from "@/types";
+import { calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
+import type { ColorTask, FillingAmount, ConsolidatedFilling, IngredientRef, StandaloneFillingAmount } from "./production";
+import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, Mould, Product, DecorationMaterial } from "@/types";
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -286,6 +286,50 @@ describe("calculateFillingAmounts", () => {
     const fillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR * DENSITY_G_PER_ML;
     expect(tripleResult[0].weightG).toBe(Math.round(fillWeight * 3));
     expect(tripleResult[0].weightG).toBeGreaterThan(singleResult[0].weightG * 2);
+  });
+
+  it("scales raw ingredients up to hit the cavity weight when measuredYieldG is set (fill-scaled)", () => {
+    // Cavity weight target ≈ 113.4 g. Recipe: 200 g raw → 150 g cooked (25% loss).
+    // scaleFactor = 113.4 / 150 ≈ 0.756, so raw ingredient scales to 200 × 0.756 ≈ 151.2.
+    const filling = makeFilling({ measuredYieldG: 150 });
+    const result = calculateFillingAmounts(
+      [makePlanProduct()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [makeProductFilling({ fillPercentage: 100 })]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 200 })]]]),
+      new Map([["1", filling]]),
+      new Map([["1", mould]]),
+    );
+    const expectedFillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR * DENSITY_G_PER_ML;
+    expect(result[0].weightG).toBe(Math.round(expectedFillWeight));
+    // Ingredient scaled from raw 200 g up to produce `weightG` of cooked filling
+    const expectedAmount = Math.round(200 * (Math.round(expectedFillWeight) / 150) * 10) / 10;
+    expect(result[0].scaledIngredients[0].amount).toBe(expectedAmount);
+  });
+
+  it("uses measuredYieldG for the shelf-stable weight label so it reflects cooked yield × multiplier", () => {
+    // Pâte de fruit recipe: 300 g raw → 200 g cooked. Multiplier = 2× gives 400 g cooked, not 600 g raw.
+    const filling = makeFilling({
+      category: "Fruit-Based (Pectins & Acids)",
+      name: "Raspberry gel",
+      measuredYieldG: 200,
+    });
+    const bl = makeProductFilling({ fillPercentage: 100 });
+    const li = makeFillingIngredient({ amount: 300 });
+
+    const result = calculateFillingAmounts(
+      [makePlanProduct()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [bl]]]),
+      new Map([["1", [li]]]),
+      new Map([["1", filling]]),
+      new Map([["1", mould]]),
+      { "1": 2 },
+    );
+
+    expect(result[0].weightG).toBe(400); // 200 g cooked × 2, not 300 g raw × 2
+    // Raw ingredient still scales by 2× (the "× base recipe" multiplier the user set)
+    expect(result[0].scaledIngredients[0].amount).toBe(600);
   });
 });
 
@@ -1172,5 +1216,497 @@ describe("computeEffectiveShelfLife", () => {
       new Date(),
     );
     expect(effectiveWeeks).toBe(0);
+  });
+});
+
+// ─── Alternative mould setup ──────────────────────────────────────────────
+
+const mouldB: Mould = { id: "2", name: "Heart 24", cavityWeightG: 8, numberOfCavities: 24 };
+
+describe("getMouldSlots", () => {
+  it("returns a single primary slot for a default plan product", () => {
+    const slots = getMouldSlots(makePlanProduct({ quantity: 2 }), new Map([["1", mould]]));
+    expect(slots).toHaveLength(1);
+    expect(slots[0].slotId).toBe("primary");
+    expect(slots[0].cavityCount).toBe(30); // 15 × 2
+    expect(slots[0].physicalMouldCount).toBe(2);
+    expect(slots[0].isPartial).toBe(false);
+    expect(slots[0].label).toBe("2× Rect 15");
+  });
+
+  it("returns a partial-cavity primary slot when partialCavities is set", () => {
+    const slots = getMouldSlots(
+      makePlanProduct({ quantity: 2, partialCavities: 8 }),
+      new Map([["1", mould]]),
+    );
+    expect(slots).toHaveLength(1);
+    expect(slots[0].cavityCount).toBe(8); // overrides quantity × numberOfCavities
+    expect(slots[0].physicalMouldCount).toBe(1); // partial uses 1 physical mould
+    expect(slots[0].isPartial).toBe(true);
+    expect(slots[0].label).toBe("8 cavities of Rect 15");
+  });
+
+  it("includes every additional mould in order", () => {
+    const slots = getMouldSlots(
+      makePlanProduct({
+        quantity: 1,
+        additionalMoulds: [
+          { mouldId: "2", quantity: 1 },
+          { mouldId: "2", quantity: 1, partialCavities: 12 },
+        ],
+      }),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    expect(slots).toHaveLength(3);
+    expect(slots.map((s) => s.slotId)).toEqual(["primary", "add-0", "add-1"]);
+    expect(slots[1].cavityCount).toBe(24); // full Heart 24
+    expect(slots[2].cavityCount).toBe(12); // partial
+    expect(slots[2].label).toBe("12 cavities of Heart 24");
+  });
+
+  it("silently drops slots whose mould is missing from the map", () => {
+    const slots = getMouldSlots(
+      makePlanProduct({ additionalMoulds: [{ mouldId: "99", quantity: 1 }] }),
+      new Map([["1", mould]]),
+    );
+    expect(slots).toHaveLength(1);
+    expect(slots[0].slotId).toBe("primary");
+  });
+});
+
+describe("getTotalCavities", () => {
+  it("sums cavities across primary and additional moulds", () => {
+    const total = getTotalCavities(
+      makePlanProduct({
+        quantity: 2,
+        additionalMoulds: [{ mouldId: "2", quantity: 1 }],
+      }),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    expect(total).toBe(30 + 24); // 15×2 + 24×1
+  });
+
+  it("respects partial cavities on both primary and additional slots", () => {
+    const total = getTotalCavities(
+      makePlanProduct({
+        quantity: 2,
+        partialCavities: 10,
+        additionalMoulds: [{ mouldId: "2", quantity: 1, partialCavities: 6 }],
+      }),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    expect(total).toBe(16);
+  });
+});
+
+describe("formatMouldList", () => {
+  it("joins slot labels with ' + '", () => {
+    const pp = makePlanProduct({
+      quantity: 2,
+      additionalMoulds: [{ mouldId: "2", quantity: 1, partialCavities: 12 }],
+    });
+    expect(formatMouldList(pp, new Map([["1", mould], ["2", mouldB]])))
+      .toBe("2× Rect 15 + 12 cavities of Heart 24");
+  });
+});
+
+describe("hasAlternativeMouldSetup", () => {
+  it("is false for the default single-full-mould path", () => {
+    expect(hasAlternativeMouldSetup(makePlanProduct())).toBe(false);
+  });
+  it("is true when partialCavities is set", () => {
+    expect(hasAlternativeMouldSetup(makePlanProduct({ partialCavities: 5 }))).toBe(true);
+  });
+  it("is true when additionalMoulds is non-empty", () => {
+    expect(hasAlternativeMouldSetup(makePlanProduct({ additionalMoulds: [{ mouldId: "2", quantity: 1 }] }))).toBe(true);
+  });
+});
+
+describe("calculateFillingAmounts with alternative mould setup", () => {
+  it("sums fill volume across primary and additional moulds", () => {
+    const baseMouldOnly = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1 })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould]]),
+    );
+
+    const withAdditional = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, additionalMoulds: [{ mouldId: "2", quantity: 1 }] })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+
+    // Adding a second mould must strictly increase the fill weight.
+    expect(withAdditional[0].weightG).toBeGreaterThan(baseMouldOnly[0].weightG);
+    // Exact check: 15×10 + 24×8 = 342 ml; × 0.63 × 1.2 ≈ 258.55g
+    const expected = Math.round((15 * 10 + 24 * 8) * FILL_FACTOR * DENSITY_G_PER_ML);
+    expect(withAdditional[0].weightG).toBe(expected);
+  });
+
+  it("uses partialCavities to scale the primary mould's fill volume", () => {
+    const result = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, partialCavities: 5 })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould]]),
+    );
+    // 5 cavities × 10g × 0.63 × 1.2 = 37.8 → 38g
+    const expected = Math.round(5 * 10 * FILL_FACTOR * DENSITY_G_PER_ML);
+    expect(result[0].weightG).toBe(expected);
+  });
+
+  it("uses total cavities across slots for grams-mode fillings", () => {
+    // Product with fillMode "grams" + explicit fillGrams per cavity → weight = fillGrams × totalCavities
+    const product: Product = {
+      id: "1", name: "Gram product", createdAt: new Date(), updatedAt: new Date(),
+      fillMode: "grams", shellPercentage: 40,
+    };
+    const result = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, additionalMoulds: [{ mouldId: "2", quantity: 1 }] })],
+      new Map([["1", "Gram product"]]),
+      new Map([["1", [makeProductFilling({ fillGrams: 5 })]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+      {},
+      {},
+      new Map([["1", product]]),
+    );
+    // 5g × (15 + 24) cavities = 195g
+    expect(result[0].weightG).toBe(195);
+  });
+});
+
+describe("generateSteps with alternative mould setup", () => {
+  const twoSlotPb = (): PlanProduct =>
+    makePlanProduct({ id: "99", productId: "1", additionalMoulds: [{ mouldId: "2", quantity: 1 }] });
+
+  it("emits one shell/fill/cap step per slot and keys them with slotId", () => {
+    const steps = generateSteps(
+      [twoSlotPb()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      [],
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+
+    const shell = steps.filter((s) => s.group === "shell");
+    const fill = steps.filter((s) => s.group === "fill");
+    const cap = steps.filter((s) => s.group === "cap");
+
+    expect(shell.map((s) => s.key)).toEqual(["shell-99-primary", "shell-99-add-0"]);
+    expect(fill.map((s) => s.key)).toEqual(["fill-99-primary", "fill-99-add-0"]);
+    expect(cap.map((s) => s.key)).toEqual(["cap-99-primary", "cap-99-add-0"]);
+    // Mould name appears in the label so the user can tell slots apart on the checklist
+    expect(shell[0].label).toContain("Rect 15");
+    expect(shell[1].label).toContain("Heart 24");
+  });
+
+  it("keeps legacy single-key format when only the primary mould is used", () => {
+    const steps = generateSteps(
+      [makePlanProduct({ id: "7" })],
+      new Map([["1", "A"]]),
+      new Map([["1", [makeProductFilling()]]]),
+      [],
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould]]),
+    );
+    expect(steps.some((s) => s.key === "shell-7")).toBe(true);
+    expect(steps.some((s) => s.key.startsWith("shell-7-"))).toBe(false);
+  });
+
+  it("emits a single unmould step per plan product that aggregates all slots", () => {
+    const steps = generateSteps(
+      [twoSlotPb()],
+      new Map([["1", "Product A"]]),
+      new Map([["1", []]]),
+      [],
+      new Map(),
+      new Map([["1", mould], ["2", mouldB]]),
+    );
+    const unmould = steps.filter((s) => s.group === "unmould");
+    expect(unmould).toHaveLength(1);
+    expect(unmould[0].key).toBe("unmould-99");
+    expect(unmould[0].totalProducts).toBe(15 + 24);
+    expect(unmould[0].detail).toContain("1× Rect 15");
+    expect(unmould[0].detail).toContain("1× Heart 24");
+  });
+});
+
+describe("generateBatchSummary with alternative mould setup", () => {
+  it("lists every mould used for a product on a single line", () => {
+    const pb: PlanProduct = makePlanProduct({
+      quantity: 2,
+      additionalMoulds: [{ mouldId: "2", quantity: 1, partialCavities: 12 }],
+    });
+    const result = generateBatchSummary({
+      batchNumber: "B",
+      planName: "P",
+      completedAt: new Date("2026-04-20T12:00:00Z"),
+      planProducts: [pb],
+      productNames: new Map([["1", "Truffle"]]),
+      moulds: new Map([["1", mould], ["2", mouldB]]),
+      fillingAmounts: [],
+      ingredients: [],
+    });
+    // Single row per product, mould list is "2× Rect 15 + 12 cavities of Heart 24"
+    expect(result).toContain("Truffle");
+    expect(result).toContain("2× Rect 15 + 12 cavities of Heart 24");
+    // Total cavities = 15×2 + 12 = 42
+    expect(result).toContain("42 pcs");
+  });
+});
+
+// ─── Standalone fillings (PlanFilling-driven) ──────────────────────────────
+
+function makePlanFilling(overrides: Partial<PlanFilling> = {}): PlanFilling {
+  return { id: "pf1", planId: "plan1", fillingId: "1", targetGrams: 500, sortOrder: 0, ...overrides };
+}
+
+describe("calculateStandaloneFillingAmounts", () => {
+  it("returns an empty array when no PlanFillings are given", () => {
+    const result = calculateStandaloneFillingAmounts([], new Map(), new Map());
+    expect(result).toEqual([]);
+  });
+
+  it("scales ingredients by targetGrams / baseRecipeTotal", () => {
+    // Recipe base = 100g sugar + 50g cream = 150g total. Target = 450g → ×3.
+    const pf = makePlanFilling({ targetGrams: 450 });
+    const filling = makeFilling({ id: "1", name: "Caramel" });
+    const sugar: FillingIngredient = { id: "s", fillingId: "1", ingredientId: "sugar", amount: 100, unit: "g", sortOrder: 0 };
+    const cream: FillingIngredient = { id: "c", fillingId: "1", ingredientId: "cream", amount: 50, unit: "g", sortOrder: 1 };
+
+    const [out] = calculateStandaloneFillingAmounts(
+      [pf],
+      new Map([["1", filling]]),
+      new Map([["1", [sugar, cream]]]),
+    );
+
+    expect(out.fillingName).toBe("Caramel");
+    expect(out.targetGrams).toBe(450);
+    expect(out.multiplier).toBe(3);
+    expect(out.scaledIngredients).toHaveLength(2);
+    expect(out.scaledIngredients[0]).toMatchObject({ ingredientId: "sugar", amount: 300, unit: "g" });
+    expect(out.scaledIngredients[1]).toMatchObject({ ingredientId: "cream", amount: 150, unit: "g" });
+  });
+
+  it("handles zero-ingredient recipes without dividing by zero", () => {
+    const pf = makePlanFilling({ targetGrams: 200 });
+    const filling = makeFilling();
+    const [out] = calculateStandaloneFillingAmounts([pf], new Map([["1", filling]]), new Map([["1", []]]));
+    expect(out.multiplier).toBe(0);
+    expect(out.scaledIngredients).toEqual([]);
+  });
+
+  it("skips PlanFillings whose fillingId is unknown", () => {
+    const pf = makePlanFilling({ fillingId: "missing" });
+    const result = calculateStandaloneFillingAmounts([pf], new Map(), new Map());
+    expect(result).toEqual([]);
+  });
+
+  it("preserves per-ingredient note and unit", () => {
+    const pf = makePlanFilling({ targetGrams: 100 });
+    const filling = makeFilling();
+    const li = makeFillingIngredient({ amount: 100, unit: "ml", note: "room temp" });
+    const [out] = calculateStandaloneFillingAmounts([pf], new Map([["1", filling]]), new Map([["1", [li]]]));
+    expect(out.scaledIngredients[0]).toMatchObject({ unit: "ml", note: "room temp", amount: 100 });
+  });
+
+  it("scales by measuredYieldG when set, accounting for cook-loss", () => {
+    // Raw sum = 688 g, cooked yield = 503 g (26.9% loss). Target = 600 g cooked
+    // → multiplier = 600 / 503 ≈ 1.193 (not 600/688 = 0.872).
+    const pf = makePlanFilling({ targetGrams: 600 });
+    const filling = makeFilling({ id: "1", name: "Caramel", measuredYieldG: 503 });
+    const sugar: FillingIngredient = { id: "s", fillingId: "1", ingredientId: "sugar", amount: 400, unit: "g", sortOrder: 0 };
+    const cream: FillingIngredient = { id: "c", fillingId: "1", ingredientId: "cream", amount: 288, unit: "g", sortOrder: 1 };
+
+    const [out] = calculateStandaloneFillingAmounts(
+      [pf],
+      new Map([["1", filling]]),
+      new Map([["1", [sugar, cream]]]),
+    );
+
+    expect(out.multiplier).toBe(1.19); // 600/503 ≈ 1.1928, rounded to 2dp for display
+    // Raw ingredients scale by full-precision multiplier (1.1928…), each rounded to 1dp:
+    //   400 × 1.1928 = 477.13 → 477.1
+    //   288 × 1.1928 = 343.53 → 343.5
+    expect(out.scaledIngredients[0].amount).toBe(477.1);
+    expect(out.scaledIngredients[1].amount).toBe(343.5);
+  });
+
+  it("falls back to raw ingredient total when measuredYieldG is undefined", () => {
+    // Pure ganache — no cook-loss. target = raw sum → multiplier = 1.
+    const pf = makePlanFilling({ targetGrams: 150 });
+    const filling = makeFilling({ id: "1" }); // no measuredYieldG
+    const li = makeFillingIngredient({ amount: 150 });
+    const [out] = calculateStandaloneFillingAmounts([pf], new Map([["1", filling]]), new Map([["1", [li]]]));
+    expect(out.multiplier).toBe(1);
+    expect(out.scaledIngredients[0].amount).toBe(150);
+  });
+});
+
+describe("generateSteps with standalone fillings (fillings-only and hybrid plans)", () => {
+  const filling = makeFilling({ id: "1", name: "Caramel" });
+  const sf: StandaloneFillingAmount = {
+    planFillingId: "pf1",
+    fillingId: "1",
+    fillingName: "Caramel",
+    targetGrams: 500,
+    multiplier: 2,
+    scaledIngredients: [],
+  };
+
+  it("emits no product-phase steps for a pure fillings-only plan", () => {
+    const steps = generateSteps(
+      [], new Map(), new Map(), [], new Map([["1", filling]]), new Map(),
+      new Map(), {}, new Map(),
+      [sf],
+    );
+    expect(steps).toHaveLength(1);
+    expect(steps[0].group).toBe("filling");
+    expect(steps[0].key).toBe("planfilling-pf1");
+    // None of these product-only phases should appear
+    for (const group of ["colour", "shell", "fill", "cap", "unmould"] as const) {
+      expect(steps.find((s) => s.group === group)).toBeUndefined();
+    }
+  });
+
+  it("keyed distinctly from product-driven filling consolidation (no collision in hybrid plans)", () => {
+    // Hybrid plan: one product that uses Caramel AND a standalone Caramel batch.
+    const pb = makePlanProduct();
+    const pf = makeProductFilling({ fillingId: "1", fillPercentage: 100 });
+    const li = makeFillingIngredient({ fillingId: "1", amount: 100 });
+    const fillingAmounts = calculateFillingAmounts(
+      [pb],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [pf]]]),
+      new Map([["1", [li]]]),
+      new Map([["1", filling]]),
+      new Map([["1", mould]]),
+    );
+    const steps = generateSteps(
+      [pb],
+      new Map([["1", "Product A"]]),
+      new Map([["1", [pf]]]),
+      fillingAmounts,
+      new Map([["1", filling]]),
+      new Map([["1", mould]]),
+      new Map(),
+      {},
+      new Map(),
+      [sf],
+    );
+    const fillingSteps = steps.filter((s) => s.group === "filling");
+    // One product-driven + one standalone — distinct keys
+    const keys = fillingSteps.map((s) => s.key).sort();
+    expect(keys).toEqual(["filling-1", "planfilling-pf1"]);
+  });
+
+  it("includes targetGrams and planFillingId on the standalone step", () => {
+    const steps = generateSteps(
+      [], new Map(), new Map(), [], new Map([["1", filling]]), new Map(),
+      new Map(), {}, new Map(), [sf],
+    );
+    expect(steps[0]).toMatchObject({
+      key: "planfilling-pf1",
+      planFillingId: "pf1",
+      targetGrams: 500,
+      group: "filling",
+    });
+    expect(steps[0].detail).toContain("500g");
+    expect(steps[0].detail).toContain("×2 base");
+  });
+});
+
+describe("generateBatchSummary for fillings-only and hybrid plans", () => {
+  const filling = makeFilling({ id: "1", name: "Caramel" });
+  const ings: IngredientRef[] = [{ id: "sugar", name: "Sugar" }];
+  const sf: StandaloneFillingAmount = {
+    planFillingId: "pf1",
+    fillingId: "1",
+    fillingName: "Caramel",
+    targetGrams: 500,
+    multiplier: 2,
+    scaledIngredients: [{ ingredientId: "sugar", amount: 200, unit: "g" }],
+  };
+
+  it("skips PRODUCTS PRODUCED when no planProducts and emits FILLING BATCHES section", () => {
+    const out = generateBatchSummary({
+      batchNumber: "B1",
+      planName: "Filling day",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [],
+      productNames: new Map(),
+      moulds: new Map(),
+      fillingAmounts: [],
+      ingredients: ings,
+      standaloneFillings: [sf],
+    });
+    expect(out).not.toContain("PRODUCTS PRODUCED");
+    expect(out).toContain("FILLING BATCHES");
+    expect(out).toContain("Caramel");
+    expect(out).toContain("500g");
+    expect(out).toContain("Total yield:");
+  });
+
+  it("still includes PRODUCTS PRODUCED for hybrid plans (both sections visible)", () => {
+    const pb = makePlanProduct();
+    const out = generateBatchSummary({
+      batchNumber: "B2",
+      planName: "Hybrid",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [pb],
+      productNames: new Map([["1", "Truffle"]]),
+      moulds: new Map([["1", mould]]),
+      fillingAmounts: [],
+      ingredients: ings,
+      standaloneFillings: [sf],
+    });
+    expect(out).toContain("PRODUCTS PRODUCED");
+    expect(out).toContain("Truffle");
+    expect(out).toContain("FILLING BATCHES");
+    expect(out).toContain("Caramel");
+  });
+
+  it("aggregates standalone filling ingredients into INGREDIENTS USED", () => {
+    const out = generateBatchSummary({
+      batchNumber: "B3",
+      planName: "P",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [],
+      productNames: new Map(),
+      moulds: new Map(),
+      fillingAmounts: [],
+      ingredients: ings,
+      standaloneFillings: [sf],
+    });
+    expect(out).toContain("INGREDIENTS USED");
+    expect(out).toContain("Sugar");
+    expect(out).toContain("200g");
+  });
+
+  it("is unchanged when no standaloneFillings are passed (backward-compat)", () => {
+    const pb = makePlanProduct();
+    const out = generateBatchSummary({
+      batchNumber: "B4",
+      planName: "Legacy",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [pb],
+      productNames: new Map([["1", "Truffle"]]),
+      moulds: new Map([["1", mould]]),
+      fillingAmounts: [],
+      ingredients: [],
+    });
+    expect(out).toContain("PRODUCTS PRODUCED");
+    expect(out).not.toContain("FILLING BATCHES");
   });
 });

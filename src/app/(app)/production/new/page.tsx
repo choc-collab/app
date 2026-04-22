@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
-import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, toggleStep, useFillings, usePlanProducts, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames } from "@/lib/hooks";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, History, PackageX, ShoppingCart } from "lucide-react";
+import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, saveFillingStock, toggleStep, useFillings, usePlanProducts, usePlanFillings, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames } from "@/lib/hooks";
+import { AlertTriangle, ArrowLeft, Beaker, Check, ChevronDown, History, Package, PackageX, Plus, ShoppingCart, Sprout, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { Product, Mould, PlanProduct, FillingPreviousBatch } from "@/types";
-import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts } from "@/lib/production";
+import type { Product, Mould, PlanProduct, PlanFilling, PlanProductAdditionalMould, FillingPreviousBatch, Filling } from "@/types";
+import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, getTotalCavities } from "@/lib/production";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 
@@ -18,8 +18,12 @@ interface IngredientIssue {
 }
 
 export default function NewProductionPlanPage() {
+  // fallback={null} matches every other app page that uses useSearchParams. Non-null
+  // JSX here lands inside the CSR-bailout Suspense in the pre-rendered HTML, which
+  // React 19's minified production build fails to reconcile — surfacing as error #418
+  // on Cloudflare Pages (but not on localhost dev, which skips static export).
   return (
-    <Suspense fallback={<div className="px-4 pt-6"><p className="text-sm text-muted-foreground">Loading…</p></div>}>
+    <Suspense fallback={null}>
       <NewPlanContent />
     </Suspense>
   );
@@ -28,6 +32,10 @@ export default function NewProductionPlanPage() {
 function NewPlanContent() {
   const searchParams = useSearchParams();
   const fromPlanId = searchParams.get("from") ?? undefined;
+  // Escape hatch: `?mode=full` or `?mode=fillings-only` skips the plan-type
+  // picker and lands directly on the relevant flow. Used by deep links and
+  // E2E specs that exercise a specific flow.
+  const modeParam = searchParams.get("mode");
 
   const products = useProductsList();
   const moulds = useMouldsList(true);
@@ -37,9 +45,35 @@ function NewPlanContent() {
   const allCollectionProducts = useAllCollectionProducts();
   const router = useRouter();
 
-  const [phase, setPhase] = useState<"select" | "configure" | "batch-sizes">("select");
+  // Wizard phases:
+  //   plan-type       — new plans only: pick full vs fillings-only
+  //   select → configure → batch-sizes   — full-plan flow (unchanged)
+  //   filling-targets — fillings-only flow (inline picker + target grams)
+  const [phase, setPhase] = useState<"plan-type" | "select" | "configure" | "batch-sizes" | "filling-targets">(
+    fromPlanId ? "select"
+    : modeParam === "full" ? "select"
+    : modeParam === "fillings-only" ? "filling-targets"
+    : "plan-type",
+  );
+  // planMode is user intent, not persisted — mode is derived from plan contents
+  // at read time (presence of PlanProduct / PlanFilling rows).
+  const [planMode, setPlanMode] = useState<"full" | "fillings-only">(
+    modeParam === "fillings-only" ? "fillings-only" : "full",
+  );
+  const [fillingTargets, setFillingTargets] = useState<Array<{ fillingId: string; targetGrams: number; notes?: string }>>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set<string>());
-  const [config, setConfig] = useState<Record<string, { mouldId: string | ""; quantity: number }>>({});
+  // `partialCavities` / `additionalMoulds` stay undefined/empty for the default
+  // single-mould path so persisted PlanProducts match the legacy shape unless the
+  // user opens the "Alternative mould setup" disclosure.
+  type ProductConfig = {
+    mouldId: string | "";
+    quantity: number;
+    partialCavities?: number;
+    additionalMoulds: PlanProductAdditionalMould[];
+  };
+  const [config, setConfig] = useState<Record<string, ProductConfig>>({});
+  // Product IDs whose alternative-mould-setup disclosure is expanded.
+  const [altOpen, setAltOpen] = useState<Set<string>>(new Set<string>());
   const [fillingMultipliers, setFillingMultipliers] = useState<Record<string, number>>({});
   const [fillingPreviousBatches, setFillingPreviousBatches] = useState<Record<string, FillingPreviousBatch>>({});
   const [planName, setPlanName] = useState(() => {
@@ -60,22 +94,55 @@ function NewPlanContent() {
   // Collection filter — default ON so active-collection products are prioritised
   const [filterToActiveCollection, setFilterToActiveCollection] = useState(true);
 
-  // Load source plan products when duplicating
+  // Load source plan products + fillings when duplicating
   const sourcePlanProducts = usePlanProducts(fromPlanId);
+  const sourcePlanFillings = usePlanFillings(fromPlanId);
 
-  // Pre-populate from source plan on first load
+  // Pre-populate from source plan on first load. Mode is inferred from what
+  // the source plan has (products vs fillings vs both) — initial v1 only
+  // supports pure modes, so duplicating a fillings-only plan hands the user
+  // the fillings-only flow; duplicating a full plan stays in full flow; a
+  // hybrid source is treated as full for now (filling batches aren't copied).
   useEffect(() => {
-    if (!fromPlanId || initialized || sourcePlanProducts.length === 0) return;
+    if (!fromPlanId || initialized) return;
+    const hasProducts = sourcePlanProducts.length > 0;
+    const hasFillings = sourcePlanFillings.length > 0;
+    if (!hasProducts && !hasFillings) return;
+
+    if (hasFillings && !hasProducts) {
+      setPlanMode("fillings-only");
+      setFillingTargets(
+        sourcePlanFillings.map((pf) => ({
+          fillingId: pf.fillingId,
+          targetGrams: pf.targetGrams,
+          notes: pf.notes,
+        })),
+      );
+      setPhase("filling-targets");
+      setInitialized(true);
+      return;
+    }
+
     const ids = new Set(sourcePlanProducts.map((pb) => pb.productId));
     setSelectedIds(ids);
-    const cfg: Record<string, { mouldId: string | ""; quantity: number }> = {};
+    const cfg: Record<string, ProductConfig> = {};
+    const reopened = new Set<string>();
     for (const pb of sourcePlanProducts) {
-      cfg[pb.productId] = { mouldId: pb.mouldId, quantity: pb.quantity };
+      cfg[pb.productId] = {
+        mouldId: pb.mouldId,
+        quantity: pb.quantity,
+        partialCavities: pb.partialCavities,
+        additionalMoulds: (pb.additionalMoulds ?? []).map((am) => ({ ...am })),
+      };
+      if (pb.partialCavities != null || (pb.additionalMoulds?.length ?? 0) > 0) {
+        reopened.add(pb.productId);
+      }
     }
     setConfig(cfg);
+    if (reopened.size > 0) setAltOpen(reopened);
     setPhase("configure");
     setInitialized(true);
-  }, [sourcePlanProducts, fromPlanId, initialized]);
+  }, [sourcePlanProducts, sourcePlanFillings, fromPlanId, initialized]);
 
   const allIngredients = useIngredients();
   const selectedProducts = products.filter((r) => selectedIds.has(r.id!));
@@ -191,12 +258,19 @@ function NewPlanContent() {
   }, [productFillingsMap, selectedProductIds, allFillings, shelfStableCategoryNames]);
 
   const mouldWarnings = useMemo(() => {
+    // Aggregate physical-mould usage across primary + additional moulds for every
+    // selected product. Partial-cavity slots count as 1 physical mould.
     const usage = new Map<string, number>();
+    const addUsage = (mouldId: string, quantity: number, partialCavities?: number) => {
+      if (!mouldId) return;
+      const need = partialCavities != null ? 1 : quantity;
+      usage.set(mouldId, (usage.get(mouldId) ?? 0) + need);
+    };
     for (const r of selectedProducts) {
       const cfg = config[r.id!];
-      if (!cfg?.mouldId) continue;
-      const mouldId = cfg.mouldId as string;
-      usage.set(mouldId, (usage.get(mouldId) ?? 0) + cfg.quantity);
+      if (!cfg) continue;
+      if (cfg.mouldId) addUsage(cfg.mouldId, cfg.quantity, cfg.partialCavities);
+      for (const am of cfg.additionalMoulds) addUsage(am.mouldId, am.quantity, am.partialCavities);
     }
     const warnings: { mouldName: string; needed: number; owned: number }[] = [];
     for (const [mouldId, needed] of usage) {
@@ -220,6 +294,7 @@ function NewPlanContent() {
           [id]: {
             mouldId: product.defaultMouldId ?? (moulds[0]?.id ?? ""),
             quantity: product.defaultBatchQty ?? 1,
+            additionalMoulds: [],
           },
         }));
       }
@@ -229,6 +304,158 @@ function NewPlanContent() {
 
   function updateConfig(productId: string, field: "mouldId" | "quantity", value: string | number | "") {
     setConfig((c) => ({ ...c, [productId]: { ...c[productId], [field]: value } }));
+  }
+
+  // ─── Alternative mould setup (rarely used disclosure) ──────────────────────
+
+  function toggleAltOpen(productId: string) {
+    setAltOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }
+
+  /** Toggle partial-cavity mode on the primary mould.
+   *  Turning on pre-fills with the mould's cavity count so the input is editable immediately. */
+  function togglePrimaryPartial(productId: string, on: boolean) {
+    setConfig((c) => {
+      const cur = c[productId];
+      if (!cur) return c;
+      if (on) {
+        const mould = moulds.find((m) => m.id === cur.mouldId);
+        const defaultCavities = mould?.numberOfCavities ?? 1;
+        return { ...c, [productId]: { ...cur, partialCavities: defaultCavities } };
+      }
+      const { partialCavities: _removed, ...rest } = cur;
+      void _removed;
+      return { ...c, [productId]: rest };
+    });
+  }
+
+  function updatePrimaryPartial(productId: string, value: number) {
+    setConfig((c) => {
+      const cur = c[productId];
+      if (!cur) return c;
+      return { ...c, [productId]: { ...cur, partialCavities: Math.max(1, value) } };
+    });
+  }
+
+  function addAdditionalMould(productId: string) {
+    setConfig((c) => {
+      const cur = c[productId];
+      if (!cur) return c;
+      // Default to the first mould that's not already in use on this row so the
+      // user doesn't immediately see a duplicate of the primary.
+      const usedMouldIds = new Set<string>([cur.mouldId, ...cur.additionalMoulds.map((a) => a.mouldId)].filter(Boolean) as string[]);
+      const firstUnused = moulds.find((m) => !usedMouldIds.has(m.id!)) ?? moulds[0];
+      return {
+        ...c,
+        [productId]: {
+          ...cur,
+          additionalMoulds: [...cur.additionalMoulds, { mouldId: firstUnused?.id ?? "", quantity: 1 }],
+        },
+      };
+    });
+  }
+
+  function updateAdditionalMould(productId: string, index: number, patch: Partial<PlanProductAdditionalMould>) {
+    setConfig((c) => {
+      const cur = c[productId];
+      if (!cur) return c;
+      const next = cur.additionalMoulds.map((am, i) => (i === index ? { ...am, ...patch } : am));
+      return { ...c, [productId]: { ...cur, additionalMoulds: next } };
+    });
+  }
+
+  function removeAdditionalMould(productId: string, index: number) {
+    setConfig((c) => {
+      const cur = c[productId];
+      if (!cur) return c;
+      const next = cur.additionalMoulds.filter((_, i) => i !== index);
+      return { ...c, [productId]: { ...cur, additionalMoulds: next } };
+    });
+  }
+
+  /** Save path for a fillings-only plan. Skips PlanProduct save + mould math;
+   *  writes PlanFilling rows and (when logging a past batch) FillingStock rows
+   *  with remainingG = targetGrams. */
+  async function handleCreateFillingsOnly() {
+    if (fillingTargets.length === 0) return;
+    setSaving(true);
+    try {
+      const completedAt = isPastBatch ? new Date(completedDateStr + "T12:00:00") : undefined;
+      const batchNumber = completedAt ? await generateBatchNumber(completedAt) : undefined;
+
+      const planId = await saveProductionPlan({
+        name: planName.trim() || "Filling batch",
+        status: isPastBatch ? "done" : "draft",
+        notes: isPastBatch ? (batchNote.trim() || undefined) : "",
+        ...(completedAt ? { completedAt, batchNumber } : {}),
+      } as any);
+
+      const savedFillings: PlanFilling[] = [];
+      for (let i = 0; i < fillingTargets.length; i++) {
+        const ft = fillingTargets[i];
+        const id = await savePlanFilling({
+          planId,
+          fillingId: ft.fillingId,
+          targetGrams: ft.targetGrams,
+          sortOrder: i,
+          ...(ft.notes ? { notes: ft.notes } : {}),
+        });
+        savedFillings.push({ id, planId, fillingId: ft.fillingId, targetGrams: ft.targetGrams, sortOrder: i, notes: ft.notes });
+      }
+
+      if (isPastBatch && completedAt) {
+        const fillingsMap = new Map(allFillings.map((l) => [l.id!, l]));
+        // For past-batch logging the ingredient-aggregate section is elided —
+        // users are recording quantities they already made. The FILLING BATCHES
+        // block still captures batch names + targetGrams, which is the core
+        // recall info. Full per-ingredient aggregate is a future enhancement
+        // (needs a live fillingIngredients query for all target fillingIds).
+        const emptyIngredientsMap = new Map<string, import("@/types").FillingIngredient[]>();
+        const standaloneAmounts = calculateStandaloneFillingAmounts(savedFillings, fillingsMap, emptyIngredientsMap);
+
+        // Mark every planfilling-* step as done
+        for (const sf of standaloneAmounts) {
+          await toggleStep(planId, `planfilling-${sf.planFillingId}`, true);
+        }
+
+        // Emit FillingStock rows — one per PlanFilling, remainingG = targetGrams
+        const madeAt = completedAt.toISOString().slice(0, 10);
+        for (const pf of savedFillings) {
+          await saveFillingStock({
+            fillingId: pf.fillingId,
+            remainingG: pf.targetGrams,
+            planId,
+            madeAt,
+            createdAt: Date.now(),
+          });
+        }
+
+        const batchSummary = generateBatchSummary({
+          batchNumber: batchNumber ?? "",
+          planName: planName.trim() || "Filling batch",
+          completedAt,
+          planProducts: [],
+          productNames: new Map(),
+          moulds: new Map(),
+          fillingAmounts: [],
+          ingredients: allIngredients.filter((i) => i.id != null) as { id: string; name: string; manufacturer?: string }[],
+          standaloneFillings: standaloneAmounts,
+        });
+        await saveProductionPlan({ id: planId, name: planName.trim() || "Filling batch", status: "done", notes: batchNote.trim() || undefined, batchSummary, completedAt, batchNumber } as any);
+        setSaving(false);
+        router.push(`/production/${encodeURIComponent(planId)}/summary?from=%2Fproduction`);
+        return;
+      }
+
+      router.push(`/production/${encodeURIComponent(planId)}`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleCreate() {
@@ -260,15 +487,24 @@ function NewPlanContent() {
       for (let i = 0; i < selectedProducts.length; i++) {
         const r = selectedProducts[i];
         const cfg = config[r.id!];
+        // Drop empty additional-mould rows (mouldId blank) so we don't persist noise.
+        const cleanedAdditional = cfg.additionalMoulds.filter((am) => am.mouldId);
+        const partialCavities = cfg.partialCavities;
         const id = await savePlanProduct({
           planId,
           productId: r.id!,
           mouldId: cfg.mouldId as string,
           quantity: cfg.quantity,
           sortOrder: i,
+          ...(partialCavities != null ? { partialCavities } : {}),
+          ...(cleanedAdditional.length > 0 ? { additionalMoulds: cleanedAdditional } : {}),
           ...(isPastBatch ? { notes: productNotes[r.id!]?.trim() || undefined } : {}),
         });
-        savedProducts.push({ id, planId, productId: r.id!, mouldId: cfg.mouldId as string, quantity: cfg.quantity, sortOrder: i });
+        savedProducts.push({
+          id, planId, productId: r.id!, mouldId: cfg.mouldId as string, quantity: cfg.quantity, sortOrder: i,
+          ...(partialCavities != null ? { partialCavities } : {}),
+          ...(cleanedAdditional.length > 0 ? { additionalMoulds: cleanedAdditional } : {}),
+        });
       }
 
       if (isPastBatch && completedAt) {
@@ -288,10 +524,9 @@ function NewPlanContent() {
           shelfStableCategoryNames,
         );
 
-        // Build yield entries for the modal
+        // Build yield entries for the modal — total across all mould slots.
         const yieldEntries: YieldEntry[] = savedProducts.map((pb) => {
-          const mould = mouldsMap.get(pb.mouldId);
-          const total = mould ? mould.numberOfCavities * pb.quantity : 0;
+          const total = getTotalCavities(pb, mouldsMap);
           return {
             planProductId: pb.id!,
             productName: productNamesMap.get(pb.productId) ?? "Unknown",
@@ -376,6 +611,47 @@ function NewPlanContent() {
           </p>
         )}
       </div>
+
+      {phase === "plan-type" && (
+        <div className="px-4 pt-2 pb-6 max-w-lg space-y-4">
+          <p className="text-sm text-muted-foreground">What do you want to make in this batch?</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              onClick={() => { setPlanMode("full"); setPhase("select"); }}
+              aria-pressed={planMode === "full"}
+              className="text-left rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/40 focus:outline-none focus:border-foreground"
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+                  <Package className="w-4 h-4 text-foreground" />
+                </div>
+              </div>
+              <p className="text-sm font-medium">Full production</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Products with shell, fillings, cap and unmould phases.
+              </p>
+            </button>
+            <button
+              onClick={() => { setPlanMode("fillings-only"); setPhase("filling-targets"); }}
+              aria-pressed={planMode === "fillings-only"}
+              className="text-left rounded-xl border border-border bg-card p-4 transition-colors hover:border-foreground/40 focus:outline-none focus:border-foreground"
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+                  <Sprout className="w-4 h-4 text-foreground" />
+                </div>
+              </div>
+              <p className="text-sm font-medium">Fillings only</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Make batches of filling that go to stock — no products, no moulds.
+              </p>
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed pt-2">
+            Need both? Pick <span className="font-medium text-foreground">Full production</span> — you&rsquo;ll be able to add extra filling batches alongside your products from the plan detail page.
+          </p>
+        </div>
+      )}
 
       {phase === "select" && (
         <div className="px-4 space-y-3 pb-6">
@@ -563,8 +839,16 @@ function NewPlanContent() {
 
           <div className="space-y-3">
             {selectedProducts.map((r) => {
-              const cfg = config[r.id!] ?? { mouldId: "", quantity: 1 };
+              const cfg = config[r.id!] ?? { mouldId: "", quantity: 1, additionalMoulds: [] };
               const selectedMould = moulds.find((m) => m.id === cfg.mouldId);
+              const isAltOpen = altOpen.has(r.id!);
+              const hasAltConfig = cfg.partialCavities != null || cfg.additionalMoulds.length > 0;
+              const primaryCavities = cfg.partialCavities ?? (selectedMould ? selectedMould.numberOfCavities * cfg.quantity : 0);
+              const additionalCavities = cfg.additionalMoulds.reduce((s, am) => {
+                const m = moulds.find((mo) => mo.id === am.mouldId);
+                return s + (am.partialCavities ?? (m ? m.numberOfCavities * am.quantity : 0));
+              }, 0);
+              const totalProducts = primaryCavities + additionalCavities;
               return (
                 <div key={r.id} className="rounded-lg border border-border bg-card p-3 space-y-2">
                   <h3 className="font-medium text-sm">{r.name}</h3>
@@ -598,14 +882,152 @@ function NewPlanContent() {
                             setQuantityInputs((prev) => { const next = { ...prev }; delete next[r.id!]; return next; });
                           }}
                           className="input w-24"
+                          disabled={cfg.partialCavities != null}
                         />
                       </div>
                       {selectedMould && (
                         <p className="text-xs text-muted-foreground mt-4">
-                          = {selectedMould.numberOfCavities * cfg.quantity} products
+                          = {totalProducts} product{totalProducts !== 1 ? "s" : ""}
                         </p>
                       )}
                     </div>
+
+                    {/* Alternative mould setup disclosure — collapsed by default; expands on
+                        demand for the rare case of multiple moulds or a partial-cavity pour.
+                        Stays auto-visible while an alt config is populated so saved settings
+                        aren't hidden behind a button. */}
+                    {(!isAltOpen && !hasAltConfig) ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleAltOpen(r.id!)}
+                        className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" aria-hidden="true" />
+                        Alternative mould setup
+                      </button>
+                    ) : (
+                      <div className="mt-1 pl-3 border-l border-border/60 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Alternative mould setup</p>
+                          {!hasAltConfig && (
+                            <button
+                              type="button"
+                              onClick={() => toggleAltOpen(r.id!)}
+                              className="text-xs text-muted-foreground hover:text-foreground"
+                            >
+                              Hide
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Partial cavities on the primary mould */}
+                        {selectedMould && (
+                          <>
+                            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                checked={cfg.partialCavities != null}
+                                onChange={(e) => togglePrimaryPartial(r.id!, e.target.checked)}
+                                className="h-3.5 w-3.5"
+                              />
+                              Fill only part of this mould
+                            </label>
+                            {cfg.partialCavities != null && (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={selectedMould.numberOfCavities}
+                                  value={cfg.partialCavities}
+                                  onChange={(e) => updatePrimaryPartial(r.id!, parseInt(e.target.value) || 1)}
+                                  className="input w-20"
+                                  aria-label="Cavities to fill on primary mould"
+                                />
+                                <span className="text-xs text-muted-foreground">
+                                  of {selectedMould.numberOfCavities} cavities
+                                </span>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* Additional moulds — multiple allowed */}
+                        {cfg.additionalMoulds.map((am, i) => {
+                          const amMould = moulds.find((m) => m.id === am.mouldId);
+                          return (
+                            <div key={i} className="flex items-start gap-2">
+                              <div className="flex-1 space-y-1">
+                                <select
+                                  value={am.mouldId}
+                                  onChange={(e) => updateAdditionalMould(r.id!, i, { mouldId: e.target.value })}
+                                  className="input text-sm"
+                                >
+                                  <option value="">— Select mould —</option>
+                                  {moulds.map((m) => (
+                                    <option key={m.id} value={m.id}>
+                                      {m.name} ({m.cavityWeightG} g · {m.numberOfCavities} cavities)
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="flex items-center gap-2 text-xs flex-wrap">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={am.quantity}
+                                    onChange={(e) =>
+                                      updateAdditionalMould(r.id!, i, {
+                                        quantity: Math.max(1, parseInt(e.target.value) || 1),
+                                      })
+                                    }
+                                    className="input w-16"
+                                    disabled={am.partialCavities != null}
+                                    aria-label="Number of additional moulds"
+                                  />
+                                  <span className="text-muted-foreground">moulds, or</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={amMould?.numberOfCavities}
+                                    placeholder="cavities"
+                                    value={am.partialCavities ?? ""}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.trim();
+                                      if (raw === "") {
+                                        updateAdditionalMould(r.id!, i, { partialCavities: undefined });
+                                      } else {
+                                        updateAdditionalMould(r.id!, i, {
+                                          partialCavities: Math.max(1, parseInt(raw) || 1),
+                                        });
+                                      }
+                                    }}
+                                    className="input w-20"
+                                    aria-label="Cavities to fill on this additional mould"
+                                  />
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeAdditionalMould(r.id!, i)}
+                                className="text-muted-foreground hover:text-destructive mt-1.5"
+                                aria-label={`Remove additional mould ${i + 1}`}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+
+                        <button
+                          type="button"
+                          onClick={() => addAdditionalMould(r.id!)}
+                          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" aria-hidden="true" />
+                          Add mould
+                        </button>
+                      </div>
+                    )}
+
                     {isPastBatch && (
                       <div>
                         <label className="block text-xs text-muted-foreground mb-0.5">Notes (optional)</label>
@@ -688,6 +1110,32 @@ function NewPlanContent() {
           moulds={moulds}
           onBack={() => setPhase("configure")}
           onCreate={handleCreate}
+          saving={saving}
+        />
+      )}
+
+      {phase === "filling-targets" && (
+        <FillingTargetsPhase
+          fillings={allFillings}
+          fillingTargets={fillingTargets}
+          onAdd={(fillingId) =>
+            setFillingTargets((prev) => [...prev, { fillingId, targetGrams: 500 }])
+          }
+          onUpdate={(index, patch) =>
+            setFillingTargets((prev) => prev.map((ft, i) => (i === index ? { ...ft, ...patch } : ft)))
+          }
+          onRemove={(index) =>
+            setFillingTargets((prev) => prev.filter((_, i) => i !== index))
+          }
+          planName={planName}
+          setPlanName={setPlanName}
+          isPastBatch={isPastBatch}
+          completedDateStr={completedDateStr}
+          setCompletedDateStr={setCompletedDateStr}
+          batchNote={batchNote}
+          setBatchNote={setBatchNote}
+          onBack={() => (fromPlanId ? router.push("/production") : setPhase("plan-type"))}
+          onCreate={handleCreateFillingsOnly}
           saving={saving}
         />
       )}
@@ -1187,6 +1635,217 @@ function BatchSizesPhase({
           className="flex-1 rounded-full bg-accent text-accent-foreground py-2.5 text-sm font-medium disabled:opacity-50"
         >
           {saving ? "Creating…" : "Create plan"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Fillings-only flow ─────────────────────────────────────────────────────
+function FillingTargetsPhase({
+  fillings,
+  fillingTargets,
+  onAdd,
+  onUpdate,
+  onRemove,
+  planName,
+  setPlanName,
+  isPastBatch,
+  completedDateStr,
+  setCompletedDateStr,
+  batchNote,
+  setBatchNote,
+  onBack,
+  onCreate,
+  saving,
+}: {
+  fillings: Filling[];
+  fillingTargets: { fillingId: string; targetGrams: number; notes?: string }[];
+  onAdd: (fillingId: string) => void;
+  onUpdate: (index: number, patch: Partial<{ targetGrams: number; notes: string }>) => void;
+  onRemove: (index: number) => void;
+  planName: string;
+  setPlanName: (v: string) => void;
+  isPastBatch: boolean;
+  completedDateStr: string;
+  setCompletedDateStr: (v: string) => void;
+  batchNote: string;
+  setBatchNote: (v: string) => void;
+  onBack: () => void;
+  onCreate: () => void;
+  saving: boolean;
+}) {
+  const [showPicker, setShowPicker] = useState(false);
+  const [query, setQuery] = useState("");
+  const usedIds = new Set(fillingTargets.map((ft) => ft.fillingId));
+  const options = fillings
+    .filter((f) => !f.archived && !usedIds.has(f.id!) && f.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const fillingById = new Map(fillings.map((f) => [f.id!, f]));
+  const totalGrams = fillingTargets.reduce((s, ft) => s + (ft.targetGrams || 0), 0);
+  const canCreate = fillingTargets.length > 0 && fillingTargets.every((ft) => ft.targetGrams > 0) && !saving;
+
+  return (
+    <div className="px-4 space-y-4 pb-6 max-w-lg">
+      <div>
+        <label className="label" htmlFor="plan-name">Plan name</label>
+        <input
+          id="plan-name"
+          type="text"
+          value={planName}
+          onChange={(e) => setPlanName(e.target.value)}
+          className="input w-full"
+          placeholder="Filling batch — Thursday"
+        />
+      </div>
+
+      {isPastBatch && (
+        <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+          <div>
+            <label className="label" htmlFor="past-batch-date">Completed on</label>
+            <input
+              id="past-batch-date"
+              type="date"
+              value={completedDateStr}
+              onChange={(e) => setCompletedDateStr(e.target.value)}
+              className="input w-full"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="past-batch-note">Notes (optional)</label>
+            <input
+              id="past-batch-note"
+              type="text"
+              value={batchNote}
+              onChange={(e) => setBatchNote(e.target.value)}
+              className="input w-full"
+              placeholder="Any notes for this batch…"
+            />
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="flex items-baseline justify-between mb-2">
+          <p className="text-sm font-medium">Fillings to make ({fillingTargets.length})</p>
+          {totalGrams > 0 && (
+            <span className="text-xs text-muted-foreground">Total: {totalGrams}g</span>
+          )}
+        </div>
+        {fillingTargets.length > 0 ? (
+          <div className="divide-y divide-border rounded-lg border border-border bg-card">
+            {fillingTargets.map((ft, idx) => {
+              const filling = fillingById.get(ft.fillingId);
+              return (
+                <div key={`${ft.fillingId}-${idx}`} className="flex items-center gap-3 px-3 py-2.5">
+                  <Beaker className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{filling?.name ?? "Unknown filling"}</p>
+                    {filling?.category && (
+                      <p className="text-xs text-muted-foreground truncate">{filling.category}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <input
+                      type="number"
+                      min="1"
+                      step="10"
+                      value={ft.targetGrams || ""}
+                      onChange={(e) => {
+                        const n = parseInt(e.target.value);
+                        onUpdate(idx, { targetGrams: isNaN(n) ? 0 : Math.max(0, n) });
+                      }}
+                      className="w-20 rounded-md border border-border bg-card px-2 py-1 text-sm text-right focus:outline-none focus:border-foreground"
+                      aria-label={`Target grams for ${filling?.name ?? "filling"}`}
+                    />
+                    <span className="text-xs text-muted-foreground">g</span>
+                  </div>
+                  <button
+                    onClick={() => onRemove(idx)}
+                    className="p-1 rounded-full hover:bg-muted transition-colors shrink-0"
+                    aria-label={`Remove ${filling?.name ?? "filling"}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border bg-card px-3 py-6 text-center">
+            <p className="text-xs text-muted-foreground">No fillings selected yet.</p>
+          </div>
+        )}
+
+        <div className="mt-3">
+          {showPicker ? (
+            <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search fillings…"
+                className="input w-full"
+                aria-label="Search fillings"
+                autoFocus
+              />
+              <ul className="divide-y divide-border max-h-72 overflow-y-auto -mx-1 px-1">
+                {options.map((f) => (
+                  <li key={f.id}>
+                    <button
+                      onClick={() => { onAdd(f.id!); setShowPicker(false); setQuery(""); }}
+                      className="w-full flex items-center gap-2 py-2 text-left hover:bg-muted/40 rounded-md px-2 transition-colors"
+                    >
+                      <Beaker className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{f.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{f.category}</p>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+                {options.length === 0 && (
+                  <p className="text-xs text-muted-foreground py-4 text-center">
+                    {usedIds.size === fillings.filter((f) => !f.archived).length
+                      ? "All fillings are already added."
+                      : "No matches."}
+                  </p>
+                )}
+              </ul>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => { setShowPicker(false); setQuery(""); }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowPicker(true)}
+              className="inline-flex items-center gap-1.5 text-sm text-foreground hover:opacity-70 transition-opacity"
+            >
+              <Plus className="w-4 h-4" /> Add filling
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex gap-2 pt-4 border-t border-border">
+        <button
+          onClick={onBack}
+          className="rounded-full border border-border bg-card px-5 py-2.5 text-sm"
+        >
+          Back
+        </button>
+        <button
+          onClick={onCreate}
+          disabled={!canCreate}
+          className="flex-1 rounded-full bg-accent text-accent-foreground py-2.5 text-sm font-medium disabled:opacity-50"
+        >
+          {saving ? (isPastBatch ? "Logging…" : "Creating…") : isPastBatch ? "Log completed batch" : "Create plan"}
         </button>
       </div>
     </div>

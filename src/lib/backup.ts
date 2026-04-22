@@ -14,6 +14,7 @@ export interface BackupData {
   moulds: unknown[];
   productionPlans: unknown[];
   planProducts: unknown[];
+  planFillings?: unknown[];
   planStepStatus: unknown[];
   settings?: unknown[];
   userPreferences?: unknown[];
@@ -65,6 +66,7 @@ async function buildBackupData(): Promise<BackupData> {
     moulds,
     productionPlans,
     planProducts,
+    planFillings,
     planStepStatus,
     userPreferences,
     productFillingHistory,
@@ -96,6 +98,7 @@ async function buildBackupData(): Promise<BackupData> {
     db.moulds.toArray(),
     db.productionPlans.toArray(),
     db.planProducts.toArray(),
+    db.planFillings.toArray(),
     db.planStepStatus.toArray(),
     db.userPreferences.toArray(),
     db.productFillingHistory.toArray(),
@@ -131,6 +134,7 @@ async function buildBackupData(): Promise<BackupData> {
     moulds,
     productionPlans,
     planProducts,
+    planFillings,
     planStepStatus,
     settings: [], // Legacy — v4 migrated to userPreferences. Kept for backward compat.
     userPreferences,
@@ -162,7 +166,7 @@ function hasAnyData(data: BackupData): boolean {
   const arrays: unknown[][] = [
     data.ingredients, data.products, data.productCategories ?? [], data.fillings,
     data.productFillings, data.fillingIngredients, data.moulds, data.productionPlans,
-    data.planProducts, data.planStepStatus, data.userPreferences ?? [],
+    data.planProducts, data.planFillings ?? [], data.planStepStatus, data.userPreferences ?? [],
     data.productFillingHistory ?? [], data.ingredientPriceHistory ?? [],
     data.coatingChocolateMappings ?? [], data.productCostSnapshots ?? [],
     data.packaging ?? [], data.packagingOrders ?? [], data.decorationMaterials ?? [],
@@ -197,7 +201,7 @@ export async function exportBackup(options?: ExportBackupOptions): Promise<void>
 // a misclick or a bad backup file is always recoverable. No-op if the DB is
 // empty. Errors are swallowed — the snapshot is a best-effort safety net and
 // should never block the operation the user actually asked for.
-async function writeSafetySnapshot(filenamePrefix: string): Promise<void> {
+export async function writeSafetySnapshot(filenamePrefix: string): Promise<void> {
   try {
     const data = await buildBackupData();
     if (!hasAnyData(data)) return;
@@ -221,7 +225,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
     "rw",
     [
       db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings, db.fillingIngredients,
-      db.moulds, db.productionPlans, db.planProducts, db.planStepStatus, db.settings, db.userPreferences,
+      db.moulds, db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.settings, db.userPreferences,
       db.productFillingHistory, db.ingredientPriceHistory, db.coatingChocolateMappings,
       db.productCostSnapshots, db.packaging, db.packagingOrders, db.decorationMaterials,
       db.decorationCategories, db.shellDesigns,
@@ -233,7 +237,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
       await Promise.all([
         db.ingredients.clear(), db.products.clear(), db.productCategories.clear(), db.fillings.clear(),
         db.productFillings.clear(), db.fillingIngredients.clear(), db.moulds.clear(),
-        db.productionPlans.clear(), db.planProducts.clear(), db.planStepStatus.clear(),
+        db.productionPlans.clear(), db.planProducts.clear(), db.planFillings.clear(), db.planStepStatus.clear(),
         db.settings.clear(), db.userPreferences.clear(), db.productFillingHistory.clear(), db.ingredientPriceHistory.clear(),
         db.coatingChocolateMappings.clear(), db.productCostSnapshots.clear(),
         db.packaging.clear(), db.packagingOrders.clear(), db.decorationMaterials.clear(),
@@ -367,6 +371,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const rawMoulds                  = data.moulds                  ?? [];
   const rawProductionPlans         = data.productionPlans         ?? [];
   const rawPlanProducts            = data.planProducts            ?? data.planBonbons            ?? [];
+  const rawPlanFillings            = data.planFillings            ?? [];
   const rawPlanStepStatus          = data.planStepStatus          ?? [];
   const rawUserPreferences         = data.userPreferences          ?? [];
   const rawLegacySettings          = data.settings                ?? [];
@@ -400,6 +405,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const moulds                   = rawMoulds as never[];
   const productionPlans          = applyAll<never>(rawProductionPlans, migrateProductionPlan);
   const planProducts             = applyAll<never>(rawPlanProducts, migratePlanProduct);
+  const planFillings             = rawPlanFillings as never[];
   const planStepStatus           = rawPlanStepStatus as never[];
   const userPreferences          = rawUserPreferences as never[];
   const productFillingHistory    = applyAll<never>(rawProductFillingHistory, migrateProductFillingHistory);
@@ -426,7 +432,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
     "rw",
     [
       db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings, db.fillingIngredients,
-      db.moulds, db.productionPlans, db.planProducts, db.planStepStatus, db.settings, db.userPreferences,
+      db.moulds, db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.settings, db.userPreferences,
       db.productFillingHistory, db.ingredientPriceHistory, db.coatingChocolateMappings,
       db.productCostSnapshots, db.packaging, db.packagingOrders, db.decorationMaterials,
       db.decorationCategories, db.shellDesigns,
@@ -438,7 +444,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
       await Promise.all([
         db.ingredients.clear(), db.products.clear(), db.productCategories.clear(), db.fillings.clear(),
         db.productFillings.clear(), db.fillingIngredients.clear(), db.moulds.clear(),
-        db.productionPlans.clear(), db.planProducts.clear(), db.planStepStatus.clear(),
+        db.productionPlans.clear(), db.planProducts.clear(), db.planFillings.clear(), db.planStepStatus.clear(),
         db.settings.clear(), db.userPreferences.clear(), db.productFillingHistory.clear(), db.ingredientPriceHistory.clear(),
         db.coatingChocolateMappings.clear(), db.productCostSnapshots.clear(),
         db.packaging.clear(), db.packagingOrders.clear(), db.decorationMaterials.clear(),
@@ -458,6 +464,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         moulds.length                   && db.moulds.bulkAdd(moulds),
         productionPlans.length          && db.productionPlans.bulkAdd(productionPlans),
         planProducts.length             && db.planProducts.bulkAdd(planProducts),
+        planFillings.length             && db.planFillings.bulkAdd(planFillings),
         planStepStatus.length           && db.planStepStatus.bulkAdd(planStepStatus),
         userPreferences.length          && db.userPreferences.bulkAdd(userPreferences),
         productFillingHistory.length    && db.productFillingHistory.bulkAdd(productFillingHistory),

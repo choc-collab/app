@@ -78,7 +78,7 @@ test.describe("Production — leftover filling", () => {
     await createMould(page, "Test Sphere Mould");
 
     // Create production plan via wizard
-    await page.goto("/production/new");
+    await page.goto("/production/new?mode=full");
     await page.getByText("Praline Product").click();
     // Continue to configure phase
     await page.getByRole("button", { name: /Continue.*selected/ }).click();
@@ -114,7 +114,7 @@ test.describe("Production — leftover filling", () => {
     await createProductWithFilling(page, "Almond Product", "Almond Praline");
     await createMould(page, "Diamond Mould");
 
-    await page.goto("/production/new");
+    await page.goto("/production/new?mode=full");
     await page.getByText("Almond Product").click();
     await page.getByRole("button", { name: /Continue.*selected/ }).click();
     const mouldVal2 = await page.locator("select.input option", { hasText: "Diamond Mould" }).getAttribute("value");

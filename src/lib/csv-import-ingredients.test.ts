@@ -185,6 +185,22 @@ describe("validateIngredientRow", () => {
     expect(issues.find((i) => i.field === "category")).toBeUndefined();
   });
 
+  it("no warning for user-created category when passed in knownCategories", () => {
+    // Regression: before fix, the validator only knew about the static seed list,
+    // so user-defined categories like "Emulsifiers" were flagged as "Unknown".
+    const data = mapIngredientRow({ name: "Lecithin", category: "Emulsifiers" });
+    const known = new Set<string>(["Chocolate", "Fats", "Emulsifiers"]);
+    const issues = validateIngredientRow(data, known);
+    expect(issues.find((i) => i.field === "category")).toBeUndefined();
+  });
+
+  it("still warns for a category not in knownCategories", () => {
+    const data = mapIngredientRow({ name: "Test", category: "Made Up" });
+    const known = new Set<string>(["Chocolate"]);
+    const issues = validateIngredientRow(data, known);
+    expect(issues.find((i) => i.field === "category")?.severity).toBe("warning");
+  });
+
   it("warns when purchaseCost set but gramsPerUnit missing", () => {
     const data = mapIngredientRow({ name: "Test", purchaseCost: "10" });
     const issues = validateIngredientRow(data);

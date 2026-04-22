@@ -295,6 +295,8 @@ Fill weight per mould entry = `cavityVolumeMl × DENSITY × numberOfCavities × 
 
 Shelf-stable fillings (categories with `shelfStable = true`, e.g. Pralines, Fruit-Based) are not fill-scaled — they use their base recipe weight multiplied by a user-supplied batch multiplier.
 
+**Cook-loss and measured yield.** Fillings that reduce on the stove (caramels, pâtes de fruits) can record an optional `measuredYieldG` on the filling — the weight of the pan full minus the pan empty after cooking. When set, it becomes the *base yield* for all rescaling: raw ingredients scale up to produce the target cooked weight (e.g. a caramel with `rawTotal = 688`, `measuredYieldG = 503` and target = 600 g cooked scales ingredients by 600 / 503 ≈ 1.19×, not 600 / 688). When the field is left blank (ganaches, pralinés — no reduction), the raw ingredient total is used as before.
+
 Shared fillings across products are consolidated into a single production step with combined weight.
 
 Colour steps are auto-scheduled across all products in a plan to minimise cocoa butter colour switches (greedy algorithm: batch tasks by current colour, switch to the colour with the most ready tasks).

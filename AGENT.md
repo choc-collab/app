@@ -70,7 +70,36 @@ The app targets 300+ products and 1000+ fillings. Keep these rules in mind for e
 
 ---
 
+## Static-export hydration gotchas
+
+ChocCollab is deployed as a static export and served by Cloudflare Pages. `next dev` (Turbopack) does **not** produce static HTML — the dev server renders everything live on the client — so hydration mismatches that only exist in the built artefact cannot be caught by running `npm run dev` or the regular e2e suite.
+
+Known traps when changing any page under `src/app/(app)/` or `public/_redirects`:
+
+- **Adding a static sub-route under a path that already has a `[id]` dynamic route.** Every `[id]` route has a catch-all SPA rewrite in `public/_redirects` (`/production/:id → /production/_spa/`). A `:id` placeholder matches *any* non-empty segment, including a literal like `"new"`, so `/production/new` silently gets rewritten to the `/production/_spa/` shell on Cloudflare while serving the correct static file locally. The symptom: page loads on localhost, but on Cloudflare it hydrates the wrong HTML and throws React error #418. **Fix:** add explicit pass-through rules for the literal sub-path *before* the catch-all in `public/_redirects` — see the `/production/new/*` block there for the pattern. Do this at the same time as creating the new page, not as a follow-up.
+- **`<Suspense fallback={<JSX/>}>` on a page that uses `useSearchParams()`.** Every other page in this app uses `fallback={null}`. A non-null JSX fallback lands real content inside the `BAILOUT_TO_CLIENT_SIDE_RENDERING` marker of the pre-rendered HTML. Not known to cause failures in isolation, but match the null-fallback convention — uniformity makes route-tree inspection reliable.
+- **Non-deterministic render values** — `Date.now()`, `Math.random()`, `new Date()` inside JSX (not inside handlers/effects), locale-dependent `toLocaleString` without a fixed locale.
+- **`typeof window !== 'undefined'` branching** during render.
+- **Invalid HTML tag nesting** — `<div>` inside `<p>`, block-level elements inside inline, `<tr>` outside a `<table>`.
+- **External data read during render that differs between server build and client load** (e.g. time-based flags).
+
+### Catching hydration failures
+
+Two layers, both wired into the repo:
+
+1. `src/app/hydration-patterns.test.ts` — fast vitest guard. Grep-level check that fails loudly the moment a forbidden pattern is introduced into `src/app/`. Add a rule here every time a hydration bug teaches us a new anti-pattern.
+2. `npm run test:e2e:prod` — builds the static export, serves `out/` via `scripts/serve-static.mjs` (which simulates Cloudflare's `_redirects` so rewrites behave like the real edge), and loads every top-level route through Playwright ([e2e/hydration.spec.ts](e2e/hydration.spec.ts)). Each route gets two checks: (a) the server-rendered HTML's route tree matches the requested URL — this catches `_redirects` over-matching like the `/production/new` case — and (b) no React error, no `pageerror`, and `<main>` has non-empty content after hydration. Configuration is in `playwright.prod.config.ts`.
+
+Both layers have known limits. The vitest check only catches patterns we already know about. The smoke suite reproduces Cloudflare's `_redirects` rewrites locally and so catches routing over-match bugs, but it cannot fully simulate the Cloudflare Pages edge (HTTP/2, Brotli, CSP headers, Cloudflare's HTML transformers). Treat `test:e2e:prod` as "the build is self-consistent and routing matches the requested URLs", not as "this will behave identically on Cloudflare in every respect". When a page still fails on Cloudflare after the suite is green, compare the CF-served HTML byte-for-byte against a local run of `serve-static.mjs` — any divergence there is genuinely CF-specific (cache staleness, edge-only features, etc.).
+
+Run `npm run test:e2e:prod` before any release. Run `npm test` (which includes `hydration-patterns.test.ts`) on every change.
+
 ## Keeping Docs in Sync
+
+**Non-negotiable: every user-visible change — feature, UX tweak, or bug fix — ships with a `CHANGELOG.md` entry in the same change.** Add it under `## [Unreleased]` (create the section if absent) at the time you make the code change, not as a follow-up. The only things that don't need an entry are changes the user will never notice: internal refactors with no behavior change, test-only edits, tooling, and `AGENT.md`/contributor-doc tweaks. When in doubt, write the entry. It is easier for a reviewer to delete an unnecessary line than to realise after release that a user-affecting change went undocumented.
+
+Before treating any task as complete, re-check: *"Did this change anything a user would see or feel?"* If yes and `CHANGELOG.md` wasn't touched, the task is not done. Offer a draft entry proactively — don't wait to be asked.
+
 Documentation lives in six places — update the right one(s) when you change the code:
 
 - **`README.md`** — user-facing: what the app does, how to run it, headline features, tech stack. Short and approachable.
@@ -82,8 +111,8 @@ Documentation lives in six places — update the right one(s) when you change th
 
 | Change type | What to update |
 |---|---|
+| **Any user-visible change (feature, UX, bug fix)** | **`CHANGELOG.md` `[Unreleased]` — always, same PR as the code** |
 | New top-level feature / section | README features list + AGENT.md file structure + CHANGELOG `[Unreleased]` + getting-started guide (if user-facing) |
-| Any user-visible change (feature, UX, bug fix) | CHANGELOG `[Unreleased]` section |
 | User-visible behaviour covered by the guide (install flow, demo data, adding/editing entities, production wizard, stock/freezer, backup/cloud sync, keyboard shortcuts) | Update the matching section in `src/app/(public)/getting-started/page.tsx` |
 | UI change to a captured screen (Settings → Demo tab, ingredient/filling/product detail, production list, stock, collection detail) | Re-run `npm run docs:screenshots` (dev server does not need to be up — Playwright boots one). Commit regenerated PNGs in `public/docs/screenshots/` |
 | New page / route | File structure in AGENT.md |

@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -13,6 +13,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   moulds: EntityTable<Mould, "id">;
   productionPlans: EntityTable<ProductionPlan, "id">;
   planProducts: EntityTable<PlanProduct, "id">;
+  planFillings: EntityTable<PlanFilling, "id">;
   planStepStatus: EntityTable<PlanStepStatus, "id">;
   settings: EntityTable<AppSetting, "key">;
   userPreferences: EntityTable<UserPreferences, "id">;
@@ -354,6 +355,20 @@ db.version(6).stores({
   }
 });
 
+// v7 — standalone filling batches in production plans.
+//
+// Adds the `planFillings` table — a sibling to `planProducts`. A plan can now
+// have PlanProduct rows (full production), PlanFilling rows (filling-only),
+// or both (hybrid). The plan's "mode" is derived from the presence of rows in
+// each table, not stored on ProductionPlan. FillingStock is the output of a
+// completed PlanFilling (uses the existing `planId` back-ref).
+//
+// No upgrade hook required — purely additive, existing plans keep their
+// PlanProduct-only shape.
+db.version(7).stores({
+  planFillings: "id, planId, fillingId",
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -385,7 +400,7 @@ export function newId(): string {
 // foreign-key references stay intact.
 const AUTO_ID_TABLES = [
   db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings,
-  db.fillingIngredients, db.moulds, db.productionPlans, db.planProducts,
+  db.fillingIngredients, db.moulds, db.productionPlans, db.planProducts, db.planFillings,
   db.planStepStatus, db.productFillingHistory, db.ingredientPriceHistory,
   db.coatingChocolateMappings, db.productCostSnapshots, db.experiments,
   db.experimentIngredients, db.packaging, db.packagingOrders,
