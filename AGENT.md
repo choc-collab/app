@@ -71,6 +71,11 @@ The app targets 300+ products and 1000+ fillings. Keep these rules in mind for e
 ---
 
 ## Keeping Docs in Sync
+
+**Non-negotiable: every user-visible change — feature, UX tweak, or bug fix — ships with a `CHANGELOG.md` entry in the same change.** Add it under `## [Unreleased]` (create the section if absent) at the time you make the code change, not as a follow-up. The only things that don't need an entry are changes the user will never notice: internal refactors with no behavior change, test-only edits, tooling, and `AGENT.md`/contributor-doc tweaks. When in doubt, write the entry. It is easier for a reviewer to delete an unnecessary line than to realise after release that a user-affecting change went undocumented.
+
+Before treating any task as complete, re-check: *"Did this change anything a user would see or feel?"* If yes and `CHANGELOG.md` wasn't touched, the task is not done. Offer a draft entry proactively — don't wait to be asked.
+
 Documentation lives in six places — update the right one(s) when you change the code:
 
 - **`README.md`** — user-facing: what the app does, how to run it, headline features, tech stack. Short and approachable.
@@ -82,8 +87,8 @@ Documentation lives in six places — update the right one(s) when you change th
 
 | Change type | What to update |
 |---|---|
+| **Any user-visible change (feature, UX, bug fix)** | **`CHANGELOG.md` `[Unreleased]` — always, same PR as the code** |
 | New top-level feature / section | README features list + AGENT.md file structure + CHANGELOG `[Unreleased]` + getting-started guide (if user-facing) |
-| Any user-visible change (feature, UX, bug fix) | CHANGELOG `[Unreleased]` section |
 | User-visible behaviour covered by the guide (install flow, demo data, adding/editing entities, production wizard, stock/freezer, backup/cloud sync, keyboard shortcuts) | Update the matching section in `src/app/(public)/getting-started/page.tsx` |
 | UI change to a captured screen (Settings → Demo tab, ingredient/filling/product detail, production list, stock, collection detail) | Re-run `npm run docs:screenshots` (dev server does not need to be up — Playwright boots one). Commit regenerated PNGs in `public/docs/screenshots/` |
 | New page / route | File structure in AGENT.md |
