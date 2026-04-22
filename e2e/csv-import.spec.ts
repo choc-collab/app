@@ -108,8 +108,10 @@ test.describe("CSV Import — Ingredients", () => {
     const csv2 = "name,category\nDuplicate Test Ingredient,Sugars\nNew Ingredient,Fats\n";
     const filePath2 = writeTempCSV(csv2);
     await page.locator('input[type="file"][accept=".csv,text/csv"]').setInputFiles(filePath2);
-    // Preview shows both rows as valid (dedup happens on commit)
-    await page.getByRole("button", { name: "Import 2 ingredients" }).click();
+    // The import button now reports the exact count that will land — the existing
+    // row is pre-checked against the DB and excluded from the count, so the label
+    // says "Import 1 ingredient" (one new), not "Import 2 ingredients".
+    await page.getByRole("button", { name: "Import 1 ingredient" }).click();
     await expect(page.getByText("1 ingredient imported")).toBeVisible();
     await expect(page.getByText("1 skipped (already exist)")).toBeVisible();
   });

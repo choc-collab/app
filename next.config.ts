@@ -1,4 +1,7 @@
 import type { NextConfig } from "next";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 // Static export: the app is entirely client-side (Dexie IndexedDB, `"use client"`
 // on every page, no API routes). Redirects and headers migrated to
@@ -11,12 +14,18 @@ import type { NextConfig } from "next";
 // without tripping the generateStaticParams check.
 const isProd = process.env.NODE_ENV === "production";
 
+const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), "package.json");
+const { version: appVersion } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string };
+
 const nextConfig: NextConfig = {
   ...(isProd ? { output: "export" as const } : {}),
   reactStrictMode: true,
   trailingSlash: true,
   images: {
     unoptimized: true,
+  },
+  env: {
+    NEXT_PUBLIC_APP_VERSION: appVersion,
   },
 };
 
