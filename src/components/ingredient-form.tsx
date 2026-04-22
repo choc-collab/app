@@ -24,6 +24,7 @@ interface IngredientFormProps {
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange?: (isDirty: boolean) => void;
+  onCategoryChange?: (category: string) => void;
   activeSection?: "details" | "composition" | "allergens" | "pricing" | "nutrition" | "shell";
 }
 
@@ -37,7 +38,7 @@ const emptyComp: Record<CompositionKey, string> = {
   alcohol: "",
 };
 
-export function IngredientForm({ ingredient, manufacturers = [], brands = [], vendors = [], sources = [], onSaved, onCancel, onDirtyChange, activeSection }: IngredientFormProps) {
+export function IngredientForm({ ingredient, manufacturers = [], brands = [], vendors = [], sources = [], onSaved, onCancel, onDirtyChange, onCategoryChange, activeSection }: IngredientFormProps) {
   const sec = activeSection ?? "details";
   const sym = useCurrencySymbol();
   const ingredientCategoryNames = useIngredientCategoryNames();
@@ -85,6 +86,7 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
       setSource(ingredient.source);
       setNotes(ingredient.notes);
       setCategory(ingredient.category ?? "");
+      onCategoryChange?.(ingredient.category ?? "");
       setComp({
         cacaoFat: String(ingredient.cacaoFat),
         sugar: String(ingredient.sugar),
@@ -321,7 +323,7 @@ export function IngredientForm({ ingredient, manufacturers = [], brands = [], ve
             <label className="label">Category</label>
             <select
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e) => { setCategory(e.target.value); onCategoryChange?.(e.target.value); }}
               className="input"
             >
               <option value="">— select —</option>
