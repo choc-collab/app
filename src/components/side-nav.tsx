@@ -65,7 +65,7 @@ const HOME_ITEMS: NavItem[] = [
   { href: "/pantry", label: "Pantry", icon: PantryIcon },
   { href: "/lab", label: "Lab", icon: FlaskIcon, disabled: true },
   { href: "/observatory", label: "Observatory", icon: ObservatoryIcon },
-  { href: "/shop", label: "Shop", icon: ShopIcon, disabled: true },
+  { href: "/shop", label: "Shop", icon: ShopIcon },
 ];
 
 const FROM_TO_ROUTE: Record<string, string> = {

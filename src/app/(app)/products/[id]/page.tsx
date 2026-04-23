@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingGrams, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useFillingIngredientsForFillings, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels } from "@/lib/hooks";
-import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
+import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingGrams, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useFillingIngredientsForFillings, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap } from "@/lib/hooks";
+import { deriveShopColor, resolveShopColor } from "@/lib/shopColor";
+import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type Product, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
 import { colorToCSS } from "@/lib/colors";
 import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromGrams } from "@/lib/costCalculation";
 import { DENSITY_G_PER_ML } from "@/lib/production";
@@ -72,6 +73,9 @@ export default function ProductDetailPage() {
   const [localMouldId, setLocalMouldId] = useState("");
   const [batchQtyInput, setBatchQtyInput] = useState("");
   const [localShellDesign, setLocalShellDesign] = useState<ShellDesignStep[]>([]);
+  // Empty string means "use auto" — the save path sends `undefined` so the
+  // Shop falls back to the derived / hashed colour.
+  const [localShopColor, setLocalShopColor] = useState<string>("");
 
   const [saveErrors, setSaveErrors] = useState<string[]>([]);
   const [showAssign, setShowAssign] = useState(false);
@@ -107,6 +111,7 @@ export default function ProductDetailPage() {
       setLocalMouldId(product.defaultMouldId || "");
       setBatchQtyInput(String(product.defaultBatchQty ?? 1));
       setLocalShellDesign(product.shellDesign ?? []);
+      setLocalShopColor(product.shopColor ?? "");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.id]);
@@ -134,7 +139,8 @@ export default function ProductDetailPage() {
     localMouldId !== (product.defaultMouldId || "") ||
     batchQtyInput !== String(product.defaultBatchQty ?? 1) ||
     JSON.stringify([...localTags].sort()) !== JSON.stringify([...(product.tags ?? [])].sort()) ||
-    JSON.stringify(localShellDesign) !== JSON.stringify(product.shellDesign ?? [])
+    JSON.stringify(localShellDesign) !== JSON.stringify(product.shellDesign ?? []) ||
+    (localShopColor || undefined) !== product.shopColor
   );
   const isDirty = (isNew && !savedOnce) || formDirty;
   // When leaving a ?new=1 product without saving, delete the incomplete record
@@ -266,6 +272,7 @@ export default function ProductDetailPage() {
       defaultBatchQty: batchQty,
       shellDesign: localShellDesign,
       fillMode: localFillMode,
+      shopColor: localShopColor || undefined,
     });
     setEditing(false);
     setSavedOnce(true);
@@ -286,6 +293,7 @@ export default function ProductDetailPage() {
     setLocalMouldId(product.defaultMouldId || "");
     setBatchQtyInput(String(product.defaultBatchQty ?? 1));
     setLocalShellDesign(product.shellDesign ?? []);
+    setLocalShopColor(product.shopColor ?? "");
     setEditing(false);
     setShowAssign(false);
     setFillingSearch("");
@@ -465,6 +473,12 @@ export default function ProductDetailPage() {
         <>
           {editing ? (
             <>
+              <ShopColorControl
+                value={localShopColor}
+                onChange={setLocalShopColor}
+                productName={product.name}
+                shellDesign={localShellDesign}
+              />
               <ShellDesignSection
                 steps={localShellDesign}
                 onUpdate={setLocalShellDesign}
@@ -486,6 +500,7 @@ export default function ProductDetailPage() {
             </>
           ) : (
             <>
+              <ShopColorReadonly product={product} />
               {(product.shellDesign ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center px-4">No shell design steps recorded yet.</p>
               ) : (
@@ -2867,4 +2882,132 @@ function ProductNutritionTab({ productId, productFillings, market }: { productId
       </div>
     </div>
   );
+}
+
+// ---- Shop display colour control (edit + readonly) ----
+
+/** Edit-mode control. Matches the decoration-materials page's colour input
+ *  (40×40 native picker + mono hex). Handles the extra "auto" state that
+ *  decoration materials don't need — when empty, the Shop derives from
+ *  the shell design (falling back to a name-hash). */
+function ShopColorControl({
+  value,
+  onChange,
+  productName,
+  shellDesign,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  productName: string;
+  shellDesign: ShellDesignStep[];
+}) {
+  const materialColorById = useDecorationMaterialColorMap();
+  const derived = deriveShopColor({ name: productName, shellDesign }, materialColorById);
+  const isExplicit = value !== "";
+  const effective = isExplicit
+    ? value
+    : resolveShopColor({ name: productName, shellDesign }, materialColorById);
+  const effectiveHex = hexFromAny(effective);
+
+  return (
+    <div className="px-4 pb-4">
+      <label className="label" htmlFor="shop-color-input">Shop display colour</label>
+      {isExplicit ? (
+        <div className="flex items-center gap-3">
+          <input
+            id="shop-color-input"
+            type="color"
+            value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : effectiveHex}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-10 h-10 rounded-md border border-border cursor-pointer p-0.5"
+            title="Pick colour"
+            aria-label="Pick shop display colour"
+            data-testid="shop-color-input"
+          />
+          <span className="text-sm text-muted-foreground font-mono">{value}</span>
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-xs text-muted-foreground hover:text-foreground underline"
+            data-testid="shop-color-reset"
+          >
+            Use auto
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <div
+            aria-hidden
+            className="w-10 h-10 rounded-md border border-border p-0.5"
+            data-testid="shop-color-swatch"
+          >
+            <div className="w-full h-full rounded-sm" style={{ background: effective }} />
+          </div>
+          <span className="text-sm text-muted-foreground font-mono">{effectiveHex}</span>
+          <button
+            type="button"
+            onClick={() => onChange(effectiveHex)}
+            className="text-xs text-muted-foreground hover:text-foreground underline"
+            data-testid="shop-color-override"
+          >
+            Customize
+          </button>
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground mt-1.5">
+        {isExplicit
+          ? "Custom colour for the bonbon disc in the Shop (cavities, palette, summary)."
+          : derived
+            ? "Auto — from the first colour-phase decoration material."
+            : "Auto — falls back to a colour hashed from the name."}
+      </p>
+    </div>
+  );
+}
+
+/** Readonly variant for the non-edit view of the Shell Design tab. Matches
+ *  the edit control's 40×40 swatch + mono hex pattern. */
+function ShopColorReadonly({ product }: { product: Product }) {
+  const materialColorById = useDecorationMaterialColorMap();
+  const derived = deriveShopColor(product, materialColorById);
+  const effective = resolveShopColor(product, materialColorById);
+  const isExplicit = Boolean(product.shopColor);
+  const source = isExplicit ? "custom" : derived ? "auto (from shell design)" : "auto (hashed from name)";
+
+  return (
+    <div className="px-4 pt-4 pb-2">
+      <div className="text-xs font-medium text-muted-foreground mb-1.5">Shop display colour</div>
+      <div className="flex items-center gap-3">
+        <div
+          aria-hidden
+          className="w-10 h-10 rounded-md border border-border p-0.5 shrink-0"
+        >
+          <div className="w-full h-full rounded-sm" style={{ background: effective }} />
+        </div>
+        <span className="text-sm text-muted-foreground font-mono">
+          {hexFromAny(effective)}
+        </span>
+        <span className="text-xs text-muted-foreground">· {source}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Best-effort conversion of an arbitrary CSS colour to a 7-char hex so the
+ *  native <input type="color"> gets a valid value. Named / hsl / rgb colours
+ *  all resolve correctly when rendered into a detached element's style. */
+function hexFromAny(css: string): string {
+  if (/^#[0-9a-fA-F]{6}$/.test(css)) return css;
+  if (typeof document === "undefined") return "#a8753a";
+  const el = document.createElement("div");
+  el.style.color = css;
+  document.body.appendChild(el);
+  const rgb = getComputedStyle(el).color;
+  document.body.removeChild(el);
+  const m = rgb.match(/rgb(?:a)?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!m) return "#a8753a";
+  const hex = [m[1], m[2], m[3]]
+    .map((n) => parseInt(n, 10).toString(16).padStart(2, "0"))
+    .join("");
+  return `#${hex}`;
 }

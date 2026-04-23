@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -36,6 +36,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   fillingStock: EntityTable<FillingStock, "id">;
   fillingCategories: EntityTable<FillingCategory, "id">;
   ingredientCategories: EntityTable<IngredientCategory, "id">;
+  sales: EntityTable<Sale, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -369,6 +370,18 @@ db.version(7).stores({
   planFillings: "id, planId, fillingId",
 });
 
+// v8 — Shop counter sales.
+//
+// Adds the `sales` table for the Shop feature. Each row is one box sale,
+// either `prepared` (stock removed, not yet billed) or `sold` (counted in
+// revenue). Pricing is taken from CollectionPackaging at prep time and
+// snapshotted into the row.
+//
+// Purely additive — no existing rows touched, no upgrade hook required.
+db.version(8).stores({
+  sales: "id, status, preparedAt, soldAt, collectionId, packagingId",
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -409,6 +422,7 @@ const AUTO_ID_TABLES = [
   db.decorationMaterials, db.decorationCategories, db.shellDesigns, db.fillingStock, db.userPreferences,
   db.fillingCategories,
   db.ingredientCategories,
+  db.sales,
 ];
 for (const table of AUTO_ID_TABLES) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

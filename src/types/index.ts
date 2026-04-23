@@ -187,6 +187,11 @@ export interface Product {
   defaultBatchQty?: number; // default: 1
   shellDesign?: ShellDesignStep[]; // ordered decoration steps for moulded products
   vegan?: boolean; // user-set flag; shown as a leaf icon on printed batch labels
+  /** Colour used to render this product in the Shop (bonbon discs, cavity
+   *  previews, palette tiles). 7-char hex ("#rrggbb"). When unset, the Shop
+   *  derives one from the first colour-phase decoration material; if that
+   *  also fails, it falls back to a deterministic hash of the product name. */
+  shopColor?: string;
   archived?: boolean; // soft-delete: hidden from lists, preserved for production history
   createdAt: Date;
   updatedAt: Date;
@@ -877,6 +882,11 @@ export interface Packaging {
   id?: string;
   name: string;           // e.g. "Box of 9 with natural inserts"
   capacity: number;       // how many products fit per unit
+  /** Optional cavity layout for divider-frame boxes used in the Shop feature.
+   *  When both `rows` and `cols` are set, `rows * cols` must equal `capacity`.
+   *  When unset, the Shop derives a near-square grid from `capacity`. */
+  rows?: number;
+  cols?: number;
   manufacturer?: string;  // free-text
   notes?: string;
   createdAt: Date;
@@ -1069,4 +1079,36 @@ export interface CollectionPricingSnapshot {
   triggerType: "sell_price_change" | "ingredient_price" | "coating_change" | "packaging_cost" | "manual";
   /** Human-readable description, e.g. "Sell price updated to €15.95" */
   triggerDetail: string;
+}
+
+// --- Shop / Sales ---
+
+/** Lifecycle of a Shop sale. `prepared` = the operator has filled a box in
+ *  advance; stock has already been decremented, but it is not yet counted
+ *  toward revenue. `sold` = a customer has paid; counts in KPIs. */
+export type SaleStatus = "prepared" | "sold";
+
+/**
+ * One box-sale record from the Shop counter flow.
+ *
+ * Pricing is taken from the `CollectionPackaging` row identified by
+ * `(collectionId, packagingId)` — no per-bonbon retail price exists on
+ * `Product`. The price is snapshotted into `price` at prep time so later
+ * edits to the collection do not rewrite history.
+ *
+ * `cells` is ordered row-major across the packaging's cavity grid and
+ * has exactly `packaging.capacity` entries. A `null` entry means that
+ * cavity is empty (only valid pre-sale; a `sold` sale typically has
+ * every cavity filled, but this isn't enforced at the type level).
+ */
+export interface Sale {
+  id?: string;
+  collectionId: string;
+  packagingId: string;
+  cells: (string | null)[];    // productId per cavity, row-major
+  price: number;               // captured from CollectionPackaging.sellPrice at prep time
+  status: SaleStatus;
+  preparedAt: Date;
+  soldAt?: Date;
+  customerNote?: string;
 }
