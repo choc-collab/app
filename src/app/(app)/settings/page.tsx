@@ -12,7 +12,7 @@ import { getStorageStatus, requestPersistentStorage, formatBytes, type StorageSt
 import { readLastSnapshotMetadata, dismissLastSnapshotMetadata, type LastSnapshotMetadata } from "@/lib/upgrade-snapshot";
 import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive } from "lucide-react";
 import { CSVImport } from "@/components/csv-import";
-import { makeIngredientImportConfig, getExistingIngredientIndex } from "@/lib/csv-import-ingredients";
+import { makeIngredientImportConfig, getExistingIngredientIndex, exportIngredientsCSV } from "@/lib/csv-import-ingredients";
 import type { Ingredient } from "@/types";
 
 type ImportState = "idle" | "confirm" | "importing" | "done" | "error";
@@ -98,7 +98,7 @@ export default function SettingsPage() {
           onClick={() => switchTab("import")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "import" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
-          Import
+          Import/Export
         </button>
         <button
           onClick={() => switchTab("market")}
@@ -976,19 +976,94 @@ function ImportTab() {
   return (
     <div className="space-y-6">
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-primary">Import Data</h2>
+        <h2 className="text-sm font-semibold text-primary">Import &amp; Export Data</h2>
         <p className="text-xs text-muted-foreground">
-          Bulk-import records from a CSV file. Download the template, fill it in using a
-          spreadsheet, then upload it here. Duplicates are detected by name + manufacturer
-          — if both match an existing record, the row is skipped. Import only adds new
-          records; it never updates or replaces existing data.
+          Bulk-import records from a CSV file, or export your existing data to edit it in a
+          spreadsheet and re-import. Duplicates are detected by name + manufacturer — if both
+          match an existing record, the row is skipped unless you opt in to updating existing
+          records.
         </p>
       </section>
 
-      {/* Ingredients */}
+      {/* Ingredients — Export */}
+      <section className="rounded-lg border border-border bg-card p-4">
+        <IngredientCSVExportSection />
+      </section>
+
+      {/* Ingredients — Import */}
       <section className="rounded-lg border border-border bg-card p-4">
         <IngredientCSVImportSection />
       </section>
+    </div>
+  );
+}
+
+function IngredientCSVExportSection() {
+  const [exporting, setExporting] = useState(false);
+  const [result, setResult] = useState<{ count: number } | null>(null);
+  const [error, setError] = useState("");
+
+  async function handleExport() {
+    setExporting(true);
+    setError("");
+    try {
+      const count = await exportIngredientsCSV();
+      setResult({ count });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3">
+        <FileSpreadsheet className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">Export ingredients to CSV</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Download all active (non-archived) ingredients as a CSV you can edit in a
+            spreadsheet and re-import here.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
+        <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
+        <p className="text-xs text-status-warn">
+          Only the latest purchase price is exported — not the full price history. Re-importing
+          this file won&rsquo;t restore historical pricing entries. Use Backup &amp; Restore if
+          you need a complete archive.
+        </p>
+      </div>
+
+      <button
+        onClick={handleExport}
+        disabled={exporting}
+        className="w-full rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium disabled:opacity-50"
+      >
+        <span className="inline-flex items-center justify-center gap-2">
+          <Download className="w-4 h-4" />
+          {exporting ? "Exporting…" : "Export ingredients CSV"}
+        </span>
+      </button>
+
+      {result && (
+        <div className="flex items-start gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
+          <CheckCircle className="w-4 h-4 text-status-ok shrink-0 mt-0.5" />
+          <p className="text-xs text-status-ok">
+            Exported <strong>{result.count}</strong> ingredient{result.count === 1 ? "" : "s"}.
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+          <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+          <p className="text-xs text-destructive">{error}</p>
+        </div>
+      )}
     </div>
   );
 }
