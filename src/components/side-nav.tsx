@@ -56,6 +56,7 @@ const SECTIONS: SectionDef[] = [
       { href: "/pricing", label: "Pricing", icon: PricingIcon },
       { href: "/stats", label: "Stats", icon: StatsIcon },
       { href: "/observatory/product-cost", label: "Product Cost", icon: ProductCostIcon },
+      { href: "/observatory/shop", label: "Shop Insights", icon: ShopInsightsIcon },
     ],
   },
 ];
@@ -72,6 +73,7 @@ const FROM_TO_ROUTE: Record<string, string> = {
   pricing: "/pricing",
   stats: "/stats",
   "product-cost": "/observatory/product-cost",
+  "shop-insights": "/observatory/shop",
   production: "/production",
   stock: "/stock",
 };
@@ -503,6 +505,14 @@ function ProductCostIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z" />
+    </svg>
+  );
+}
+
+function ShopInsightsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
     </svg>
   );
 }

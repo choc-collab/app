@@ -26,6 +26,7 @@ import type {
   ProductionPlan, PlanProduct, PlanStepStatus,
   Packaging, PackagingOrder, Collection, CollectionProduct, CollectionPackaging,
   CollectionPricingSnapshot, DecorationMaterial, FillingStock,
+  Sale,
 } from "@/types";
 
 // Sentinel ingredient name to detect duplicate loads
@@ -1643,6 +1644,254 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   await db.collectionProducts.add({
     collectionId: easterCollId, productId: madagascarBarId, sortOrder: 3,
   } as CollectionProduct);
+
+  // ── Shop counter — ~12 weeks of sold boxes ────────────────────────────────
+  //
+  // Populates the Shop landing "Recent sales" + the Observatory's "Shop
+  // Insights" page. Designed to tell a legible story at a glance:
+  //
+  //   • Salted Caramel is the hero bonbon (≈45% of cells)
+  //   • Milk Ganache is the reliable second (≈35%)
+  //   • Hazelnut Praline is the niche third (≈20%)
+  //   • Standard Retail carries the bulk; Easter ramps up in the last ~30 days
+  //   • Wholesale shows up as occasional bulk drops (every ~10 days)
+  //   • Box of 4 outsells Box of 9 in unit count, but Box of 9 wins on revenue
+  //
+  // Generated day-by-day across a real weekly rhythm (closed Monday, busy
+  // Sat/Sun) so the weekly chart has visible peaks. Fully deterministic — no
+  // randomness — so two demo loads produce identical histories.
+
+  const box4Cap = 4;
+  const box9Cap = 9;
+
+  // Pre-baked cell arrays, named by intent so the story stays readable.
+  // Each entry is row-major and has exactly `capacity` product IDs.
+  const B4_RETAIL_CLASSIC  = [caramelProductId, caramelProductId, ganacheProductId, pralineProductId];
+  const B4_RETAIL_GANACHE  = [ganacheProductId, ganacheProductId, caramelProductId, pralineProductId];
+  const B4_RETAIL_PRALINE  = [pralineProductId, pralineProductId, caramelProductId, ganacheProductId];
+  const B4_EASTER_CLASSIC  = [caramelProductId, pralineProductId, ganacheProductId, caramelProductId];
+  const B4_EASTER_PRALINE  = [pralineProductId, pralineProductId, ganacheProductId, caramelProductId];
+  const B4_WHOLESALE       = [caramelProductId, caramelProductId, ganacheProductId, ganacheProductId];
+  const B9_RETAIL_EVEN     = [caramelProductId, ganacheProductId, pralineProductId,
+                              caramelProductId, ganacheProductId, pralineProductId,
+                              caramelProductId, ganacheProductId, pralineProductId];
+  const B9_RETAIL_CARAMEL  = [caramelProductId, caramelProductId, ganacheProductId,
+                              caramelProductId, caramelProductId, ganacheProductId,
+                              pralineProductId, ganacheProductId, pralineProductId];
+  const B9_EASTER_SIGNATURE = [pralineProductId, caramelProductId, pralineProductId,
+                               caramelProductId, ganacheProductId, caramelProductId,
+                               pralineProductId, ganacheProductId, pralineProductId];
+  const B9_WHOLESALE       = [caramelProductId, caramelProductId, caramelProductId,
+                              caramelProductId, ganacheProductId, ganacheProductId,
+                              ganacheProductId, ganacheProductId, ganacheProductId];
+
+  // Deterministic cycle over template lists — avoids Math.random so the demo
+  // is reproducible across loads. `idx` mixes day offset + variant to keep
+  // consecutive days visually different without being truly random.
+  function pick<T>(arr: T[], idx: number): T {
+    return arr[((idx % arr.length) + arr.length) % arr.length];
+  }
+
+  const retailBox4Variants = [B4_RETAIL_CLASSIC, B4_RETAIL_GANACHE, B4_RETAIL_CLASSIC, B4_RETAIL_PRALINE];
+  const retailBox9Variants = [B9_RETAIL_EVEN, B9_RETAIL_CARAMEL, B9_RETAIL_EVEN];
+  const easterBox4Variants = [B4_EASTER_CLASSIC, B4_EASTER_PRALINE, B4_EASTER_CLASSIC];
+  const easterBox9Variants = [B9_EASTER_SIGNATURE, B9_EASTER_SIGNATURE];
+
+  // Day-of-week pattern — rough shop cadence. dayIndex 0=Monday.
+  // Each entry is [retailBox4, retailBox9, easterBox4, easterBox9] — how many
+  // boxes get sold that day. Easter values are only applied within the last
+  // ~30 days (ramp-up block below).
+  const dayPattern: Array<[number, number, number, number]> = [
+    [0, 0, 0, 0], // Monday — closed
+    [2, 1, 0, 0], // Tuesday
+    [3, 1, 0, 0], // Wednesday
+    [3, 2, 0, 0], // Thursday
+    [5, 3, 0, 0], // Friday
+    [7, 4, 0, 0], // Saturday — peak
+    [3, 2, 0, 0], // Sunday
+  ];
+
+  // Convert Date → 0..6 where 0 = Monday (JS Date: 0 = Sunday).
+  function mondayIndex(d: Date): number {
+    const js = d.getDay();
+    return js === 0 ? 6 : js - 1;
+  }
+
+  // Timestamp helper — clamps the sold hour to business hours (10:00–18:00)
+  // so the "today, 14:23" format on the Shop landing reads naturally.
+  function atHour(day: Date, hour: number, minute: number): Date {
+    const d = new Date(day);
+    d.setHours(hour, minute, 0, 0);
+    return d;
+  }
+
+  async function addSoldSale(
+    collectionId: string,
+    packagingId: string,
+    cells: string[],
+    price: number,
+    capacity: number,
+    soldAt: Date,
+    preparedAt?: Date,
+  ): Promise<void> {
+    // Pad with nulls if a caller's template is too short — defensive, the
+    // templates above are already sized.
+    const padded: (string | null)[] = cells.slice(0, capacity);
+    while (padded.length < capacity) padded.push(null);
+    await db.sales.add({
+      collectionId,
+      packagingId,
+      cells: padded,
+      price,
+      status: "sold",
+      preparedAt: preparedAt ?? new Date(soldAt.getTime() - 10 * 60_000),
+      soldAt,
+    } as Sale);
+  }
+
+  // Walk every day from 82 days ago up to 2 days ago and emit sold sales.
+  const WEEKS_BACK = 12; // ~84 days
+  const SHOP_START = daysAgo(WEEKS_BACK * 7 - 2);
+  const SHOP_END   = daysAgo(2);
+  let salesCursor = new Date(SHOP_START);
+  salesCursor.setHours(0, 0, 0, 0);
+
+  let dayCounter = 0;
+  let retailB4Counter = 0;
+  let retailB9Counter = 0;
+  let easterB4Counter = 0;
+  let easterB9Counter = 0;
+
+  while (salesCursor <= SHOP_END) {
+    const dow = mondayIndex(salesCursor);
+    const [r4, r9, _e4Placeholder, _e9Placeholder] = dayPattern[dow];
+    void _e4Placeholder;
+    void _e9Placeholder;
+    const daysFromEnd = Math.round((SHOP_END.getTime() - salesCursor.getTime()) / DAY_MS);
+
+    // Easter ramp — last 30 days ramps from 0 up to peak in the final week.
+    // Before that, Easter doesn't exist at the counter.
+    const inEasterWindow = daysFromEnd <= 30;
+    const easterRamp = inEasterWindow ? Math.max(0, 1 - daysFromEnd / 30) : 0; // 0..1
+    const e4Target = inEasterWindow
+      ? Math.round((dow >= 3 ? 3 : dow >= 1 ? 1 : 0) * (0.3 + 0.7 * easterRamp))
+      : 0;
+    const e9Target = inEasterWindow
+      ? Math.round((dow >= 4 ? 2 : dow >= 2 ? 1 : 0) * (0.3 + 0.7 * easterRamp))
+      : 0;
+
+    // Retail Box 4
+    for (let i = 0; i < r4; i++) {
+      const soldAt = atHour(salesCursor, 11 + (i % 7), (dayCounter * 7 + i * 13) % 60);
+      await addSoldSale(
+        standardCollId,
+        box4Id,
+        pick(retailBox4Variants, retailB4Counter),
+        12.50,
+        box4Cap,
+        soldAt,
+      );
+      retailB4Counter++;
+    }
+
+    // Retail Box 9 — fewer, slightly later in the day
+    for (let i = 0; i < r9; i++) {
+      const soldAt = atHour(salesCursor, 13 + (i % 5), (dayCounter * 11 + i * 17) % 60);
+      await addSoldSale(
+        standardCollId,
+        box9Id,
+        pick(retailBox9Variants, retailB9Counter),
+        25.00,
+        box9Cap,
+        soldAt,
+      );
+      retailB9Counter++;
+    }
+
+    // Easter Box 4
+    for (let i = 0; i < e4Target; i++) {
+      const soldAt = atHour(salesCursor, 12 + (i % 6), (dayCounter * 5 + i * 19) % 60);
+      await addSoldSale(
+        easterCollId,
+        box4Id,
+        pick(easterBox4Variants, easterB4Counter),
+        15.95,
+        box4Cap,
+        soldAt,
+      );
+      easterB4Counter++;
+    }
+
+    // Easter Box 9
+    for (let i = 0; i < e9Target; i++) {
+      const soldAt = atHour(salesCursor, 14 + (i % 4), (dayCounter * 3 + i * 23) % 60);
+      await addSoldSale(
+        easterCollId,
+        box9Id,
+        pick(easterBox9Variants, easterB9Counter),
+        34.50,
+        box9Cap,
+        soldAt,
+      );
+      easterB9Counter++;
+    }
+
+    // Wholesale — every ~10 days, a bulk order of 6 box4s and 3 box9s, all at
+    // the same prep time so they group naturally on the Shop landing.
+    if (dayCounter > 0 && dayCounter % 10 === 0 && dow !== 0) {
+      const wholesalePreparedAt = atHour(salesCursor, 9, 15);
+      const wholesaleSoldAt = atHour(salesCursor, 9, 30);
+      for (let i = 0; i < 6; i++) {
+        await addSoldSale(
+          wholesaleCollId,
+          box4Id,
+          B4_WHOLESALE,
+          2.95,
+          box4Cap,
+          new Date(wholesaleSoldAt.getTime() + i),
+          wholesalePreparedAt,
+        );
+      }
+      for (let i = 0; i < 3; i++) {
+        await addSoldSale(
+          wholesaleCollId,
+          box9Id,
+          B9_WHOLESALE,
+          5.90,
+          box9Cap,
+          new Date(wholesaleSoldAt.getTime() + 10_000 + i),
+          wholesalePreparedAt,
+        );
+      }
+    }
+
+    dayCounter++;
+    salesCursor = new Date(salesCursor.getTime() + DAY_MS);
+  }
+
+  // A handful of still-prepared (not yet sold) boxes so the Shop landing's
+  // "Ready to sell" list isn't empty on a fresh demo load.
+  const preppedToday = atHour(daysAgo(0), 9, 30);
+  for (let i = 0; i < 3; i++) {
+    await db.sales.add({
+      collectionId: standardCollId,
+      packagingId: box9Id,
+      cells: B9_RETAIL_EVEN,
+      price: 25.00,
+      status: "prepared",
+      preparedAt: new Date(preppedToday.getTime() + i * 15 * 60_000),
+    } as Sale);
+  }
+  for (let i = 0; i < 2; i++) {
+    await db.sales.add({
+      collectionId: easterCollId,
+      packagingId: box4Id,
+      cells: B4_EASTER_CLASSIC,
+      price: 15.95,
+      status: "prepared",
+      preparedAt: new Date(preppedToday.getTime() + (3 + i) * 15 * 60_000),
+    } as Sale);
+  }
 
   return { success: true, message: `Demo data loaded: 10 products (7 moulded + 3 bars — 2 pure bean-to-bar + 1 filled), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 5 production batches (incl. a partially-frozen praline batch), 3 packaging + 3 collections with full pricing history, 4 decoration materials, 3 moulds (incl. a 100g bar mould), 4 filling stock entries (2 available + 2 frozen). Exercises all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
 }
