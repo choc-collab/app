@@ -33,7 +33,7 @@ test.describe("Shop", () => {
     await expect(page.getByRole("heading", { name: "Nothing to sell yet" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Open Collections" })).toBeVisible();
     // Back link routes home.
-    await page.getByRole("link", { name: "← Back to shop" }).click();
+    await page.getByRole("link", { name: "Back" }).click();
     await expect(page).toHaveURL(/\/shop\/?$/);
   });
 
@@ -77,7 +77,9 @@ test.describe("Shop", () => {
       await expect(page).toHaveURL(/\/shop\/?$/);
 
       // Landing shows the prepared row with the full box preview + €12.00 price.
-      await expect(page.getByRole("heading", { name: /Ready to sell/ })).toBeVisible();
+      // The "Ready to sell" tab is the default and shows the new row directly.
+      await expect(page.getByRole("button", { name: /Ready to sell/ })).toBeVisible();
+      await expect(page.getByTestId("shop-sell-btn")).toBeVisible();
       await expect(page.getByText(/Spring Test/).first()).toBeVisible();
       await expect(page.getByText("€12.00").first()).toBeVisible();
     });
@@ -200,10 +202,12 @@ test.describe("Shop", () => {
       await expect(page.getByTestId("shop-group-qty-value")).toHaveValue("2");
       await page.getByTestId("shop-sell-group-btn").click();
 
-      // Both prepared rows have moved to Recent sales — the Ready-to-sell
-      // heading is gone.
-      await expect(page.getByRole("heading", { name: /Ready to sell/ })).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Recent sales" })).toBeVisible();
+      // Both prepared rows have moved to recent activity — the prepared
+      // group is gone from the Ready-to-sell tab.
+      await expect(page.getByTestId("shop-prepared-group")).toHaveCount(0);
+
+      // Switch to the Recent activity tab to see the sold rows + undo buttons.
+      await page.getByRole("button", { name: /Recent activity/ }).click();
       await expect(page.getByTestId("shop-undo-sold-btn")).toHaveCount(2);
     });
 
@@ -244,13 +248,17 @@ test.describe("Shop", () => {
 
       // Sell the prepared box.
       await page.getByTestId("shop-sell-btn").click();
-      await expect(page.getByRole("heading", { name: "Recent sales" })).toBeVisible();
+      // Sold row leaves the Ready-to-sell list.
+      await expect(page.getByTestId("shop-sell-btn")).toHaveCount(0);
 
-      // Undo moves it back.
+      // Switch to Recent activity to find the Undo control.
+      await page.getByRole("button", { name: /Recent activity/ }).click();
       const undo = page.getByTestId("shop-undo-sold-btn");
       await expect(undo).toBeVisible();
       await undo.click();
-      await expect(page.getByRole("heading", { name: /Ready to sell/ })).toBeVisible();
+      // Undo moves the box back; switch to Ready-to-sell to confirm it returned.
+      await page.getByRole("button", { name: /Ready to sell/ }).click();
+      await expect(page.getByTestId("shop-sell-btn")).toBeVisible();
       await expect(page.getByTestId("shop-undo-sold-btn")).toHaveCount(0);
     });
 
@@ -338,7 +346,7 @@ test.describe("Shop", () => {
       await expect(page).toHaveURL(/\/shop\/?$/);
 
       // Row shows "today, HH:MM" — pattern match, time varies.
-      const row = page.getByRole("heading", { name: /Ready to sell/ }).locator("..");
+      const row = page.getByTestId("shop-sell-btn").locator("xpath=ancestor::li");
       await expect(row.getByText(/today, \d{2}:\d{2}/)).toBeVisible();
     });
 
@@ -387,12 +395,12 @@ test.describe("Shop", () => {
       // Cancel closes the confirm without voiding.
       await page.getByRole("button", { name: "Cancel" }).click();
       await expect(page.getByText("Void this box?")).not.toBeVisible();
-      await expect(page.getByRole("heading", { name: /Ready to sell/ })).toBeVisible();
+      await expect(page.getByTestId("shop-sell-btn")).toBeVisible();
 
       // Confirm actually voids.
       await page.getByTestId("shop-void-btn").click();
       await page.getByRole("button", { name: "Yes, void" }).click();
-      await expect(page.getByRole("heading", { name: /Ready to sell/ })).not.toBeVisible();
+      await expect(page.getByTestId("shop-sell-btn")).toHaveCount(0);
     });
   });
 });
