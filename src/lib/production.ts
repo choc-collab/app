@@ -1,4 +1,4 @@
-import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, Mould, Product, FillingPreviousBatch, DecorationMaterial } from "@/types";
+import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, Mould, Product, FillingPreviousBatch, DecorationMaterial, ProductCategory } from "@/types";
 import { SHELF_STABLE_CATEGORIES, normalizeApplyAt } from "@/types";
 
 // Legacy fill factor — used as the default when a product has no per-product
@@ -16,7 +16,7 @@ export const DENSITY_G_PER_ML = 1.2;
 export type ProductionStep = {
   key: string;
   label: string;
-  group: "colour" | "shell" | "filling" | "fill" | "cap" | "unmould";
+  group: "colour" | "shell" | "filling" | "fill" | "cap" | "unmould" | "package";
   detail?: string;
   colors?: string[];
   coating?: string;   // set on shell/cap steps for grouping by chocolate type
@@ -803,6 +803,11 @@ export function generateSteps(
    *  group steps with key `planfilling-{id}`, placed alongside product-driven
    *  fillings. Empty for pure full-production plans. */
   standaloneFillings: StandaloneFillingAmount[] = [],
+  /** Lookup of ProductCategory by id — used to detect bar products so a
+   *  "Package" step can be emitted for each bar after unmould. When absent,
+   *  no package steps are generated (back-compat for callers that haven't
+   *  wired this through yet). */
+  productCategoriesMap: Map<string, ProductCategory> = new Map(),
 ): ProductionStep[] {
   const steps: ProductionStep[] = [];
 
@@ -1092,6 +1097,32 @@ export function generateSteps(
       group: "unmould",
       detail: `${mouldList} · ${totalProducts} products`,
       mouldCount: totalPhysicalMoulds,
+      planProductId: pb.id,
+      totalProducts,
+    });
+  }
+
+  // 7: Package — emitted for bar-category products only. Completing the step
+  //    wraps every actually-unmoulded bar (planProduct.actualYield) into a
+  //    prepared Sale row at the Shop. The UI for this step opens a modal to
+  //    choose which collection × wrapper packaging to use; the modal confirms
+  //    the write.
+  for (const pb of planProducts) {
+    const product = productsMap.get(pb.productId);
+    if (!product) continue;
+    const category = product.productCategoryId
+      ? productCategoriesMap.get(product.productCategoryId)
+      : undefined;
+    if (category?.name?.toLowerCase() !== "bar") continue;
+    const slots = slotsByPb.get(pb.id!) ?? [];
+    if (slots.length === 0) continue;
+    const productName = productNames.get(pb.productId) ?? "Unknown";
+    const totalProducts = slots.reduce((s, sl) => s + sl.cavityCount, 0);
+    steps.push({
+      key: `package-${pb.id}`,
+      label: `Package: ${productName}`,
+      group: "package",
+      detail: "Wrap and send to Shop",
       planProductId: pb.id,
       totalProducts,
     });

@@ -57,7 +57,10 @@
     { "source": "/pantry/decoration/:id/", "destination": "/pantry/decoration/_spa/" },
     { "source": "/products/:id/:path*", "destination": "/products/_spa/:path*" },
     { "source": "/products/:id", "destination": "/products/_spa/" },
-    { "source": "/products/:id/", "destination": "/products/_spa/" }
+    { "source": "/products/:id/", "destination": "/products/_spa/" },
+    { "source": "/shop/new/:id/:path*", "destination": "/shop/new/_spa/:path*" },
+    { "source": "/shop/new/:id", "destination": "/shop/new/_spa/" },
+    { "source": "/shop/new/:id/", "destination": "/shop/new/_spa/" }
   ],
   "headers": [
     {

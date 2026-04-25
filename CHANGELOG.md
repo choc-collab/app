@@ -6,7 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-
+### Added
+- **CSV ingredient export** — the Settings → Import tab has been renamed **Import/Export** and now includes an *Export ingredients CSV* button that downloads every active (non-archived) ingredient as `ingredients-YYYY-MM-DD.csv`. The file uses the same column layout as the import template, so you can edit it in a spreadsheet (bulk price updates, category reshuffles, allergen toggles) and re-import it — ticking *Update existing ingredients* in the import preview applies your edits in place. Only the latest purchase price is exported, not the full price-history log; re-importing won't restore historical pricing entries, so use Backup & Restore for a complete archive. Archived ingredients are excluded from the export.
 
 ## [0.2.0] — 2026-04-22
 

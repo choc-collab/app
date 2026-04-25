@@ -4,9 +4,10 @@ import type { ProductCategory } from "@/types";
  * Pure helpers for ProductCategory range validation and behaviour discrimination.
  *
  * Bar-like UI behaviour is implicit from the range fields — see `categoryAllowsZeroShell`
- * and `categoryAllowsFullShell`. We deliberately avoid an explicit "kind" enum so that
- * users can define their own categories (e.g. "filled bar", "praline bar") and the UI
- * will adapt automatically based on the range they configure.
+ * and `categoryAllowsFullShell`. The shell-percentage range drives production-side
+ * behaviour (whether shell/layers sections are required, etc.), independent of how
+ * the category renders in the Shop. Shop visuals are controlled by
+ * `ProductCategory.shopKind`, which the user picks per category.
  */
 
 export interface CategoryRangeInput {

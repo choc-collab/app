@@ -1,9 +1,17 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromGrams } from "@/lib/costCalculation";
+import { computeShopKpis, EMPTY_SHOP_KPIS, type ShopKpis } from "@/lib/shopKpis";
+import {
+  computeCommitStockDeltas,
+  computeRestoreStockDeltas,
+  tallyCells,
+  type SaleStockBatch,
+} from "@/lib/saleStock";
+import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib/shopColor";
 
 // --- Ingredients ---
 
@@ -1285,20 +1293,35 @@ export async function addCoating(coating: string): Promise<void> {
 export async function ensureDefaultProductCategories(): Promise<void> {
   await db.transaction("rw", db.productCategories, async () => {
     const existing = await db.productCategories.toArray();
-    const existingNames = new Set(existing.map((c) => c.name));
-    const missing = DEFAULT_PRODUCT_CATEGORIES.filter((seed) => !existingNames.has(seed.name));
-    if (missing.length === 0) return;
+    const existingByLower = new Map<string, ProductCategory>();
+    for (const c of existing) existingByLower.set(c.name.toLowerCase(), c);
     const now = new Date();
-    await db.productCategories.bulkAdd(
-      missing.map((seed) => ({
-        name: seed.name,
-        shellPercentMin: seed.shellPercentMin,
-        shellPercentMax: seed.shellPercentMax,
-        defaultShellPercent: seed.defaultShellPercent,
-        createdAt: now,
-        updatedAt: now,
-      } as ProductCategory)),
+
+    const missing = DEFAULT_PRODUCT_CATEGORIES.filter(
+      (seed) => !existingByLower.has(seed.name.toLowerCase()),
     );
+    if (missing.length > 0) {
+      await db.productCategories.bulkAdd(
+        missing.map((seed) => ({
+          name: seed.name,
+          shellPercentMin: seed.shellPercentMin,
+          shellPercentMax: seed.shellPercentMax,
+          defaultShellPercent: seed.defaultShellPercent,
+          shopKind: seed.shopKind,
+          createdAt: now,
+          updatedAt: now,
+        } as ProductCategory)),
+      );
+    }
+
+    // Backfill shopKind on existing seed rows that pre-date the field. Skips rows
+    // the user may have customised (we only set kind when it's missing entirely).
+    for (const seed of DEFAULT_PRODUCT_CATEGORIES) {
+      const row = existingByLower.get(seed.name.toLowerCase());
+      if (row?.id && !row.shopKind) {
+        await db.productCategories.update(row.id, { shopKind: seed.shopKind, updatedAt: now });
+      }
+    }
   });
 }
 
@@ -2681,4 +2704,554 @@ export async function deductFillingStock(
   }
 
   return totalDeducted;
+}
+
+// --- Shop sales ---
+
+/** Live map of decorationMaterial.id → color. The Shop uses this to derive
+ *  each product's shop display colour from its shell design. Archived
+ *  materials are kept in the map (renaming/archiving a material shouldn't
+ *  erase the visual identity of every bonbon that referenced it). */
+export function useDecorationMaterialColorMap(): Map<string, string | undefined> {
+  return useLiveQuery(async () => {
+    const all = await db.decorationMaterials.toArray();
+    const m = new Map<string, string | undefined>();
+    for (const dm of all) if (dm.id) m.set(dm.id, dm.color);
+    return m;
+  }, []) ?? new Map<string, string | undefined>();
+}
+
+/** Shop-focused products view:
+ *    - `products`: non-archived product rows stripped of `photo` (photos
+ *      aren't used anywhere in the Shop per the product's decision).
+ *    - `viewById`: productId → { name, color, kind } ready to hand to a Shop
+ *      component. Colour is resolved explicit → derived → hashed; kind comes
+ *      from the product's category (`ProductCategory.shopKind`), defaulting
+ *      to "moulded" when the category is missing or has no shopKind set.
+ *
+ *  Fires on writes to `products`, `decorationMaterials`, or `productCategories`;
+ *  the merge is cheap because the maps are small. */
+export function useShopProducts(): {
+  products: Omit<Product, "photo">[];
+  viewById: Map<string, ShopProductInfo>;
+} {
+  return useLiveQuery(async () => {
+    const [productsAll, materialsAll, categoriesAll] = await Promise.all([
+      db.products.toArray(),
+      db.decorationMaterials.toArray(),
+      db.productCategories.toArray(),
+    ]);
+    const materialColorById = new Map<string, string | undefined>();
+    for (const dm of materialsAll) if (dm.id) materialColorById.set(dm.id, dm.color);
+
+    const kindByCategoryId = new Map<string, ShopKind>();
+    for (const c of categoriesAll) {
+      if (c.id && c.shopKind) kindByCategoryId.set(c.id, c.shopKind);
+    }
+
+    const products = productsAll
+      .filter((p) => !p.archived)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(({ photo: _photo, ...rest }) => rest);
+
+    const viewById = new Map<string, ShopProductInfo>();
+    for (const p of products) {
+      if (!p.id) continue;
+      const kind = (p.productCategoryId && kindByCategoryId.get(p.productCategoryId)) || DEFAULT_SHOP_KIND;
+      viewById.set(p.id, {
+        id: p.id,
+        name: p.name,
+        color: resolveShopColor(p, materialColorById),
+        kind,
+      });
+    }
+    return { products, viewById };
+  }, []) ?? { products: [], viewById: new Map<string, ShopProductInfo>() };
+}
+
+export function useAllSales(): Sale[] {
+  return useLiveQuery(() => db.sales.toArray(), []) ?? [];
+}
+
+export function useSale(id: string | undefined) {
+  return useLiveQuery(() => (id ? db.sales.get(id) : undefined), [id]);
+}
+
+export function usePreparedSales(): Sale[] {
+  return useLiveQuery(
+    () => db.sales.where("status").equals("prepared").toArray().then((s) =>
+      s.sort((a, b) => new Date(b.preparedAt).getTime() - new Date(a.preparedAt).getTime())
+    ),
+    [],
+  ) ?? [];
+}
+
+export function useRecentSoldSales(limit = 10): Sale[] {
+  return useLiveQuery(
+    () => db.sales.where("status").equals("sold").toArray().then((s) =>
+      s
+        .sort((a, b) => {
+          const at = a.soldAt ? new Date(a.soldAt).getTime() : 0;
+          const bt = b.soldAt ? new Date(b.soldAt).getTime() : 0;
+          return bt - at;
+        })
+        .slice(0, limit)
+    ),
+    [limit],
+  ) ?? [];
+}
+
+/** Landing-page KPIs derived from the full sales list plus `Date.now()`.
+ *  Returns an empty-KPI object on first render (before the live query resolves)
+ *  so callers can render unconditionally without a loading branch. */
+export function useShopKpis(): ShopKpis {
+  const sales = useAllSales();
+  return computeShopKpis(sales, new Date()) ?? EMPTY_SHOP_KPIS;
+}
+
+/** Available stock per product (live), derived from completed production plans.
+ *  Identical aggregation to `useProductStockTotals` but returns a plain
+ *  productId → pieces map (no lastCountedAt metadata). Frozen pieces are
+ *  excluded. */
+export function useProductStockMap(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    if (donePlans.length === 0) return new Map<string, number>();
+    const planIds = donePlans.map((p) => p.id!);
+    const batches = await db.planProducts.where("planId").anyOf(planIds).toArray();
+    const m = new Map<string, number>();
+    for (const pb of batches) {
+      if (pb.stockStatus === "gone") continue;
+      const pieces = pb.currentStock ?? pb.actualYield ?? 0;
+      if (pieces <= 0) continue;
+      m.set(pb.productId, (m.get(pb.productId) ?? 0) + pieces);
+    }
+    return m;
+  }, []) ?? new Map<string, number>();
+}
+
+/** Commit one or more identical boxes as "prepared". Each copy inserts a
+ *  Sale row; stock is decremented once for the full aggregate (cells × qty)
+ *  across done-plan batches (FIFO). All-or-nothing via a Dexie transaction.
+ *
+ *  Throws when available stock can't cover `cells × quantity` for any
+ *  product — callers should pre-check against `maxPrepareQuantity`. */
+export async function saveSaleAsPrepared(input: {
+  collectionId: string;
+  packagingId: string;
+  cells: (string | null)[];
+  price: number;
+  customerNote?: string;
+  /** How many identical copies to prepare. Defaults to 1. Values < 1 are
+   *  treated as 1 (the UI already clamps, but defend the invariant here). */
+  quantity?: number;
+}): Promise<string[]> {
+  const quantity = Math.max(1, Math.floor(input.quantity ?? 1));
+
+  return db.transaction("rw", [db.sales, db.planProducts, db.productionPlans], async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    const planFifoOrder = new Map<string, number>();
+    for (const plan of donePlans) {
+      if (!plan.id) continue;
+      planFifoOrder.set(plan.id, new Date(plan.completedAt ?? plan.createdAt).getTime());
+    }
+    const planIds = [...planFifoOrder.keys()];
+    const rawBatches = planIds.length > 0
+      ? await db.planProducts.where("planId").anyOf(planIds).toArray()
+      : [];
+
+    const batches: SaleStockBatch[] = rawBatches
+      .filter((pb) => pb.id)
+      .map((pb) => ({
+        id: pb.id!,
+        productId: pb.productId,
+        currentStock: pb.currentStock,
+        actualYield: pb.actualYield,
+        stockStatus: pb.stockStatus,
+        fifoOrder: planFifoOrder.get(pb.planId) ?? 0,
+      }));
+
+    // Scale per-cavity usage by quantity before decrementing.
+    const perBoxUsage = tallyCells(input.cells);
+    const scaledUsage = new Map<string, number>();
+    for (const [pid, n] of perBoxUsage) scaledUsage.set(pid, n * quantity);
+
+    // Pre-check feasibility per product so we fail before any write rather
+    // than silently clamping to 0 stock.
+    for (const [pid, need] of scaledUsage) {
+      const avail = batches
+        .filter((b) => b.productId === pid && b.stockStatus !== "gone")
+        .reduce((s, b) => s + Math.max(0, b.currentStock ?? b.actualYield ?? 0), 0);
+      if (avail < need) {
+        throw new Error(
+          `Not enough stock: need ${need} of product ${pid} for ${quantity} box${quantity !== 1 ? "es" : ""}, only ${avail} available`,
+        );
+      }
+    }
+
+    const deltas = computeCommitStockDeltas(batches, scaledUsage);
+    for (const d of deltas) {
+      await db.planProducts.update(d.id, { currentStock: d.nextStock });
+    }
+
+    const ids: string[] = [];
+    // Insert `quantity` identical Sale rows. preparedAt is slightly skewed
+    // so the rows sort deterministically on the landing page, preserving
+    // the order they were committed in.
+    const base = Date.now();
+    for (let i = 0; i < quantity; i++) {
+      const saleId = await db.sales.add({
+        collectionId: input.collectionId,
+        packagingId: input.packagingId,
+        cells: input.cells,
+        price: input.price,
+        status: "prepared",
+        preparedAt: new Date(base + i),
+        customerNote: input.customerNote,
+      } as Sale) as string;
+      ids.push(saleId);
+    }
+    return ids;
+  });
+}
+
+/** Package a freshly-unmoulded bar batch: write `quantity` prepared Sale rows
+ *  (one bar each) and flag the originating PlanProduct as `stockStatus: "gone"`
+ *  so the bars aren't double-counted in product stock.
+ *
+ *  Unlike `saveSaleAsPrepared`, this does NOT FIFO-decrement stock — the bars
+ *  were just made; their PlanProduct lives in a not-yet-done plan and isn't
+ *  visible to stock aggregation yet. Packaging them immediately is the point.
+ *
+ *  `cells` is a single-element array `[productId]` for a capacity-1 wrapper;
+ *  the caller provides the packaging + collection so price snapshots at the
+ *  current `CollectionPackaging.sellPrice`.
+ */
+export async function packagePlanProductAsSales(input: {
+  planProductId: string;
+  productId: string;
+  collectionId: string;
+  packagingId: string;
+  price: number;
+  quantity: number;
+}): Promise<string[]> {
+  const quantity = Math.max(0, Math.floor(input.quantity));
+  if (quantity === 0) return [];
+
+  return db.transaction("rw", [db.sales, db.planProducts, db.packaging], async () => {
+    const pb = await db.planProducts.get(input.planProductId);
+    if (!pb) throw new Error("Plan product not found");
+
+    // Look up the packaging to get its capacity — a wrapper is expected to be
+    // capacity 1, but we pad defensively so invalid configs don't crash.
+    const pkg = await db.packaging.get(input.packagingId);
+    const capacity = Math.max(1, pkg?.capacity ?? 1);
+    const cells: (string | null)[] = Array(capacity).fill(null);
+    for (let i = 0; i < Math.min(capacity, 1); i++) cells[i] = input.productId;
+
+    const ids: string[] = [];
+    const base = Date.now();
+    for (let i = 0; i < quantity; i++) {
+      const saleId = await db.sales.add({
+        collectionId: input.collectionId,
+        packagingId: input.packagingId,
+        cells,
+        price: input.price,
+        status: "prepared",
+        preparedAt: new Date(base + i),
+      } as Sale) as string;
+      ids.push(saleId);
+    }
+
+    // These bars now live as prepared sales rather than stock. Flag the batch
+    // as "gone" so product stock queries skip it (mirrors how the Shop
+    // handles a fully-sold box).
+    await db.planProducts.update(input.planProductId, { stockStatus: "gone" });
+    return ids;
+  });
+}
+
+/** Mark a prepared sale as sold. Stamps `soldAt`; stock was already decremented
+ *  at prep time, so this is a single-row update with no stock side-effects. */
+export async function markSaleSold(saleId: string): Promise<void> {
+  await db.sales.update(saleId, { status: "sold", soldAt: new Date() });
+}
+
+/** Bulk "Sell N" — flips multiple prepared sales to sold atomically. Shares a
+ *  single `soldAt` timestamp across the batch so the landing KPI / recent-sales
+ *  list treats them as the same transaction moment. */
+export async function markSalesSold(saleIds: readonly string[]): Promise<void> {
+  if (saleIds.length === 0) return;
+  const soldAt = new Date();
+  await db.transaction("rw", db.sales, async () => {
+    for (const id of saleIds) {
+      await db.sales.update(id, { status: "sold", soldAt });
+    }
+  });
+}
+
+/** Revert a sold sale back to prepared — the "Undo" path for a mis-tap on
+ *  Sell. Clears `soldAt` and flips status. No stock side-effects (stock
+ *  was decremented at prep time and hasn't changed since). */
+export async function markSaleUnsold(saleId: string): Promise<void> {
+  await db.sales.update(saleId, { status: "prepared", soldAt: undefined });
+}
+
+/** Update the free-text note on a sale. Scoped to prepared sales so we don't
+ *  silently rewrite historical sold rows (which would confuse revenue audit).
+ *  Passing an empty/whitespace-only note clears the field. */
+export async function updateSaleNote(saleId: string, note: string): Promise<void> {
+  const sale = await db.sales.get(saleId);
+  if (!sale || sale.status !== "prepared") return;
+  const trimmed = note.trim();
+  await db.sales.update(saleId, { customerNote: trimmed === "" ? undefined : trimmed });
+}
+
+/** Bulk note update across multiple prepared sales — used when the Shop
+ *  landing edits the shared note on a grouped row of identical boxes. Any
+ *  targets that aren't "prepared" are silently skipped (we never rewrite a
+ *  sold row's note). */
+export async function updateSaleNotes(saleIds: readonly string[], note: string): Promise<void> {
+  if (saleIds.length === 0) return;
+  const trimmed = note.trim();
+  const next = trimmed === "" ? undefined : trimmed;
+  await db.transaction("rw", db.sales, async () => {
+    for (const id of saleIds) {
+      const sale = await db.sales.get(id);
+      if (!sale || sale.status !== "prepared") continue;
+      await db.sales.update(id, { customerNote: next });
+    }
+  });
+}
+
+/** Void a prepared sale: restore its stock (added back to the newest batch
+ *  per product) and delete the sale row. Only valid for `prepared` sales —
+ *  calling on a `sold` sale is a no-op (revenue was counted; can't silently
+ *  unsell). */
+export async function voidPreparedSale(saleId: string): Promise<void> {
+  return db.transaction("rw", [db.sales, db.planProducts, db.productionPlans], async () => {
+    const sale = await db.sales.get(saleId);
+    if (!sale || sale.status !== "prepared") return;
+
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    const planFifoOrder = new Map<string, number>();
+    for (const plan of donePlans) {
+      if (!plan.id) continue;
+      planFifoOrder.set(plan.id, new Date(plan.completedAt ?? plan.createdAt).getTime());
+    }
+    const planIds = [...planFifoOrder.keys()];
+    const rawBatches = planIds.length > 0
+      ? await db.planProducts.where("planId").anyOf(planIds).toArray()
+      : [];
+
+    const batches: SaleStockBatch[] = rawBatches
+      .filter((pb) => pb.id)
+      .map((pb) => ({
+        id: pb.id!,
+        productId: pb.productId,
+        currentStock: pb.currentStock,
+        actualYield: pb.actualYield,
+        stockStatus: pb.stockStatus,
+        fifoOrder: planFifoOrder.get(pb.planId) ?? 0,
+      }));
+
+    const restore = tallyCells(sale.cells);
+    const deltas = computeRestoreStockDeltas(batches, restore);
+    for (const d of deltas) {
+      await db.planProducts.update(d.id, { currentStock: d.nextStock });
+    }
+
+    await db.sales.delete(saleId);
+  });
+}
+
+// ============================================================================
+// Give-aways
+// ============================================================================
+
+/** Sum cell/slot counts in a give-away shape into a productId → count map.
+ *  Pure — used by both the log mutation (stock decrement) and the live
+ *  pieceCount/cost rollups on the editing screen. */
+export function tallyGiveAwayShape(shape: GiveAwayShape): Map<string, number> {
+  switch (shape.kind) {
+    case "box":
+      return tallyCells(shape.cells);
+    case "loose":
+    case "bar":
+    case "snack": {
+      const m = new Map<string, number>();
+      for (const [pid, n] of Object.entries(shape.counts)) {
+        if (n > 0) m.set(pid, n);
+      }
+      return m;
+    }
+  }
+}
+
+/** Total piece count for a give-away shape. Convenience wrapper over
+ *  `tallyGiveAwayShape` for the (very common) "how many pieces are we logging?"
+ *  question on the bottom strip of the log screen. */
+export function pieceCountForGiveAway(shape: GiveAwayShape): number {
+  let n = 0;
+  for (const v of tallyGiveAwayShape(shape).values()) n += v;
+  return n;
+}
+
+/** Reactive map productId → costPerProduct (latest snapshot). Used to roll up
+ *  the give-away's `ingredientCost` at log time and for the live total on
+ *  the bottom strip. Products without a snapshot contribute 0 — the give-away
+ *  is still loggable, just with no cost rollup until the operator generates
+ *  cost snapshots. */
+export function useLatestProductCostMap(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const all = await db.productCostSnapshots.toArray();
+    const latestByProduct = new Map<string, ProductCostSnapshot>();
+    for (const snap of all) {
+      const ex = latestByProduct.get(snap.productId);
+      if (!ex || new Date(snap.recordedAt) > new Date(ex.recordedAt)) {
+        latestByProduct.set(snap.productId, snap);
+      }
+    }
+    const m = new Map<string, number>();
+    for (const [pid, snap] of latestByProduct) m.set(pid, snap.costPerProduct);
+    return m;
+  }, []) ?? new Map<string, number>();
+}
+
+/** Recent give-aways, newest first. Mirrors `useRecentSoldSales` so the
+ *  landing page can render a unified "recent activity" timeline. */
+export function useRecentGiveaways(limit = 10): GiveAwayRecord[] {
+  return useLiveQuery(
+    () => db.giveaways.toArray().then((all) =>
+      all
+        .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+        .slice(0, limit)
+    ),
+    [limit],
+  ) ?? [];
+}
+
+export interface GiveAwayMonthTallies {
+  /** Number of give-away records this month. */
+  records: number;
+  /** Total pieces given away this month (sum of every record's pieceCount). */
+  pieces: number;
+  /** Total ingredient cost this month (sum of every record's ingredientCost). */
+  ingredientCost: number;
+}
+
+/** Running tallies for the current calendar month — drives the landing-tile
+ *  subline ("12 give-aways this month · 38 pieces · €184 ingredient cost"). */
+export function useGiveawayMonthTallies(): GiveAwayMonthTallies {
+  return useLiveQuery(async () => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const all = await db.giveaways.toArray();
+    let records = 0, pieces = 0, ingredientCost = 0;
+    for (const g of all) {
+      const t = new Date(g.at).getTime();
+      if (t < monthStart) continue;
+      records++;
+      pieces += g.pieceCount;
+      ingredientCost += g.ingredientCost;
+    }
+    return { records, pieces, ingredientCost };
+  }, []) ?? { records: 0, pieces: 0, ingredientCost: 0 };
+}
+
+/**
+ * Persist a give-away record. When `fromStock=true`, atomically decrements
+ * product stock FIFO (same path the paid sale flow uses); when false, stock
+ * is untouched (the chocolate was made fresh for the give-away and never
+ * entered finished stock). All-or-nothing via a Dexie transaction.
+ *
+ * `pieceCount` and `ingredientCost` are computed at log time from `shape` and
+ * the caller-supplied cost map (typically from `useLatestProductCostMap`),
+ * so reporting doesn't have to walk the shape later.
+ *
+ * Throws when `fromStock=true` and any product would go below zero. The
+ * picker disables tiles for that case, but we defend on the write so a
+ * stale-stock race doesn't corrupt the ledger.
+ */
+export async function saveGiveaway(input: {
+  reason: GiveAwayReason;
+  fromStock: boolean;
+  shape: GiveAwayShape;
+  recipient?: string;
+  note?: string;
+  /** productId → costPerProduct (latest snapshot). Missing entries roll up
+   *  as 0 — a permissive default so the user can still log give-aways for
+   *  products without cost snapshots. */
+  costPerProductById: ReadonlyMap<string, number>;
+}): Promise<string> {
+  const usage = tallyGiveAwayShape(input.shape);
+  let pieceCount = 0;
+  let ingredientCost = 0;
+  for (const [pid, n] of usage) {
+    pieceCount += n;
+    const cpp = input.costPerProductById.get(pid) ?? 0;
+    ingredientCost += cpp * n;
+  }
+  if (pieceCount === 0) {
+    throw new Error("Give-away must include at least one piece");
+  }
+
+  const writeTables = input.fromStock
+    ? [db.giveaways, db.planProducts, db.productionPlans]
+    : [db.giveaways];
+
+  return db.transaction("rw", writeTables, async () => {
+    if (input.fromStock) {
+      const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+      const planFifoOrder = new Map<string, number>();
+      for (const plan of donePlans) {
+        if (!plan.id) continue;
+        planFifoOrder.set(plan.id, new Date(plan.completedAt ?? plan.createdAt).getTime());
+      }
+      const planIds = [...planFifoOrder.keys()];
+      const rawBatches = planIds.length > 0
+        ? await db.planProducts.where("planId").anyOf(planIds).toArray()
+        : [];
+
+      const batches: SaleStockBatch[] = rawBatches
+        .filter((pb) => pb.id)
+        .map((pb) => ({
+          id: pb.id!,
+          productId: pb.productId,
+          currentStock: pb.currentStock,
+          actualYield: pb.actualYield,
+          stockStatus: pb.stockStatus,
+          fifoOrder: planFifoOrder.get(pb.planId) ?? 0,
+        }));
+
+      // Pre-check feasibility per product so we fail loudly before writing.
+      for (const [pid, need] of usage) {
+        const avail = batches
+          .filter((b) => b.productId === pid && b.stockStatus !== "gone")
+          .reduce((s, b) => s + Math.max(0, b.currentStock ?? b.actualYield ?? 0), 0);
+        if (avail < need) {
+          throw new Error(
+            `Not enough stock: need ${need} of product ${pid}, only ${avail} available`,
+          );
+        }
+      }
+
+      const deltas = computeCommitStockDeltas(batches, usage);
+      for (const d of deltas) {
+        await db.planProducts.update(d.id, { currentStock: d.nextStock });
+      }
+    }
+
+    const id = await db.giveaways.add({
+      at: new Date(),
+      reason: input.reason,
+      fromStock: input.fromStock,
+      shape: input.shape,
+      recipient: input.recipient,
+      note: input.note,
+      pieceCount,
+      ingredientCost,
+    } as GiveAwayRecord) as string;
+    return id;
+  });
 }
