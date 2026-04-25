@@ -198,6 +198,23 @@ export interface Product {
 }
 
 /**
+ * ShopKind — the visual shape used to render a product everywhere in the Shop
+ * (palette tiles, cavity contents, summary chips, give-away pickers).
+ *
+ * Kinds:
+ *   - "moulded"   → round glossy disc (polycarb-mould chocolate)
+ *   - "enrobed"   → square slab with matte finish (slab cut + dipped)
+ *   - "bar"       → long horizontal segment with cast lines (chocolate bar)
+ *   - "snack-bar" → moulded but larger and elongated (single-piece snack format,
+ *                   produced like a moulded bonbon but in its own packaging)
+ *
+ * The kind is set on the user-managed ProductCategory so adding a new category
+ * (e.g. "praline tablet") just requires picking which existing visual it should
+ * render as — no schema migration per category.
+ */
+export type ShopKind = "moulded" | "enrobed" | "bar" | "snack-bar";
+
+/**
  * ProductCategory — user-managed top-level grouping for products (e.g. "moulded", "bar").
  * Replaces the old free-text `productType` string. Each category configures the
  * recommended shell-percentage range and default for products in that category.
@@ -215,6 +232,9 @@ export interface ProductCategory {
   shellPercentMax: number;
   /** Default shell percentage for new products in this category (must lie within [min, max]). */
   defaultShellPercent: number;
+  /** Visual shape used everywhere in the Shop. When unset, products fall back
+   *  to "moulded" — a safe default for legacy categories that pre-date this field. */
+  shopKind?: ShopKind;
   /** Soft-delete: archived categories are hidden from create pickers but preserved on existing products. */
   archived?: boolean;
   createdAt: Date;
@@ -227,9 +247,12 @@ export const DEFAULT_PRODUCT_CATEGORIES: ReadonlyArray<{
   shellPercentMin: number;
   shellPercentMax: number;
   defaultShellPercent: number;
+  shopKind: ShopKind;
 }> = [
-  { name: "moulded", shellPercentMin: 15, shellPercentMax: 50, defaultShellPercent: 37 },
-  { name: "bar",     shellPercentMin: 0,  shellPercentMax: 100, defaultShellPercent: 50 },
+  { name: "moulded",   shellPercentMin: 15, shellPercentMax: 50,  defaultShellPercent: 37, shopKind: "moulded" },
+  { name: "enrobed",   shellPercentMin: 0,  shellPercentMax: 100, defaultShellPercent: 20, shopKind: "enrobed" },
+  { name: "snack bar", shellPercentMin: 15, shellPercentMax: 50,  defaultShellPercent: 37, shopKind: "snack-bar" },
+  { name: "bar",       shellPercentMin: 0,  shellPercentMax: 100, defaultShellPercent: 50, shopKind: "bar" },
 ];
 
 export type FillMode = "percentage" | "grams";
@@ -878,10 +901,27 @@ export type CompositionKey = (typeof COMPOSITION_FIELDS)[number]["key"];
 
 // --- Packaging ---
 
+/**
+ * What kind of products a packaging holds. Different physical formats:
+ *   - "bonbon"    — multi-cavity gift box for moulded + enrobed bonbons
+ *                    (snack bars are too big to fit alongside regular bonbons)
+ *   - "bar"       — single-bar wrapper (capacity = 1)
+ *   - "snack-bar" — multi-pack of snack bars (typical 2 / 3 / 4 per pack)
+ *
+ * The Shop palettes filter products by this kind so the operator can't drop
+ * a snack-bar into a regular gift box. Defaults to "bonbon" for legacy rows
+ * via the v11 migration (which also marks any capacity-1 row as "bar").
+ */
+export type PackagingKind = "bonbon" | "bar" | "snack-bar";
+
 export interface Packaging {
   id?: string;
   name: string;           // e.g. "Box of 9 with natural inserts"
   capacity: number;       // how many products fit per unit
+  /** What kind of product this packaging holds. Drives palette filtering in
+   *  the Shop and give-away flows. Optional for backward compatibility — the
+   *  v11 migration backfills existing rows by capacity heuristic. */
+  productKind?: PackagingKind;
   /** Optional cavity layout for divider-frame boxes used in the Shop feature.
    *  When both `rows` and `cols` are set, `rows * cols` must equal `capacity`.
    *  When unset, the Shop derives a near-square grid from `capacity`. */
@@ -897,6 +937,17 @@ export interface Packaging {
   lowStockSince?: number;
   lowStockOrdered?: boolean;
   outOfStock?: boolean;       // true = completely out, higher urgency than lowStock
+}
+
+/** Map a packaging's productKind to the set of `ShopKind`s its cavities can
+ *  hold. Bonbon packaging (gift boxes) takes mixed moulded + enrobed; bar and
+ *  snack-bar packaging take only their own kind. Pure helper — no React. */
+export function shopKindsForPackaging(kind: PackagingKind | undefined): ReadonlySet<ShopKind> {
+  switch (kind ?? "bonbon") {
+    case "bonbon":    return new Set<ShopKind>(["moulded", "enrobed"]);
+    case "bar":       return new Set<ShopKind>(["bar"]);
+    case "snack-bar": return new Set<ShopKind>(["snack-bar"]);
+  }
 }
 
 export interface PackagingOrder {
@@ -1111,4 +1162,71 @@ export interface Sale {
   preparedAt: Date;
   soldAt?: Date;
   customerNote?: string;
+}
+
+// --- Give-aways ---
+//
+// Chocolate that leaves the workshop without a sale: samples for buyers,
+// charity donations, friends/family, marketing, etc. Visually demoted vs the
+// paid-sale flow (lilac accent vs cocoa, "given" verb vs "sold", no price chip).
+//
+// Four shapes the give-away can take, picked via a segmented control on the
+// log screen. Each shape has its own composition data; the discriminating
+// `kind` mirrors `ShopKind` for the bonbons but adds a packaging dimension
+// ("box" — multi-cavity gift box, "snack" — 4-piece enrobed stick).
+
+/** Why a give-away left the workshop. Fixed taxonomy for now; can be made
+ *  user-editable later if needed (mirrors the categories pattern).
+ *
+ *  Historical records may carry reason values that are no longer in this
+ *  union (e.g. legacy "charity" / "influencer" / "comp" rows). The reason
+ *  picker only shows the current options; render code falls back to the raw
+ *  value for orphaned entries so timelines still read correctly. */
+export type GiveAwayReason = "sample" | "friends" | "marketing" | "staff";
+
+export const GIVE_AWAY_REASONS: ReadonlyArray<{ value: GiveAwayReason; label: string }> = [
+  { value: "sample",    label: "Sample" },
+  { value: "friends",   label: "Friends/family" },
+  { value: "marketing", label: "Marketing" },
+  { value: "staff",     label: "Staff" },
+];
+
+/** The four shapes a give-away can take. Each is a discriminated union member
+ *  carrying just the data relevant to that shape — no spurious empty fields.
+ *
+ *  Snack-bars are an individual product format (a moulded bonbon in a larger
+ *  single-piece shape), so the snack shape is a productId → count map just
+ *  like loose/bar — not a multi-cavity stick.
+ */
+export type GiveAwayShape =
+  | { kind: "box";   packagingId: string; cells: (string | null)[] }   // cells[i] = productId in cavity i
+  | { kind: "loose"; counts: Record<string, number> }                  // productId → count
+  | { kind: "bar";   counts: Record<string, number> }                  // productId → count (bars only)
+  | { kind: "snack"; counts: Record<string, number> };                 // productId → count (snack-bars only)
+
+/**
+ * One give-away log entry. `pieceCount` and `ingredientCost` are derived from
+ * `shape` at log time and persisted so reporting doesn't have to re-walk the
+ * shape (and so renames/category changes don't rewrite history).
+ *
+ * `fromStock=true` means we decrement product stock at log time (same FIFO path
+ * the paid sale flow uses). `fromStock=false` means the chocolate was made fresh
+ * for the give-away and never entered finished stock — only the ingredient cost
+ * is recorded.
+ */
+export interface GiveAwayRecord {
+  id?: string;
+  /** Wall-clock time the give-away was logged. */
+  at: Date;
+  reason: GiveAwayReason;
+  fromStock: boolean;
+  shape: GiveAwayShape;
+  /** Optional free-text recipient (useful for "Influencer" or "Charity"). */
+  recipient?: string;
+  /** Optional free-text note. */
+  note?: string;
+  /** Total pieces given away — sum across the shape's productId entries. */
+  pieceCount: number;
+  /** Sum of `costPerProduct × pieces` at log time, in the user's currency. */
+  ingredientCost: number;
 }

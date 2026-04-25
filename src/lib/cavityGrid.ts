@@ -27,6 +27,9 @@ export interface PackagingGridInput {
   capacity: number;
   rows?: number;
   cols?: number;
+  /** Visual category — surfaced so cavity-rendering components can pick a
+   *  layout (e.g. a vertical snack-pack stack vs a divider-frame grid). */
+  productKind?: "bonbon" | "bar" | "snack-bar";
 }
 
 export function derivePackagingGrid(p: PackagingGridInput): CavityGrid {

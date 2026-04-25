@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -37,6 +37,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   fillingCategories: EntityTable<FillingCategory, "id">;
   ingredientCategories: EntityTable<IngredientCategory, "id">;
   sales: EntityTable<Sale, "id">;
+  giveaways: EntityTable<GiveAwayRecord, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -382,6 +383,66 @@ db.version(8).stores({
   sales: "id, status, preparedAt, soldAt, collectionId, packagingId",
 });
 
+// v9 — Shop visual `shopKind` on ProductCategory.
+//
+// Adds an optional `shopKind` field to ProductCategory ("moulded" / "enrobed" /
+// "bar" / "snack-bar") so the Shop can render bonbons with the right visual
+// shape per category. No new index — the field is render-time only.
+//
+// Migration: backfill `shopKind` on existing categories by case-insensitive
+// name match against the seeded defaults. Categories whose names don't match
+// a seeded kind are left as `undefined`; render-time fallback is "moulded".
+//
+// Purely additive at the schema level (no `.stores()` change), but we still
+// bump the version so the upgrade hook fires once per existing user.
+db.version(9).stores({}).upgrade(async (tx) => {
+  const categoriesTable = tx.table("productCategories");
+  const categories = await categoriesTable.toArray();
+  const kindByName = new Map<string, string>();
+  for (const seed of DEFAULT_PRODUCT_CATEGORIES) {
+    kindByName.set(seed.name.toLowerCase(), seed.shopKind);
+  }
+  for (const c of categories) {
+    if (!c?.id) continue;
+    if (c.shopKind) continue; // already set (e.g. via cloud sync from another device)
+    const kind = kindByName.get((c.name ?? "").toString().trim().toLowerCase());
+    if (kind) await categoriesTable.update(c.id, { shopKind: kind, updatedAt: new Date() });
+  }
+});
+
+// v10 — Give-aways table.
+//
+// Adds the `giveaways` table for the give-away log. Each row records one
+// non-sale outflow (sample, charity, friends/family, marketing, etc.) with a
+// shape ("box", "loose", "bar", "snack"), an optional from-stock decrement,
+// and a snapshotted ingredient cost. Indexed on `at` for the recent-activity
+// timeline, `reason` for filtering, and `fromStock` so monthly tallies can
+// split stocked vs off-stock outflows cheaply.
+//
+// Purely additive — no existing rows touched, no upgrade hook required.
+db.version(10).stores({
+  giveaways: "id, at, reason, fromStock",
+});
+
+// v11 — Packaging.productKind backfill.
+//
+// Adds an optional `productKind` field to Packaging ("bonbon" / "bar" /
+// "snack-bar"). The field is rendering- and filter-time only — no new index
+// needed. Existing rows are backfilled heuristically: capacity-1 packagings
+// become "bar" (single-bar wrappers — the demo's only existing capacity-1
+// format), everything else becomes "bonbon" (multi-cavity gift box). Users
+// can promote any of those to "snack-bar" via the packaging editor.
+db.version(11).stores({}).upgrade(async (tx) => {
+  const packagingTable = tx.table("packaging");
+  const rows = await packagingTable.toArray();
+  for (const p of rows) {
+    if (!p?.id) continue;
+    if (p.productKind) continue; // already set (e.g. via cloud sync)
+    const next = (p.capacity ?? 0) === 1 ? "bar" : "bonbon";
+    await packagingTable.update(p.id, { productKind: next, updatedAt: new Date() });
+  }
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -423,6 +484,7 @@ const AUTO_ID_TABLES = [
   db.fillingCategories,
   db.ingredientCategories,
   db.sales,
+  db.giveaways,
 ];
 for (const table of AUTO_ID_TABLES) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

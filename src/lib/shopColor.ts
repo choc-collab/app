@@ -19,7 +19,7 @@
  * `materialColorById` (from `db.decorationMaterials`).
  */
 
-import type { Product, ShellDesignStep } from "@/types";
+import type { Product, ShellDesignStep, ShopKind } from "@/types";
 import { normalizeApplyAt } from "@/types";
 
 /** Minimal product shape the derivation needs. Declared so the Shop list
@@ -33,12 +33,21 @@ export interface ShopColorProduct {
 }
 
 /** Structured info every Shop surface (landing, picker, palette, tray)
- *  consumes when it needs to render a bonbon swatch. */
+ *  consumes when it needs to render a bonbon swatch. `kind` drives the visual
+ *  shape (round disc / square slab / horizontal bar / snack-bar) — resolved
+ *  upstream from the product's category. */
 export interface ShopProductInfo {
   id: string;
   name: string;
   color: string;
+  kind: ShopKind;
 }
+
+/** Default kind used when a product has no category, or its category has no
+ *  `shopKind` set yet (legacy categories pre-dating the field). Round disc is
+ *  the safest fallback — it's the most common shape and the one the Shop has
+ *  always rendered. */
+export const DEFAULT_SHOP_KIND: ShopKind = "moulded";
 
 /** First colour-phase material color found in the shellDesign. Returns
  *  `undefined` when no design exists, all steps are non-colour phases, or

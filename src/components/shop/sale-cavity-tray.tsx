@@ -1,6 +1,14 @@
 import { derivePackagingGrid, type PackagingGridInput } from "@/lib/cavityGrid";
 import type { ShopProductInfo } from "@/lib/shopColor";
+import type { ShopKind } from "@/types";
 import { BonbonDisc } from "./bonbon-disc";
+
+/** Square slabs (enrobed) fill the cavity more snugly than round discs;
+ *  long bars/snack-bars use the same dominant dimension and rely on the
+ *  bonbon's own aspect ratio to keep them inside the cavity. */
+function bonbonSizeForCavity(kind: ShopKind, cellSize: number): number {
+  return kind === "enrobed" ? Math.round(cellSize * 0.86) : Math.round(cellSize * 0.78);
+}
 
 /**
  * The interactive cocoa tray on the Shop fill screen.
@@ -50,7 +58,9 @@ export function SaleCavityTray({
         gridAutoRows: `${cellSize}px`,
         gap,
         padding: pad,
-        background: "linear-gradient(180deg, #3a2a20 0%, #2a1e16 100%)",
+        // Milk-chocolate frame — lighter than the handoff's near-black so it
+        // reads as a card-stock bonbon box rather than a presentation case.
+        background: "linear-gradient(180deg, #6b4a30 0%, #4a3324 100%)",
         borderRadius: 8,
         boxShadow:
           "0 6px 22px rgba(74,51,36,0.28), inset 0 1px 0 rgba(255,255,255,0.06)",
@@ -125,7 +135,7 @@ function SquareCavity({
       }}
     >
       {info ? (
-        <BonbonDisc info={info} size={Math.round(cellSize * 0.78)} ariaHidden />
+        <BonbonDisc info={info} size={bonbonSizeForCavity(info.kind, cellSize)} ariaHidden />
       ) : active ? (
         <span
           style={{

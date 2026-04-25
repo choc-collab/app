@@ -8,6 +8,7 @@ import {
   useCollections,
   useCurrencySymbol,
   usePackagingList,
+  useProductCategoryMap,
   useShopProducts,
 } from "@/lib/hooks";
 import type { Packaging, Sale } from "@/types";
@@ -177,7 +178,24 @@ export default function ShopInsightsPage() {
   const collections = useCollections();
   const packagings = usePackagingList(true);
   const { products: shopProducts, viewById: productInfoById } = useShopProducts();
+  const productCategoryMap = useProductCategoryMap();
   const sym = useCurrencySymbol();
+
+  // Identify which product IDs are bars. We treat "bar" as a reserved category
+  // name — same convention the production wizard uses when deciding whether
+  // to emit a Package step. Everything else is counted as a bonbon.
+  const barProductIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of shopProducts) {
+      if (!p.id) continue;
+      const cat = p.productCategoryId ? productCategoryMap.get(p.productCategoryId) : undefined;
+      if (cat?.name?.toLowerCase() === "bar") ids.add(p.id);
+    }
+    return ids;
+  }, [shopProducts, productCategoryMap]);
+
+  const isBar = (productId: string | null | undefined): boolean =>
+    !!productId && barProductIds.has(productId);
 
   const [timePreset, setTimePreset] = useState<TimePreset>("3m");
   const [customStart, setCustomStart] = useState<string>("");
@@ -234,22 +252,32 @@ export default function ShopInsightsPage() {
   }, [soldSales, timeBounds, collectionFilter]);
 
   // ---- KPIs ----
+  // Cell counts split by product category: "bonbons" are non-bar products,
+  // "bars" are bar-category products. A mixed-content sale contributes to both
+  // counts (and to box-count once). In practice every sale is single-category
+  // given the production flow, but the split keeps the page honest.
   const kpis = useMemo(() => {
     let revenue = 0;
     let bonbons = 0;
+    let bars = 0;
     for (const s of filteredSales) {
       revenue += s.price;
-      bonbons += countFilled(s.cells);
+      for (const c of s.cells) {
+        if (!c) continue;
+        if (barProductIds.has(c)) bars++;
+        else bonbons++;
+      }
     }
     const boxes = filteredSales.length;
     return {
       boxes,
       revenue,
       bonbons,
+      bars,
       avgBox: boxes > 0 ? revenue / boxes : null,
       avgBonbonsPerBox: boxes > 0 ? bonbons / boxes : null,
     };
-  }, [filteredSales]);
+  }, [filteredSales, barProductIds]);
 
   // ---- Chart periods (clamped to data on "all") ----
   const chartPeriods = useMemo(() => {
@@ -318,12 +346,15 @@ export default function ShopInsightsPage() {
 
   const maxPeriodRevenue = Math.max(...chartData.map((d) => d.total), 1);
 
-  // ---- Best-selling bonbons ----
-  const bonbonLeaderboard = useMemo(() => {
+  // ---- Product leaderboards (split by category) ----
+  // Single pass over sales builds two maps — `bonbons` and `bars` — so the
+  // page can render separate rankings without double-iterating.
+  const { bonbonLeaderboard, barLeaderboard } = useMemo(() => {
     type Row = { id: string; name: string; units: number; recent: number; previous: number };
-    const map = new Map<string, Row>();
+    const bonbonMap = new Map<string, Row>();
+    const barMap = new Map<string, Row>();
 
-    function getOrCreate(productId: string): Row {
+    function getOrCreate(map: Map<string, Row>, productId: string): Row {
       if (!map.has(productId)) {
         const name = productMap.get(productId)?.name ?? productInfoById.get(productId)?.name ?? "Unknown";
         map.set(productId, { id: productId, name, units: 0, recent: 0, previous: 0 });
@@ -345,20 +376,27 @@ export default function ShopInsightsPage() {
 
       for (const cell of s.cells) {
         if (!cell) continue;
-        const row = getOrCreate(cell);
+        const map = barProductIds.has(cell) ? barMap : bonbonMap;
+        const row = getOrCreate(map, cell);
         if (inWindow) row.units++;
         if (inRecent) row.recent++;
         if (inPrevious) row.previous++;
       }
     }
 
-    return [...map.values()]
-      .filter((r) => r.units > 0)
-      .sort((a, b) => b.units - a.units);
-  }, [soldSales, collectionFilter, timeBounds, trendWindow, productMap, productInfoById]);
+    const asSorted = (m: Map<string, Row>) =>
+      [...m.values()].filter((r) => r.units > 0).sort((a, b) => b.units - a.units);
+
+    return {
+      bonbonLeaderboard: asSorted(bonbonMap),
+      barLeaderboard: asSorted(barMap),
+    };
+  }, [soldSales, collectionFilter, timeBounds, trendWindow, productMap, productInfoById, barProductIds]);
 
   const topBonbon = bonbonLeaderboard[0] ?? null;
   const maxBonbonUnits = bonbonLeaderboard[0]?.units ?? 1;
+  const topBar = barLeaderboard[0] ?? null;
+  const maxBarUnits = barLeaderboard[0]?.units ?? 1;
 
   // ---- Best-selling box sizes (packagings) ----
   const packagingLeaderboard = useMemo(() => {
@@ -470,7 +508,7 @@ export default function ShopInsightsPage() {
       )}
       <PageHeader
         title="Shop Insights"
-        description="Best-selling bonbons, box sizes, and revenue trends from the Shop counter."
+        description="Best-selling bonbons, bars, box sizes, and revenue trends from the Shop counter."
       />
 
       <div className="px-4 pb-10 space-y-6">
@@ -560,15 +598,19 @@ export default function ShopInsightsPage() {
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-card p-4">
-                <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Bonbons sold</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Bonbons · Bars</p>
                 <p className="text-2xl font-semibold tabular-nums mt-1">
-                  {kpis.bonbons.toLocaleString()}
+                  <span>{kpis.bonbons.toLocaleString()}</span>
+                  <span className="text-muted-foreground font-normal"> · </span>
+                  <span>{kpis.bars.toLocaleString()}</span>
                 </p>
-                {kpis.avgBonbonsPerBox !== null && (
-                  <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
-                    {kpis.avgBonbonsPerBox.toFixed(1)} per box
-                  </p>
-                )}
+                <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
+                  {kpis.bars > 0
+                    ? `${kpis.bonbons + kpis.bars} pieces sold`
+                    : kpis.avgBonbonsPerBox !== null
+                    ? `${kpis.avgBonbonsPerBox.toFixed(1)} per box`
+                    : "—"}
+                </p>
               </div>
               <div className="rounded-lg border border-border bg-card p-4">
                 <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Avg. box</p>
@@ -578,13 +620,20 @@ export default function ShopInsightsPage() {
                 <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">In period</p>
               </div>
               <div className="rounded-lg border border-border bg-card p-4">
-                <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Top bonbon</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wide">
+                  {topBar ? "Top seller" : "Top bonbon"}
+                </p>
                 <p className="text-sm font-semibold mt-1 truncate" title={topBonbon?.name}>
-                  {topBonbon?.name ?? "—"}
+                  {topBonbon?.name ?? topBar?.name ?? "—"}
                 </p>
                 {topBonbon && (
-                  <p className="text-xs text-muted-foreground tabular-nums">
-                    {topBonbon.units.toLocaleString()} sold
+                  <p className="text-[11px] text-muted-foreground tabular-nums">
+                    {topBonbon.units.toLocaleString()} bonbons
+                  </p>
+                )}
+                {topBar && (
+                  <p className="text-[11px] text-muted-foreground tabular-nums truncate" title={topBar.name}>
+                    {topBar.name} · {topBar.units.toLocaleString()} bars
                   </p>
                 )}
               </div>
@@ -762,6 +811,64 @@ export default function ShopInsightsPage() {
                     Showing top 10 of {bonbonLeaderboard.length}
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* Best-selling bars — only shown when there's bar data. Mirrors
+                the bonbons list but with a subtle bar-shaped swatch to make
+                the category difference visible at a glance. */}
+            {barLeaderboard.length > 0 && (
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Best-selling bars
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Individually wrapped pieces sold · trend {trendWindow.description}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-mono text-muted-foreground tabular-nums">
+                    {barLeaderboard.length} bar{barLeaderboard.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <ul className="divide-y divide-border/40" data-testid="shop-insights-bar-list">
+                  {barLeaderboard.slice(0, 10).map((row, idx) => {
+                    const trend = getTrend(row.recent, row.previous);
+                    const info = productInfoById.get(row.id);
+                    const share = row.units / maxBarUnits;
+                    return (
+                      <li key={row.id} className="px-4 py-3 flex items-center gap-3">
+                        <span className="shrink-0 w-5 text-[11px] font-mono tabular-nums text-muted-foreground">
+                          {idx + 1}
+                        </span>
+                        <span
+                          className="shrink-0 w-2.5 h-6 rounded-sm border border-black/10"
+                          style={{ backgroundColor: info?.color ?? "#4a3324" }}
+                          aria-hidden
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{row.name}</p>
+                          <div className="mt-1 h-1 w-full rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full bg-foreground/80"
+                              style={{ width: `${Math.max(share * 100, 2)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-semibold tabular-nums">
+                            {row.units.toLocaleString()}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">bars</p>
+                        </div>
+                        <div className="w-20 text-right shrink-0">
+                          <span className={`text-xs ${trend.className}`}>{trend.label}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
 

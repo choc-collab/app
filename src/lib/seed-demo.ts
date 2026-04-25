@@ -47,13 +47,19 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   // should always succeed; create a fallback just in case.
   const { ensureDefaultProductCategories } = await import("@/lib/hooks");
   await ensureDefaultProductCategories();
-  const mouldedCategory =
-    (await db.productCategories.where("name").equals("moulded").first()) ??
-    (await db.productCategories.toArray()).find((c) => c.name.toLowerCase() === "moulded");
-  const mouldedCategoryId = mouldedCategory?.id;
+  const allCategories = await db.productCategories.toArray();
+  const findCategoryByName = (name: string) =>
+    allCategories.find((c) => c.name.toLowerCase() === name.toLowerCase());
+  const mouldedCategoryId = findCategoryByName("moulded")?.id;
   if (!mouldedCategoryId) {
     return { success: false, message: "Could not resolve the default 'moulded' category." };
   }
+  // Optional categories used to spread the demo across all four shop kinds.
+  // Fall back to moulded when the user has somehow removed the seeded enrobed
+  // / snack-bar categories — the seed should still load, just less visually
+  // varied. (`ensureDefaultProductCategories` recreates them on next launch.)
+  const enrobedCategoryId  = findCategoryByName("enrobed")?.id  ?? mouldedCategoryId;
+  const snackBarCategoryId = findCategoryByName("snack bar")?.id ?? mouldedCategoryId;
 
   // ── Dates (all relative to today, so the demo never goes stale) ───────────
   //
@@ -439,7 +445,7 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
 
   const pralineProductId = await db.products.add({
     name: "Hazelnut Praline",
-    productCategoryId: mouldedCategoryId,
+    productCategoryId: enrobedCategoryId,
     shellIngredientId: felchlinLeggeroId,
     shellPercentage: 37,
     coating: "milk",
@@ -883,6 +889,7 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   const box4Id = await db.packaging.add({
     name: "Signature Gift Box (4 pcs)",
     capacity: 4,
+    productKind: "bonbon",
     manufacturer: "Keylink",
     notes: "Matte black with gold foil stamp. Magnetic closure. Fits 4 products in a 2×2 insert.",
     createdAt: jan01,
@@ -892,10 +899,37 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   const box9Id = await db.packaging.add({
     name: "Luxury Box (9 pcs)",
     capacity: 9,
+    productKind: "bonbon",
     manufacturer: "Keylink",
     notes: "Large matte black box with ribbon. 3×3 insert. Our flagship presentation.",
     createdAt: jan01,
     updatedAt: jan01,
+  } as Packaging) as string;
+
+  // A single-piece wrapper used for bar-type products. Capacity 1 so it shows
+  // up in the production wizard's Package step for bars (and is hidden from
+  // the Shop counter's assortment-box flow).
+  const barWrapperId = await db.packaging.add({
+    name: "Bar Wrapper",
+    capacity: 1,
+    productKind: "bar",
+    manufacturer: "Keylink",
+    notes: "Flat kraft sleeve with foil inner and a custom label per bar. One bar per wrapper.",
+    createdAt: barsStarted,
+    updatedAt: barsStarted,
+  } as Packaging) as string;
+
+  // A 3-piece snack-bar pack — represents the "share with friends" snack
+  // format. Distinct from a bonbon gift box (snack bars don't fit alongside
+  // moulded/enrobed pieces) and from a single bar wrapper.
+  const snackPack3Id = await db.packaging.add({
+    name: "Snack-bar 3-pack",
+    capacity: 3,
+    productKind: "snack-bar",
+    manufacturer: "Keylink",
+    notes: "Slim cardboard sleeve with three windowed compartments. Holds three snack bars.",
+    createdAt: barsStarted,
+    updatedAt: barsStarted,
   } as Packaging) as string;
 
   // Packaging order history — prices went up slightly between Jan and March
@@ -904,6 +938,10 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
 
   await db.packagingOrders.add({ packagingId: box9Id, quantity: 300, pricePerUnit: 2.40, supplier: "Keylink", orderedAt: jan01, notes: "Initial order — launch stock" } as PackagingOrder);
   await db.packagingOrders.add({ packagingId: box9Id, quantity: 200, pricePerUnit: 2.60, supplier: "Keylink", orderedAt: packagingPriceDate, notes: "Re-order — price increase from supplier" } as PackagingOrder);
+
+  await db.packagingOrders.add({ packagingId: barWrapperId, quantity: 400, pricePerUnit: 0.35, supplier: "Keylink", orderedAt: barsStarted, notes: "Initial bar wrapper order — launch with bean-to-bar range" } as PackagingOrder);
+
+  await db.packagingOrders.add({ packagingId: snackPack3Id, quantity: 250, pricePerUnit: 0.85, supplier: "Keylink", orderedAt: barsStarted, notes: "Initial snack-pack sleeves — launch with the snack-bar range" } as PackagingOrder);
 
   // ── Collections ───────────────────────────────────────────────────────────
   //
@@ -1000,6 +1038,12 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   // Wholesale — tight pricing that makes margins visible
   await db.collectionPackagings.add({ collectionId: wholesaleCollId, packagingId: box4Id, sellPrice: 2.95, createdAt: valentinesPrep, updatedAt: valentinesPrep } as CollectionPackaging);
   await db.collectionPackagings.add({ collectionId: wholesaleCollId, packagingId: box9Id, sellPrice: 5.90, createdAt: valentinesPrep, updatedAt: valentinesPrep } as CollectionPackaging);
+
+  // Bar Wrapper × collections. One flat retail price per collection — all bars
+  // in that collection sell at the same wrapper price; per-flavor pricing
+  // would mean introducing per-bar wrappers, which we skip for the demo.
+  await db.collectionPackagings.add({ collectionId: standardCollId, packagingId: barWrapperId, sellPrice: 8.00, createdAt: barsStarted, updatedAt: barsStarted } as CollectionPackaging);
+  await db.collectionPackagings.add({ collectionId: easterCollId,   packagingId: barWrapperId, sellPrice: 9.50, createdAt: barsStarted, updatedAt: barsStarted } as CollectionPackaging);
 
   // ── Collection Pricing Snapshots (margin history) ─────────────────────────
   //
@@ -1250,7 +1294,7 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
 
   const raspberryProductId = await db.products.add({
     name: "Raspberry Ganache",
-    productCategoryId: mouldedCategoryId,
+    productCategoryId: enrobedCategoryId,
     shellIngredientId: felchlinLeggeroId,
     shellPercentage: 37,
     coating: "milk",
@@ -1645,6 +1689,182 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
     collectionId: easterCollId, productId: madagascarBarId, sortOrder: 3,
   } as CollectionProduct);
 
+  // ── SNACK BARS — single-piece moulded snack format ─────────────────────────
+  //
+  // Snack bars sit between bonbons and full chocolate bars: produced in a
+  // multi-cavity mould like a moulded bonbon, but each cavity yields a 30 g
+  // single-portion stick that is sold in a 3-pack sleeve. They demonstrate the
+  // fourth shop kind ("snack-bar") so the Shop palette and giveaways flow have
+  // a working example out of the box.
+  //
+  //  11. Hazelnut Praline Stick — milk shell, hazelnut praline filling
+  //  12. Salted Caramel Stick   — dark shell, salted caramel filling
+  //
+  // Both reuse fillings already defined for the bonbon range (no new
+  // ingredients) so the cost story stays focused on the existing narrative.
+
+  // Snack-bar mould — 8 × 30g sticks per mould.
+  const snackBarMouldId = await db.moulds.add({
+    name: "Martellato Snack Stick 30g (8-cavity)",
+    productNumber: "MA1990",
+    brand: "Martellato",
+    cavityWeightG: 30,
+    numberOfCavities: 8,
+    fillingGramsPerCavity: 18, // shell ~12g + filling ~18g per stick
+    quantityOwned: 2,
+  } as Mould) as string;
+
+  // ── 11. Hazelnut Praline Stick (milk shell, praline filling) ───────────────
+  const pralineStickId = await db.products.add({
+    name: "Hazelnut Praline Stick",
+    productCategoryId: snackBarCategoryId,
+    shellIngredientId: felchlinLeggeroId,
+    shellPercentage: 40,
+    coating: "milk",
+    defaultMouldId: snackBarMouldId,
+    defaultBatchQty: 1,
+    popularity: 4,
+    notes: "Single-portion snack stick. Felchlin Sao Palme 43% milk shell over the same praline used in the bonbon — sized to slip into a coat pocket.",
+    tags: ["snack-bar", "nut-based"],
+    shelfLifeWeeks: "6",
+    createdAt: barsStarted,
+    updatedAt: barsStarted,
+  } as Product) as string;
+
+  await db.productFillings.add({
+    productId: pralineStickId, fillingId: pralineFillingId, sortOrder: 0, fillPercentage: 100,
+  } as ProductFilling);
+
+  // ── 12. Salted Caramel Stick (dark shell, caramel filling) ─────────────────
+  const caramelStickId = await db.products.add({
+    name: "Salted Caramel Stick",
+    productCategoryId: snackBarCategoryId,
+    shellIngredientId: felchlinMaracaiboId,
+    shellPercentage: 40,
+    coating: "dark",
+    defaultMouldId: snackBarMouldId,
+    defaultBatchQty: 1,
+    popularity: 5,
+    notes: "Dark Felchlin Sao Palme 75% shell wrapped around our salted caramel. The grown-up snack-bar.",
+    tags: ["snack-bar", "caramel"],
+    shelfLifeWeeks: "5",
+    createdAt: barsStarted,
+    updatedAt: barsStarted,
+  } as Product) as string;
+
+  await db.productFillings.add({
+    productId: caramelStickId, fillingId: caramelFillingId, sortOrder: 0, fillPercentage: 100,
+  } as ProductFilling);
+
+  // ── Cost snapshots for the two snack bars ──────────────────────────────────
+  //
+  // Snack-bar mould: cavityWeightG = 30g, shellPercentage = 40%.
+  //   shell mass = 30 × 0.40 = 12g
+  //   fill  mass = 30 × 0.60 × 1.2 = 21.6g (cavity geometry mirrors bonbon mould)
+  //
+  // Hazelnut Praline Stick — milk shell €0.0145/g, praline filling
+  //   Praline filling: hazelnuts(100) + sugar(50) + Callebaut 823(30) = 180g
+  //     hazelnuts:      21.6 × (100/180) = 12.000g × €0.0135  = €0.16200
+  //     sugar:          21.6 × (50/180)  = 6.000g  × €0.00095 = €0.00570
+  //     Callebaut 823:  21.6 × (30/180)  = 3.600g  × €0.00850 = €0.03060
+  //   shell:            12.000g × €0.0145 = €0.17400
+  //   total:            €0.37230
+  //
+  // Salted Caramel Stick — dark shell €0.0168/g, salted caramel filling
+  //   Caramel filling: sugar(100) + cream35(80) + butter(30) + glucose(20) + salt(3) = 233g
+  //     sugar:    21.6 × (100/233) = 9.270g × €0.00095 = €0.00881
+  //     cream35:  21.6 × (80/233)  = 7.416g × €0.00220 = €0.01632
+  //     butter:   21.6 × (30/233)  = 2.781g × €0.00580 = €0.01613
+  //     glucose:  21.6 × (20/233)  = 1.854g × €0.00220 = €0.00408
+  //     fleurDeSel: 21.6 × (3/233) = 0.278g × €0.01800 = €0.00500
+  //   shell:    12.000g × €0.0168 = €0.20160
+  //   total:    €0.25194
+
+  await db.productCostSnapshots.add({
+    productId: pralineStickId,
+    costPerProduct: 0.37230,
+    breakdown: JSON.stringify([
+      { label: "Hazelnut Praline — Roasted Piedmont Hazelnuts",   grams: 12.000, costPerGram: 0.01350, subtotal: 0.16200, kind: "filling_ingredient", ingredientId: hazelnutsId,    fillingId: pralineFillingId },
+      { label: "Hazelnut Praline — Caster Sugar",                 grams:  6.000, costPerGram: 0.00095, subtotal: 0.00570, kind: "filling_ingredient", ingredientId: sugarId,        fillingId: pralineFillingId },
+      { label: "Hazelnut Praline — Callebaut 823 Milk Chocolate", grams:  3.600, costPerGram: 0.00850, subtotal: 0.03060, kind: "filling_ingredient", ingredientId: callebaut823Id, fillingId: pralineFillingId },
+      { label: "Shell (milk)",                                    grams: 12.000, costPerGram: 0.01450, subtotal: 0.17400, kind: "shell" },
+    ]),
+    recordedAt: barsStarted,
+    triggerType: "manual",
+    triggerDetail: "Initial cost calculation — praline snack stick",
+    mouldId: snackBarMouldId,
+    coatingName: "milk",
+  } as ProductCostSnapshot);
+
+  await db.productCostSnapshots.add({
+    productId: caramelStickId,
+    costPerProduct: 0.25194,
+    breakdown: JSON.stringify([
+      { label: "Salted Caramel — Caster Sugar",             grams: 9.270, costPerGram: 0.00095, subtotal: 0.00881, kind: "filling_ingredient", ingredientId: sugarId,      fillingId: caramelFillingId },
+      { label: "Salted Caramel — Heavy Cream 35%",          grams: 7.416, costPerGram: 0.00220, subtotal: 0.01632, kind: "filling_ingredient", ingredientId: cream35Id,    fillingId: caramelFillingId },
+      { label: "Salted Caramel — Unsalted Butter 82% fat",  grams: 2.781, costPerGram: 0.00580, subtotal: 0.01613, kind: "filling_ingredient", ingredientId: butterId,     fillingId: caramelFillingId },
+      { label: "Salted Caramel — Glucose Syrup DE42",       grams: 1.854, costPerGram: 0.00220, subtotal: 0.00408, kind: "filling_ingredient", ingredientId: glucoseId,    fillingId: caramelFillingId },
+      { label: "Salted Caramel — Fleur de Sel de Guérande", grams: 0.278, costPerGram: 0.01800, subtotal: 0.00500, kind: "filling_ingredient", ingredientId: fleurDeSelId, fillingId: caramelFillingId },
+      { label: "Shell (dark)",                              grams: 12.000, costPerGram: 0.01680, subtotal: 0.20160, kind: "shell" },
+    ]),
+    recordedAt: barsStarted,
+    triggerType: "manual",
+    triggerDetail: "Initial cost calculation — caramel snack stick",
+    mouldId: snackBarMouldId,
+    coatingName: "dark",
+  } as ProductCostSnapshot);
+
+  // Snack-bar 3-pack sell prices. Mirrors the bar pattern: one flat price per
+  // collection so the assortment-box flow doesn't need per-flavour pricing.
+  // Cost: avg(0.37230, 0.25194) × 3 + 0.85 sleeve ≈ €1.79; €5.95 retail leaves
+  // a comfortable margin and €6.95 is the Easter premium.
+  await db.collectionPackagings.add({ collectionId: standardCollId, packagingId: snackPack3Id, sellPrice: 5.95, createdAt: barsStarted, updatedAt: barsStarted } as CollectionPackaging);
+  await db.collectionPackagings.add({ collectionId: easterCollId,   packagingId: snackPack3Id, sellPrice: 6.95, createdAt: barsStarted, updatedAt: barsStarted } as CollectionPackaging);
+
+  // Surface the snack bars on the Standard Line (so they show up in the Shop
+  // palette by default) and add the praline stick to Easter for a seasonal lift.
+  await db.collectionProducts.add({ collectionId: standardCollId, productId: pralineStickId, sortOrder: 3 } as CollectionProduct);
+  await db.collectionProducts.add({ collectionId: standardCollId, productId: caramelStickId, sortOrder: 4 } as CollectionProduct);
+  await db.collectionProducts.add({ collectionId: easterCollId,   productId: pralineStickId, sortOrder: 4 } as CollectionProduct);
+
+  // ── Counter Restock — small fresh stock of every flavour ──────────────────
+  //
+  // Existing batches above leave most of the newer bonbons, all bars, and the
+  // snack sticks at zero stock — which means a fresh demo can't actually log
+  // sales for them. This one extra "done" plan tops everything up to a small
+  // visible quantity so the Shop palette is fully exercisable on first load.
+  // Numbers are deliberately modest (a single mould or two each) so the
+  // pre-existing low-stock story on Milk Ganache is still legible.
+  const restockDate = daysAgo(8);
+  const restockPlanId = await db.productionPlans.add({
+    name: "Counter Restock",
+    status: "done",
+    batchNumber: "20260417-001",
+    notes: "Top-up batch covering the full catalogue ahead of the Easter weekend rush.",
+    batchSummary: "Counter Restock · all flavours · small batches per product",
+    createdAt: restockDate,
+    updatedAt: restockDate,
+    completedAt: restockDate,
+  } as ProductionPlan) as string;
+
+  // Bonbons — one mould (28 cavities) each for the four newer flavours, plus
+  // a small refresh on the originals so Milk Ganache isn't perpetually "low".
+  await db.planProducts.add({ planId: restockPlanId, productId: ganacheProductId,        mouldId, quantity: 1, sortOrder: 0, actualYield: 27, currentStock: 18 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: darkGanacheProductId,    mouldId, quantity: 1, sortOrder: 1, actualYield: 27, currentStock: 22 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: raspberryProductId,      mouldId, quantity: 1, sortOrder: 2, actualYield: 27, currentStock: 20 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: giandujaProductId,       mouldId, quantity: 1, sortOrder: 3, actualYield: 27, currentStock: 24 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: caramelCrunchProductId,  mouldId, quantity: 1, sortOrder: 4, actualYield: 27, currentStock: 21 } as PlanProduct);
+
+  // Bars — one mould (3 cavities) each, low and meant to feel hand-made.
+  await db.planProducts.add({ planId: restockPlanId, productId: madagascarBarId, mouldId: barMouldId, quantity: 2, sortOrder: 5, actualYield: 6, currentStock: 5 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: milkBarId,       mouldId: barMouldId, quantity: 2, sortOrder: 6, actualYield: 6, currentStock: 4 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: giandujaBarId,   mouldId: barMouldId, quantity: 1, sortOrder: 7, actualYield: 3, currentStock: 3 } as PlanProduct);
+
+  // Snack sticks — one mould (8 cavities) each, paired since they share the
+  // same mould type.
+  await db.planProducts.add({ planId: restockPlanId, productId: pralineStickId, mouldId: snackBarMouldId, quantity: 1, sortOrder: 8, actualYield: 8, currentStock: 7 } as PlanProduct);
+  await db.planProducts.add({ planId: restockPlanId, productId: caramelStickId, mouldId: snackBarMouldId, quantity: 1, sortOrder: 9, actualYield: 8, currentStock: 6 } as PlanProduct);
+
   // ── Shop counter — ~12 weeks of sold boxes ────────────────────────────────
   //
   // Populates the Shop landing "Recent sales" + the Observatory's "Shop
@@ -1893,5 +2113,163 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
     } as Sale);
   }
 
-  return { success: true, message: `Demo data loaded: 10 products (7 moulded + 3 bars — 2 pure bean-to-bar + 1 filled), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 5 production batches (incl. a partially-frozen praline batch), 3 packaging + 3 collections with full pricing history, 4 decoration materials, 3 moulds (incl. a 100g bar mould), 4 filling stock entries (2 available + 2 frozen). Exercises all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
+  // ── Bar sales — lighter cadence than bonbons ──────────────────────────────
+  // Bars sell ~2–3 per busy day and far fewer on slow days. Madagascar 72% is
+  // the hero bar (bean-to-bar story), Milk 36% is the accessible option,
+  // Gianduja is the seasonal favourite (so it ramps up alongside Easter).
+  //
+  // Each bar sale is a Sale row with cells = [barProductId] and the Bar
+  // Wrapper packaging — the same shape the production wizard's Package step
+  // would write once the "ready to sell" flow is used live.
+  const barPattern: Array<[number, number, number]> = [
+    // [madagascar, milk, gianduja] per day-of-week (Mon..Sun)
+    [0, 0, 0], // Monday — closed
+    [1, 0, 0], // Tuesday
+    [1, 1, 0], // Wednesday
+    [1, 1, 0], // Thursday
+    [2, 1, 0], // Friday
+    [3, 2, 1], // Saturday
+    [1, 1, 0], // Sunday
+  ];
+
+  const barProducts: Array<{ id: string; pattern: number }> = [
+    { id: madagascarBarId, pattern: 0 },
+    { id: milkBarId,       pattern: 1 },
+    { id: giandujaBarId,   pattern: 2 },
+  ];
+
+  let barDayCounter = 0;
+  let barCursor = new Date(SHOP_START);
+  barCursor.setHours(0, 0, 0, 0);
+  while (barCursor <= SHOP_END) {
+    const dow = mondayIndex(barCursor);
+    const daysFromEnd = Math.round((SHOP_END.getTime() - barCursor.getTime()) / DAY_MS);
+    const inEasterWindow = daysFromEnd <= 30;
+    const easterRamp = inEasterWindow ? Math.max(0, 1 - daysFromEnd / 30) : 0;
+
+    for (const bar of barProducts) {
+      const baseCount = barPattern[dow][bar.pattern];
+      if (baseCount === 0) continue;
+      for (let i = 0; i < baseCount; i++) {
+        // Easter window: gianduja bar also sells at the Easter premium price.
+        // Madagascar + Milk stay on Standard Line — the bean-to-bar tablets
+        // are year-round; only the filled gianduja feels festive.
+        const isEaster =
+          inEasterWindow &&
+          bar.id === giandujaBarId &&
+          ((barDayCounter + i) % 3 !== 0) && // ~2/3 of gianduja bars go Easter
+          easterRamp > 0.2;
+        const collectionId = isEaster ? easterCollId : standardCollId;
+        const price = isEaster ? 9.50 : 8.00;
+        const soldAt = atHour(barCursor, 12 + (i % 6), (barDayCounter * 7 + i * 11) % 60);
+        await db.sales.add({
+          collectionId,
+          packagingId: barWrapperId,
+          cells: [bar.id],
+          price,
+          status: "sold",
+          preparedAt: new Date(soldAt.getTime() - 60_000),
+          soldAt,
+        } as Sale);
+      }
+    }
+
+    barDayCounter++;
+    barCursor = new Date(barCursor.getTime() + DAY_MS);
+  }
+
+  // A couple of bars sitting in "Ready to sell" today — mimics what the
+  // production wizard's Package step will write in live use.
+  for (let i = 0; i < 4; i++) {
+    await db.sales.add({
+      collectionId: standardCollId,
+      packagingId: barWrapperId,
+      cells: [i % 2 === 0 ? madagascarBarId : milkBarId],
+      price: 8.00,
+      status: "prepared",
+      preparedAt: new Date(preppedToday.getTime() + (5 + i) * 15 * 60_000),
+    } as Sale);
+  }
+
+  // ── Snack-bar 3-pack sales — slower cadence than bonbon boxes ────────────
+  // Snack packs sell as a sleeve of 3 sticks. Praline Stick is the lead
+  // (≈60% of cells) and Caramel Stick rounds out the assortment. Cadence is
+  // light during the working week and picks up at the weekend, mirroring how
+  // single-portion snacks actually move at a counter. Easter window adds a
+  // small lift to mirror the bonbon ramp.
+  const SNACK3_RETAIL_MIXED   = [pralineStickId, caramelStickId, pralineStickId];
+  const SNACK3_RETAIL_PRALINE = [pralineStickId, pralineStickId, caramelStickId];
+  const SNACK3_RETAIL_CARAMEL = [caramelStickId, caramelStickId, pralineStickId];
+  const SNACK3_EASTER         = [pralineStickId, caramelStickId, pralineStickId];
+
+  const snackVariants = [SNACK3_RETAIL_MIXED, SNACK3_RETAIL_PRALINE, SNACK3_RETAIL_MIXED, SNACK3_RETAIL_CARAMEL];
+
+  // [retail, easter] packs per day-of-week (Mon..Sun). Easter only applies
+  // within the last ~30 days (gated below).
+  const snackPattern: Array<[number, number]> = [
+    [0, 0], // Monday — closed
+    [0, 0], // Tuesday
+    [1, 0], // Wednesday
+    [1, 0], // Thursday
+    [1, 0], // Friday
+    [2, 1], // Saturday
+    [1, 0], // Sunday
+  ];
+
+  let snackDayCounter = 0;
+  let snackVariantCounter = 0;
+  let snackCursor = new Date(SHOP_START);
+  snackCursor.setHours(0, 0, 0, 0);
+  while (snackCursor <= SHOP_END) {
+    const dow = mondayIndex(snackCursor);
+    const [retail, easterBase] = snackPattern[dow];
+    const daysFromEnd = Math.round((SHOP_END.getTime() - snackCursor.getTime()) / DAY_MS);
+    const inEasterWindow = daysFromEnd <= 30;
+    const easterRamp = inEasterWindow ? Math.max(0, 1 - daysFromEnd / 30) : 0;
+    const easterCount = inEasterWindow ? Math.round(easterBase * (0.3 + 0.7 * easterRamp)) : 0;
+
+    for (let i = 0; i < retail; i++) {
+      const soldAt = atHour(snackCursor, 11 + (i % 6), (snackDayCounter * 13 + i * 17) % 60);
+      await db.sales.add({
+        collectionId: standardCollId,
+        packagingId: snackPack3Id,
+        cells: pick(snackVariants, snackVariantCounter),
+        price: 5.95,
+        status: "sold",
+        preparedAt: new Date(soldAt.getTime() - 5 * 60_000),
+        soldAt,
+      } as Sale);
+      snackVariantCounter++;
+    }
+
+    for (let i = 0; i < easterCount; i++) {
+      const soldAt = atHour(snackCursor, 13 + (i % 4), (snackDayCounter * 9 + i * 19) % 60);
+      await db.sales.add({
+        collectionId: easterCollId,
+        packagingId: snackPack3Id,
+        cells: SNACK3_EASTER,
+        price: 6.95,
+        status: "sold",
+        preparedAt: new Date(soldAt.getTime() - 5 * 60_000),
+        soldAt,
+      } as Sale);
+    }
+
+    snackDayCounter++;
+    snackCursor = new Date(snackCursor.getTime() + DAY_MS);
+  }
+
+  // A couple of snack packs sitting in "Ready to sell" today.
+  for (let i = 0; i < 2; i++) {
+    await db.sales.add({
+      collectionId: standardCollId,
+      packagingId: snackPack3Id,
+      cells: i === 0 ? SNACK3_RETAIL_MIXED : SNACK3_RETAIL_PRALINE,
+      price: 5.95,
+      status: "prepared",
+      preparedAt: new Date(preppedToday.getTime() + (9 + i) * 15 * 60_000),
+    } as Sale);
+  }
+
+  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen). Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
 }

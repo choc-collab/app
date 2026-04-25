@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
+import { ArrowLeft } from "lucide-react";
 import { CavityPreview } from "@/components/shop/cavity-preview";
 import {
   useAllCollectionPackagings,
@@ -31,10 +32,19 @@ export default function ShopNewSalePage() {
   }, [collections]);
 
   // Skip rows whose collection or packaging no longer exists (archived or
-  // manually cleaned up). Keeps the picker safe against dangling FKs.
+  // manually cleaned up). Also skip bar wrappers — single-bar packaging is
+  // handled by the production wizard's Package step (`packagePlanProductAsSales`),
+  // not the assortment-box flow. Bonbon boxes and snack-bar packs both
+  // benefit from the cavity-fill UX, so they stay.
   const rows = useMemo(
     () => cps
-      .filter((cp) => packagingById.has(cp.packagingId) && collectionNameById.has(cp.collectionId))
+      .filter((cp) => {
+        if (!collectionNameById.has(cp.collectionId)) return false;
+        const pkg = packagingById.get(cp.packagingId);
+        if (!pkg) return false;
+        if ((pkg.productKind ?? "bonbon") === "bar") return false;
+        return true;
+      })
       .sort((a, b) => {
         const ca = collectionNameById.get(a.collectionId)!;
         const cb = collectionNameById.get(b.collectionId)!;
@@ -47,7 +57,16 @@ export default function ShopNewSalePage() {
   );
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div>
+      <div className="px-4 pt-6 pb-2">
+        <Link
+          href="/shop"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
+        </Link>
+      </div>
+      <div className="px-4 pb-6 max-w-4xl">
       <div className="text-xs font-mono uppercase tracking-wide text-muted-foreground mb-1">
         Step 1 of 3
       </div>
@@ -108,10 +127,6 @@ export default function ShopNewSalePage() {
         </div>
       )}
 
-      <div className="mt-6">
-        <Link href="/shop" className="text-sm text-muted-foreground hover:text-foreground">
-          ← Back to shop
-        </Link>
       </div>
     </div>
   );

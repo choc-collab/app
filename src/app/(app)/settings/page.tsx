@@ -87,34 +87,34 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Backup, restore, and preferences" />
 
       {/* Tab strip */}
-      <div className="flex border-b border-border px-4 mb-6">
+      <div className="flex border-b border-border px-4 mb-6 overflow-x-auto">
         <button
           onClick={() => switchTab("backup")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "backup" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "backup" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Backup & Restore
         </button>
         <button
           onClick={() => switchTab("import")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "import" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "import" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Import/Export
         </button>
         <button
           onClick={() => switchTab("market")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "market" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "market" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Target Market
         </button>
         <button
           onClick={() => switchTab("printing")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "printing" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "printing" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Printing
         </button>
         <button
           onClick={() => switchTab("demo")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "demo" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "demo" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Demo Mode
         </button>
@@ -575,7 +575,7 @@ function DemoDataSection() {
               Adds 3 products (Milk Chocolate Ganache, Salted Caramel, Hazelnut Praline)
               with full ingredient data, a cost history showing the switch from{" "}
               <strong>Callebaut → Felchlin</strong> premium couverture in February 2026,
-              5 production batches (including one in progress today), and in-stock products
+              6 production batches (including one in progress today), and in-stock products
               ready to explore in the Stock tab.
               Existing data is not affected.
             </p>
