@@ -1177,11 +1177,7 @@ export interface Sale {
 
 /** Why a give-away left the workshop. Fixed taxonomy for now; can be made
  *  user-editable later if needed (mirrors the categories pattern).
- *
- *  Historical records may carry reason values that are no longer in this
- *  union (e.g. legacy "charity" / "influencer" / "comp" rows). The reason
- *  picker only shows the current options; render code falls back to the raw
- *  value for orphaned entries so timelines still read correctly. */
+ **/
 export type GiveAwayReason = "sample" | "friends" | "marketing" | "staff";
 
 export const GIVE_AWAY_REASONS: ReadonlyArray<{ value: GiveAwayReason; label: string }> = [

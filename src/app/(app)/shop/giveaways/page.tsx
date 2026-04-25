@@ -595,7 +595,7 @@ export default function GiveAwayLogPage() {
                 type="text"
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
-                placeholder="e.g. Influencer name, charity"
+                placeholder="e.g. a frequent shopper or a friend"
                 className="input"
               />
             </div>

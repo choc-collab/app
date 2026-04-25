@@ -95,3 +95,10 @@
 /products/:id/*           /products/_spa/:splat           200
 /products/*/              /products/_spa/                 200
 /products/:id             /products/_spa/                 200
+
+# Shop fill-box flow — `/shop/new/:id` is a 3-segment dynamic route. The
+# 3-segment match means /shop/new/ (the box picker) and /shop/giveaways/
+# (a sibling static page) are unaffected: those have only 2 segments.
+/shop/new/:id/*           /shop/new/_spa/:splat           200
+/shop/new/*/              /shop/new/_spa/                 200
+/shop/new/:id             /shop/new/_spa/                 200

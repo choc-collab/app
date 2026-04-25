@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { use, useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { BonbonDisc } from "@/components/shop/bonbon-disc";
+import { useSpaId } from "@/lib/use-spa-id";
 import { BonbonPalette } from "@/components/shop/bonbon-palette";
 import { SaleCavityTray } from "@/components/shop/sale-cavity-tray";
 import { SnackPackTray } from "@/components/shop/snack-pack-tray";
@@ -31,13 +32,21 @@ import type { ShopProductInfo } from "@/lib/shopColor";
 import { shopKindsForPackaging } from "@/types";
 import type { Packaging, Product } from "@/types";
 
-export default function ShopFillBoxPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: cpId } = use(params);
+export default function ShopFillBoxPage() {
+  // Production builds use static export — every dynamic route is rewritten to
+  // a `_spa` placeholder, so `use(params)` would always return "_spa" instead
+  // of the real CollectionPackaging id. `useSpaId` reads it from
+  // `window.location.pathname` instead, matching every other detail page in
+  // the app.
+  const cpId = useSpaId("new");
   const cps = useAllCollectionPackagings();
-  const cp = cps.find((c) => c.id === cpId);
+  const cp = cpId ? cps.find((c) => c.id === cpId) : undefined;
   const collection = useCollection(cp?.collectionId);
   const packaging = usePackaging(cp?.packagingId);
 
+  // No id yet (first client render before useSyncExternalStore picks up the
+  // pathname) — show the loading state rather than flashing NotFound.
+  if (!cpId) return <Loading />;
   if (!cp && cps.length > 0) return <NotFound />;
   if (!cp || !collection || !packaging) return <Loading />;
 
