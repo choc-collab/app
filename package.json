@@ -57,7 +57,7 @@
     "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.1.4",
     "postcss": "^8.5.10",
-    "tailwindcss": "^4.2.2",
+    "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.4"
   }
