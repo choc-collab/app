@@ -172,7 +172,7 @@ const SECTIONS: Section[] = [
             <strong>What to watch out for:</strong> data is tied to this one
             browser on this one device. Clear your browser data and it&apos;s
             gone. No sync across iPad + laptop. <strong>Backup is essential</strong>
-            {" "}— see section 14.
+            {" "}— see section 15.
           </li>
         </ul>
         <h3>Hosted (with Dexie Cloud sync)</h3>
@@ -434,8 +434,7 @@ const SECTIONS: Section[] = [
           <li>
             <strong>Nest other fillings inside this one.</strong> Below the ingredient list there&apos;s
             a <em>Nested fillings</em> section. Tap <em>+ Add nested filling</em> and pick another
-            filling — useful when one recipe sits inside another (a caramel base inside a caramel
-            ganache, a praliné inside a gianduja, a biscuit base inside a croustillant). The picker
+            filling — useful when one recipe sits inside another (a caramel base inside another caramel). The picker
             blocks options that would close a loop with a <em>Cycle</em> badge, so you can&apos;t
             accidentally make A nest B nest A. Cost, allergens, and nutrition flow through every
             nesting level automatically — editing the inner filling re-snapshots cost on every
@@ -632,20 +631,87 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "observatory",
+    id: "shop",
     num: "12",
+    title: "The Shop — selling boxes (and giving them away)",
+    teaser: "Fill a box from stock, log the sale, track give-aways at cost.",
+    render: () => (
+      <>
+        <p className="sub">
+          Once a collection has at least one box price, the Shop lights up. It&apos;s the
+          counter-side companion to everything you&apos;ve built up to here: the place where
+          finished pieces leave the workshop and turn into revenue (or, sometimes, into
+          give-aways you still want to track).
+        </p>
+
+        <h3>The shop landing</h3>
+        <p>
+          The top strip shows today at a glance — boxes sold, revenue, bonbons out the door,
+          and your seven-day average box price. Below that, two tabs:
+        </p>
+        <ul>
+          <li>
+            <strong>Ready to sell.</strong> Boxes you&apos;ve filled and packed but not yet
+            handed over. Identical boxes group together so a 30-box morning batch shows as one
+            row with a quantity stepper, not thirty rows. Each row carries an optional
+            customer note (name, pickup time, gift tag) and a one-tap <em>Sell</em> button.
+          </li>
+          <li>
+            <strong>Recent activity.</strong> Sold boxes and give-aways interleaved by time,
+            filterable by today / 7 days / 30 days / all. A sold box gets a 24-hour <em>Undo</em>
+            window in case you tap the wrong row.
+          </li>
+        </ul>
+
+        <h3>Filling a box</h3>
+        <p>
+          Tap <strong>+ New box</strong> and the wizard walks you through three steps:
+        </p>
+        <StepList items={[
+          { title: "Pick a collection × box size", body: "You'll see every collection-and-packaging combo that has a sell price. Bonbon boxes and snack-bar packs both show up here; single-bar wrappers don't (those are handled by the production wizard's Package step). If a packaging is missing, it's because no collection has it priced yet — go to the collection and add it." },
+          { title: "Fill the cavities", body: "Each cavity becomes a tap target. Pick from the products in stock for that collection; the cavity preview colours each piece so you can spot a half-empty box at a glance. Stock decrements as you fill — you can't oversell." },
+          { title: "Confirm and prepare", body: "Add an optional customer note, confirm. The box lands in Ready to sell at the collection's retail price, with stock already reserved." },
+        ]} />
+
+        <h3>Give-aways</h3>
+        <p>
+          The lilac <strong>Log give-away</strong> button next to <em>+ New box</em> is for
+          everything that leaves without payment: tastings, charity donations, samples to a
+          new account, friends-and-family. You can give away a packed box, a snack-bar pack,
+          a single bar, or just loose pieces — and choose whether they come from stock or
+          off-the-books. Give-aways are valued at <strong>ingredient cost</strong> (not retail),
+          so they show up in your reporting as a real expense without inflating revenue.
+        </p>
+        <Callout kind="tip" title="Why track give-aways at all?">
+          A surprising amount of margin walks out the door as samples and gifts. Logging
+          them — even roughly — means the Observatory&apos;s numbers reflect what the workshop
+          actually consumed, not just what got paid for.
+        </Callout>
+
+        <h3>What the Shop does behind the scenes</h3>
+        <ul>
+          <li><strong>Pulls from stock.</strong> Filling a box reserves the pieces; selling it commits the deduction. Voiding a prepared box returns them to stock.</li>
+          <li><strong>Uses collection pricing.</strong> Retail price comes from the collection × packaging pair you set up in section 11. Change the price on the collection and future boxes pick it up; already-prepared boxes keep the price they were prepared at.</li>
+          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 13 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "observatory",
+    num: "13",
     title: "The Observatory — your numbers in one place",
-    teaser: "Pricing health, production trends, and product-cost breakdowns.",
+    teaser: "Pricing health, production trends, product-cost breakdowns, and shop sales.",
     render: () => (
       <>
         <p className="sub">
           The Observatory is the reporting hub. Everything the app has quietly learned from your
-          ingredients, products, batches, and stock — laid out as numbers and charts so you can
-          tell whether the business is actually working.
+          ingredients, products, batches, stock, and shop — laid out as numbers and charts so
+          you can tell whether the business is actually working.
         </p>
 
         <h3>What&rsquo;s in there</h3>
-        <p>Three views, reached from <strong>Observatory</strong> in the side nav:</p>
+        <p>Four views, reached from <strong>Observatory</strong> in the side nav:</p>
         <ul>
           <li>
             <strong>Pricing &amp; Margins.</strong>
@@ -670,6 +736,16 @@ const SECTIONS: Section[] = [
               <li>Side-by-side comparison with similar products — so you can see why the salted caramel costs 40c more than the passion fruit.</li>
             </ul>
           </li>
+          <li>
+            <strong>Shop Insights.</strong>
+            <ul>
+              <li>Pick a window (7 days through all time, plus a custom range) and optionally narrow to one collection.</li>
+              <li>Headline tiles: revenue, bonbons + bars sold, average box price, and the current top seller.</li>
+              <li>Stacked revenue chart broken down by collection, monthly or weekly.</li>
+              <li>Four leaderboards — best-selling bonbons, best-selling bars, best-selling box sizes, and collections by revenue — each with a <em>↑ Rising / ↓ Easing / Dormant / New</em> trend chip versus the previous comparable window.</li>
+              <li>This is the &ldquo;what&apos;s actually moving off the counter&rdquo; view — the counterpart to Production Stats, which shows what you&apos;re making.</li>
+            </ul>
+          </li>
         </ul>
 
         <Callout kind="note" title="It needs data to be useful">
@@ -683,7 +759,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "allergens",
-    num: "13",
+    num: "14",
     title: "Allergens and nutrition",
     teaser: "Enter once at the ingredient level. The app does the rest.",
     render: () => (
@@ -711,7 +787,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "backup",
-    num: "14",
+    num: "15",
     title: "Backup, restore, and cloud sync",
     teaser: "Your data is yours. Treat it that way.",
     render: () => (
@@ -770,7 +846,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "dexie-cloud",
-    num: "15",
+    num: "16",
     title: "Setting up Dexie Cloud sync (step by step)",
     teaser: "The bit that lets your iPad and laptop see the same data. Twenty minutes, no code.",
     render: () => (
@@ -1108,7 +1184,7 @@ jobs:
   },
   {
     id: "shortcuts",
-    num: "16",
+    num: "17",
     title: "Keyboard shortcuts",
     teaser: "Small, but they add up.",
     render: () => (
@@ -1137,7 +1213,7 @@ jobs:
   },
   {
     id: "faq",
-    num: "17",
+    num: "18",
     title: "Troubleshooting and FAQ",
     teaser: "The things I've been asked most.",
     render: () => (
@@ -1387,7 +1463,7 @@ jobs:
             </li>
             <li>
               <strong>Backups are your responsibility.</strong> The app offers exports and
-              auto-snapshots (see section 14), but I can&apos;t recover data for you. If your
+              auto-snapshots (see section 15), but I can&apos;t recover data for you. If your
               iPad dies and you never exported, the data is gone. Treat a weekly backup like
               closing the till.
             </li>
@@ -1422,14 +1498,14 @@ jobs:
 const HUB_GROUPS = [
   { title: "Get set up", ids: ["welcome", "hosted-or-local", "install", "demo", "preferences"] },
   { title: "Build your pantry", ids: ["ingredient", "filling", "product"] },
-  { title: "Run the workshop", ids: ["production", "stock", "collections", "observatory"] },
+  { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "observatory"] },
   { title: "Labels, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },
 ];
 
 const HUB_ACCENTS: Record<string, string> = {
   welcome: "cocoa", "hosted-or-local": "mint", install: "blue", demo: "butter", preferences: "taupe",
   ingredient: "sage", filling: "peach", product: "cocoa",
-  production: "terracotta", stock: "taupe", collections: "butter", observatory: "sage",
+  production: "terracotta", stock: "taupe", collections: "butter", shop: "peach", observatory: "sage",
   allergens: "mint", backup: "lilac", "dexie-cloud": "mint", shortcuts: "taupe", faq: "blue",
 };
 
@@ -1445,6 +1521,7 @@ const HUB_ICONS: Record<string, ReactNode> = {
   production:  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>,
   stock:       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M3 7l9-4 9 4-9 4zM3 7v10l9 4M21 7v10l-9 4"/></svg>,
   collections: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
+  shop:        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/></svg>,
   observatory: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M4 20h16M6 20V10M10 20V6M14 20v-8M18 20V4"/></svg>,
   allergens:   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M10.3 3.9 1.8 18.2A2 2 0 0 0 3.5 21h17a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg>,
   backup:      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8M21 3v5h-5"/></svg>,

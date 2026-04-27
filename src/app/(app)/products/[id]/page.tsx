@@ -1673,7 +1673,14 @@ function ProductCostTab({
         <div>
           {latest ? (
             <div>
-              <p className="text-2xl font-bold text-primary">{formatCost(latest.costPerProduct, sym)}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-2xl font-bold text-primary">{formatCost(latest.costPerProduct, sym)}</p>
+                {missingPricingIngredients.length > 0 && (
+                  <span className="inline-flex items-center rounded-full border border-status-alert-edge bg-status-alert-bg px-2 py-0.5 text-[11px] font-medium text-status-alert">
+                    Incomplete
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground mt-0.5">per product · 1 cavity</p>
             </div>
           ) : (
@@ -1716,11 +1723,18 @@ function ProductCostTab({
         </div>
       )}
       {missingPricingIngredients.length > 0 && (
-        <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
-          <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
-          <div className="text-xs text-status-warn">
-            <p><strong>{missingPricingIngredients.length} ingredient{missingPricingIngredients.length > 1 ? "s" : ""}</strong> have no pricing data — cost may be understated:</p>
-            <p className="mt-0.5 text-status-warn">{missingPricingIngredients.join(", ")}</p>
+        <div className="flex items-start gap-2 rounded-md bg-status-alert-bg border border-status-alert-edge px-3 py-2">
+          <AlertTriangle className="w-4 h-4 text-status-alert shrink-0 mt-0.5" />
+          <div className="text-xs text-status-alert">
+            <p>
+              The cost shown is incomplete. Add a purchase price for{" "}
+              <strong>{missingPricingIngredients.length} ingredient{missingPricingIngredients.length > 1 ? "s" : ""}</strong>{" "}
+              before relying on this total:
+            </p>
+            <p className="mt-0.5">{missingPricingIngredients.join(", ")}</p>
+            <Link href="/ingredients" className="mt-1 inline-block underline font-medium hover:no-underline">
+              Go to ingredients →
+            </Link>
           </div>
         </div>
       )}
