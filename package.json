@@ -1,6 +1,6 @@
 {
   "name": "choc-collab",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A chocolatier's toolkit — manage products, fillings, ingredients, moulds, and production plans. Local-first, runs entirely in the browser.",
   "author": "Choc-collab contributors",
   "license": "MIT",
