@@ -1,9 +1,9 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
-import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromGrams } from "@/lib/costCalculation";
+import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
 import { computeShopKpis, EMPTY_SHOP_KPIS, type ShopKpis } from "@/lib/shopKpis";
 import {
   computeCommitStockDeltas,
@@ -12,6 +12,7 @@ import {
   type SaleStockBatch,
 } from "@/lib/saleStock";
 import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib/shopColor";
+import { ancestorFillingIds, buildChildMap, buildParentMap, reachableIngredientIds, wouldCreateCycle } from "@/lib/fillingComponents";
 
 // --- Ingredients ---
 
@@ -49,9 +50,11 @@ export async function saveIngredient(ingredient: Omit<Ingredient, "id"> & { id?:
     priceChanged = deriveIngredientCostPerGram(ingredient as Ingredient) !== null;
   }
 
+  // Allergen change cascades up: every direct host of this ingredient gets
+  // refreshed, plus every filling that transitively nests one of those hosts.
   const affected = await db.fillingIngredients.where("ingredientId").equals(savedId).toArray();
   const fillingIds = [...new Set(affected.map((li) => li.fillingId))];
-  await Promise.all(fillingIds.map((id) => updateFillingAllergens(id)));
+  await Promise.all(fillingIds.map((id) => cascadeAllergensFromFilling(id)));
 
   if (priceChanged) {
     const savedIngredient = ingredient.id ? ingredient as Ingredient : { ...ingredient, id: savedId } as Ingredient;
@@ -357,11 +360,31 @@ export async function archiveFilling(id: string) {
 export interface FillingArchiveImpact {
   soleFillingProducts: Product[];   // products where this is the only filling — will become empty
   multiFillingProducts: Product[];  // products with other fillings — can remove & redistribute
+  /** Fillings that have THIS filling listed as a nested component. When
+   *  non-empty, archive is blocked: the user has to remove the nested-component
+   *  edge from those host fillings first. Mirrors how products use the filling,
+   *  but at one level up — leaving these dangling would break cost / nutrition /
+   *  allergen aggregation on the host. */
+  nestedInsideFillings: Filling[];
 }
 
 export async function getFillingArchiveImpact(fillingId: string): Promise<FillingArchiveImpact> {
+  // Find every host filling that nests this one as a component. If any exist,
+  // the archive is blocked — the user has to clean up those edges first.
+  const incomingComponents = await db.fillingComponents.where("childFillingId").equals(fillingId).toArray();
+  const nestedHostIds = [...new Set(incomingComponents.map((c) => c.fillingId))];
+  const nestedHosts = (
+    await Promise.all(nestedHostIds.map((id) => db.fillings.get(id)))
+  ).filter((f): f is Filling => f != null && !f.archived);
+
   const productLinks = await db.productFillings.where("fillingId").equals(fillingId).toArray();
-  if (productLinks.length === 0) return { soleFillingProducts: [], multiFillingProducts: [] };
+  if (productLinks.length === 0) {
+    return {
+      soleFillingProducts: [],
+      multiFillingProducts: [],
+      nestedInsideFillings: nestedHosts.sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }
 
   const productIds = [...new Set(productLinks.map((rl) => rl.productId))];
   const soleFillingProducts: Product[] = [];
@@ -381,13 +404,38 @@ export async function getFillingArchiveImpact(fillingId: string): Promise<Fillin
   return {
     soleFillingProducts: soleFillingProducts.sort((a, b) => a.name.localeCompare(b.name)),
     multiFillingProducts: multiFillingProducts.sort((a, b) => a.name.localeCompare(b.name)),
+    nestedInsideFillings: nestedHosts.sort((a, b) => a.name.localeCompare(b.name)),
   };
+}
+
+/** Thrown by `archiveFillingWithCleanup` when the filling is still nested
+ *  inside another filling. The UI surfaces this as a soft-block: the user
+ *  has to remove the component edge on the host filling first. We chose to
+ *  block (rather than silently cascade-remove) because mutating *other*
+ *  fillings during an archive would be a surprising side-effect — host
+ *  fillings depend on this one for cost / nutrition / allergens. */
+export class FillingNestedInUseError extends Error {
+  hosts: Filling[];
+  constructor(hosts: Filling[]) {
+    const names = hosts.map((h) => h.name).join(", ");
+    super(`Filling is nested inside: ${names}. Remove it from those fillings first.`);
+    this.name = "FillingNestedInUseError";
+    this.hosts = hosts;
+  }
 }
 
 export async function archiveFillingWithCleanup(
   fillingId: string,
   options: { archiveSoleProducts: boolean; removeFromMultiProducts: boolean }
 ): Promise<void> {
+  // Block-on-nested: refuse to archive while any other filling has this one
+  // as a component. The user sees the list of hosts on the impact panel and
+  // can resolve them one by one before retrying.
+  const impact = await getFillingArchiveImpact(fillingId);
+  if (impact.nestedInsideFillings.length > 0) {
+    throw new FillingNestedInUseError(impact.nestedInsideFillings);
+  }
+
   const productLinks = await db.productFillings.where("fillingId").equals(fillingId).toArray();
   const productIds = [...new Set(productLinks.map((rl) => rl.productId))];
 
@@ -566,12 +614,30 @@ export function useFillingVersionHistory(fillingId: string | undefined) {
   }, [fillingId]) ?? [];
 }
 
-export async function getFillingForkImpact(fillingId: string): Promise<{ products: import("@/types").Product[] }> {
+export async function getFillingForkImpact(fillingId: string): Promise<{
+  products: import("@/types").Product[];
+  /** Host fillings that nest THIS filling as a component. Forking does NOT
+   *  migrate the component edge — these hosts stay on the old version, so
+   *  the panel surfaces the list as a heads-up. The user can refork those
+   *  hosts manually if they want to upgrade. */
+  nestedInsideFillings: Filling[];
+}> {
   const productFillings = await db.productFillings.where("fillingId").equals(fillingId).toArray();
   const productIds = [...new Set(productFillings.map((rl) => rl.productId))];
-  if (productIds.length === 0) return { products: [] };
-  const products = (await Promise.all(productIds.map((id) => db.products.get(id)))).filter((r): r is Product => r !== undefined);
-  return { products: products.sort((a, b) => a.name.localeCompare(b.name)) };
+  const products = productIds.length > 0
+    ? (await Promise.all(productIds.map((id) => db.products.get(id)))).filter((r): r is Product => r !== undefined)
+    : [];
+
+  const incomingComponents = await db.fillingComponents.where("childFillingId").equals(fillingId).toArray();
+  const nestedHostIds = [...new Set(incomingComponents.map((c) => c.fillingId))];
+  const nestedHosts = (
+    await Promise.all(nestedHostIds.map((id) => db.fillings.get(id)))
+  ).filter((f): f is Filling => f != null && !f.archived);
+
+  return {
+    products: products.sort((a, b) => a.name.localeCompare(b.name)),
+    nestedInsideFillings: nestedHosts.sort((a, b) => a.name.localeCompare(b.name)),
+  };
 }
 
 export async function forkFillingVersion(fillingId: string, versionNotes?: string): Promise<string> {
@@ -741,8 +807,8 @@ export async function updateProductFillingPercentage(productFillingId: string, f
   }
 }
 
-export async function updateProductFillingGrams(productFillingId: string, fillGrams: number) {
-  await db.productFillings.update(productFillingId, { fillGrams });
+export async function updateProductFillingFraction(productFillingId: string, fillFraction: number) {
+  await db.productFillings.update(productFillingId, { fillFraction });
   const rl = await db.productFillings.get(productFillingId);
   if (rl) {
     await computeAndSaveProductCostSnapshot({ productId: rl.productId, triggerType: "manual", triggerDetail: "Fill grams updated" });
@@ -824,6 +890,119 @@ export async function deleteFillingIngredient(id: string) {
   await db.fillingIngredients.delete(id);
   if (li) {
     await computeSnapshotsForFilling(li.fillingId, "manual", "Filling ingredient removed");
+  }
+}
+
+// --- Filling components (filling-in-filling) ---
+//
+// `FillingComponent` rows live in their own table, alongside (not inside)
+// `fillingIngredients`. Cost / allergens / nutrition aggregation that wants
+// to walk nested fillings reads both. The save mutator rejects any edge
+// that would close a cycle.
+
+export class FillingComponentCycleError extends Error {
+  constructor() {
+    super("Adding this filling would create a cycle");
+    this.name = "FillingComponentCycleError";
+  }
+}
+
+export function useFillingComponents(fillingId: string | undefined): FillingComponent[] {
+  return useLiveQuery(
+    () =>
+      fillingId
+        ? db.fillingComponents.where("fillingId").equals(fillingId).toArray().then((rows) => rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)))
+        : [],
+    [fillingId],
+  ) ?? [];
+}
+
+/** Live query of every filling-component edge in the database. Used by the
+ *  add-component picker to flag options that would close a cycle — cycle
+ *  detection has to walk the whole graph, not just the host's direct rows.
+ *  Also feeds the product-page cost / nutrition aggregations: those need to
+ *  expand nested fillings recursively, so the map has to cover every host. */
+export function useAllFillingComponents(): FillingComponent[] {
+  return useLiveQuery(() => db.fillingComponents.toArray(), []) ?? [];
+}
+
+/** Returns the same shape as `useFillingIngredientsForFillings` but covers
+ *  every filling in the database — needed when the caller will recursively
+ *  walk through nested fillings whose ids it doesn't know up-front. */
+export function useAllFillingIngredientsByFilling(): Map<string, FillingIngredient[]> {
+  return useLiveQuery(async () => {
+    const rows = await db.fillingIngredients.toArray();
+    rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const map = new Map<string, FillingIngredient[]>();
+    for (const r of rows) {
+      const arr = map.get(r.fillingId);
+      if (arr) arr.push(r);
+      else map.set(r.fillingId, [r]);
+    }
+    return map;
+  }, []) ?? new Map<string, FillingIngredient[]>();
+}
+
+/** Same shape as `useAllFillingIngredientsByFilling`, but for the
+ *  filling-components table. Together these two cover every nesting level. */
+export function useAllFillingComponentsByFilling(): Map<string, FillingComponent[]> {
+  return useLiveQuery(async () => {
+    const rows = await db.fillingComponents.toArray();
+    rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const map = new Map<string, FillingComponent[]>();
+    for (const r of rows) {
+      const arr = map.get(r.fillingId);
+      if (arr) arr.push(r);
+      else map.set(r.fillingId, [r]);
+    }
+    return map;
+  }, []) ?? new Map<string, FillingComponent[]>();
+}
+
+/** Insert or update a FillingComponent row, rejecting any change that would
+ *  introduce a cycle. The cycle check + write happen inside one Dexie
+ *  transaction so a concurrent write can't slip a closing edge in between.
+ *  Cascades the host's allergens upward after the write completes — adding
+ *  a child can introduce new leaf allergens, and ancestor fillings need to
+ *  refresh their cached `allergens` array. */
+export async function saveFillingComponent(
+  c: Omit<FillingComponent, "id"> & { id?: string },
+): Promise<string> {
+  const savedId = await db.transaction("rw", db.fillingComponents, async () => {
+    const all = await db.fillingComponents.toArray();
+    // For an update, ignore the row's existing edge so re-saving is a no-op
+    // for cycle purposes.
+    const others = c.id ? all.filter((r) => r.id !== c.id) : all;
+    if (wouldCreateCycle(buildChildMap(others), c.fillingId, c.childFillingId)) {
+      throw new FillingComponentCycleError();
+    }
+    if (c.id) {
+      await db.fillingComponents.update(c.id, c);
+      return c.id;
+    }
+    const existing = all.filter((r) => r.fillingId === c.fillingId);
+    const maxOrder = existing.reduce((max, x) => Math.max(max, x.sortOrder ?? 0), -1);
+    const id = (await db.fillingComponents.add({
+      ...c,
+      sortOrder: maxOrder + 1,
+    } as FillingComponent)) as string;
+    return id;
+  });
+  await cascadeAllergensFromFilling(c.fillingId);
+  // Snapshot every product that (transitively) uses this host — adding a
+  // child changes ingredient mix and therefore cost.
+  await computeSnapshotsForFilling(c.fillingId, "manual", "Filling component updated");
+  return savedId;
+}
+
+export async function deleteFillingComponent(id: string): Promise<void> {
+  // Capture the host id before the row is gone so we know whose allergens
+  // and snapshots to recompute.
+  const row = await db.fillingComponents.get(id);
+  await db.fillingComponents.delete(id);
+  if (row) {
+    await cascadeAllergensFromFilling(row.fillingId);
+    await computeSnapshotsForFilling(row.fillingId, "manual", "Filling component removed");
   }
 }
 
@@ -1786,14 +1965,29 @@ export async function computeAndSaveProductCostSnapshot(params: {
   if (!product) return;
 
   const fillingIds = productFillings.map((rl) => rl.fillingId);
-  const [fillings, ...liArrays] = await Promise.all([
+  // Read the full filling-ingredient and filling-component tables — the
+  // recursive flattener inside `calculateProductCost` needs every nesting
+  // level, not just the host fillings on this product. Both tables are tiny
+  // in practice, and a single full scan is cheaper than per-id queries.
+  const [fillings, allFillingIngredients, allFillingComponents] = await Promise.all([
     fillingIds.length > 0 ? Promise.all(fillingIds.map((id) => db.fillings.get(id))).then((rs) => rs.filter((l): l is Filling => l !== undefined)) : Promise.resolve([]),
-    ...fillingIds.map((lid) => db.fillingIngredients.where("fillingId").equals(lid).toArray()),
+    db.fillingIngredients.toArray(),
+    db.fillingComponents.toArray(),
   ]);
 
   const fillingsMap = new Map(fillings.map((l) => [l.id!, l]));
-  const fillingIngredientsMap = new Map<string, typeof liArrays[0]>();
-  fillingIds.forEach((lid, i) => fillingIngredientsMap.set(lid, liArrays[i]));
+  const fillingIngredientsMap = new Map<string, FillingIngredient[]>();
+  for (const li of allFillingIngredients) {
+    const arr = fillingIngredientsMap.get(li.fillingId);
+    if (arr) arr.push(li);
+    else fillingIngredientsMap.set(li.fillingId, [li]);
+  }
+  const fillingComponentsMap = new Map<string, FillingComponent[]>();
+  for (const c of allFillingComponents) {
+    const arr = fillingComponentsMap.get(c.fillingId);
+    if (arr) arr.push(c);
+    else fillingComponentsMap.set(c.fillingId, [c]);
+  }
 
   const ingredientCostMap = buildIngredientCostMap(allIngredients);
   const ingredientMap = new Map(allIngredients.map((i) => [i.id!, i]));
@@ -1821,9 +2015,16 @@ export async function computeAndSaveProductCostSnapshot(params: {
   //      actually been produced. For unproduced products the user can still force a
   //      snapshot via manual recalc.
   if (!isUserEdit) {
-    const allFillingIngredients = liArrays.flat();
-    const usedIngredientIds = [...new Set(allFillingIngredients.map((li) => li.ingredientId))];
-    const allPriced = usedIngredientIds.every((id) => {
+    // Walk every host filling on the product and collect leaf ingredient ids
+    // through nested fillings — a partial price gate based only on direct
+    // ingredients would silently snapshot an incomplete cost.
+    const usedIngredientIds = new Set<string>();
+    for (const rl of productFillings) {
+      for (const id of reachableIngredientIds(rl.fillingId, fillingIngredientsMap, fillingComponentsMap)) {
+        usedIngredientIds.add(id);
+      }
+    }
+    const allPriced = [...usedIngredientIds].every((id) => {
       const ing = ingredientMap.get(id);
       return ing && hasPricingData(ing);
     });
@@ -1836,12 +2037,14 @@ export async function computeAndSaveProductCostSnapshot(params: {
 
   const mould = product.defaultMouldId ? await db.moulds.get(product.defaultMouldId) : undefined;
 
-  // In grams mode, derive shell percentage from the fill grams
+  // In grams mode, derive shell percentage from the fill fractions. The fractions
+  // are mould-agnostic, so this is the same regardless of which mould we're costing
+  // against — the shell ratio is the recipe spec.
   const fillMode = product.fillMode ?? "percentage";
   let effectiveShellPercentage = shellPercentage;
   if (fillMode === "grams" && mould) {
-    const totalFillGrams = productFillings.reduce((sum, rl) => sum + (rl.fillGrams ?? 0), 0);
-    effectiveShellPercentage = deriveShellPercentageFromGrams(mould.cavityWeightG, totalFillGrams);
+    const totalFillFraction = productFillings.reduce((sum, rl) => sum + (rl.fillFraction ?? 0), 0);
+    effectiveShellPercentage = deriveShellPercentageFromFractions(totalFillFraction);
   }
 
   const { costPerProduct, breakdown } = calculateProductCost({
@@ -1854,6 +2057,7 @@ export async function computeAndSaveProductCostSnapshot(params: {
     shellChocolateLabel: shellIngredient?.name,
     shellPercentage: effectiveShellPercentage,
     fillMode,
+    fillingComponentsMap,
   });
 
   // Dedupe: if the most recent snapshot for this product is byte-for-byte identical,
@@ -1890,7 +2094,14 @@ async function computeSnapshotsForFilling(
   triggerType: ProductCostSnapshot["triggerType"],
   triggerDetail: string,
 ): Promise<void> {
-  const productFillings = await db.productFillings.where("fillingId").equals(fillingId).toArray();
+  // Editing a filling reaches every product whose own host filling
+  // (transitively) nests `fillingId`. Walk the parent edges of the
+  // filling-component graph and snapshot all of them.
+  const allComponents = await db.fillingComponents.toArray();
+  const ancestors = ancestorFillingIds(buildParentMap(allComponents), fillingId);
+  const productFillings = (
+    await Promise.all([...ancestors].map((id) => db.productFillings.where("fillingId").equals(id).toArray()))
+  ).flat();
   const productIds = [...new Set(productFillings.map((rl) => rl.productId))];
   await Promise.all(
     productIds.map((productId) => computeAndSaveProductCostSnapshot({ productId, triggerType, triggerDetail }))
@@ -1904,11 +2115,22 @@ async function computeSnapshotsForAffectedProducts(
 ): Promise<void> {
   const productIds = new Set<string>();
 
-  // Products affected via filling ingredients
+  // Products affected via filling ingredients — direct or via nesting.
+  // First find every filling whose own ingredient list mentions this id, then
+  // expand to ancestors so a product whose host filling nests an affected
+  // child still gets a fresh snapshot.
   const lis = await db.fillingIngredients.where("ingredientId").equals(ingredientId).toArray();
-  const fillingIds = [...new Set(lis.map((li) => li.fillingId))];
-  if (fillingIds.length > 0) {
-    const productFillings = (await Promise.all(fillingIds.map((id) => db.productFillings.where("fillingId").equals(id).toArray()))).flat();
+  const directFillingIds = [...new Set(lis.map((li) => li.fillingId))];
+  if (directFillingIds.length > 0) {
+    const allComponents = await db.fillingComponents.toArray();
+    const parentMap = buildParentMap(allComponents);
+    const reachableFillingIds = new Set<string>();
+    for (const fid of directFillingIds) {
+      for (const ancestor of ancestorFillingIds(parentMap, fid)) reachableFillingIds.add(ancestor);
+    }
+    const productFillings = (
+      await Promise.all([...reachableFillingIds].map((id) => db.productFillings.where("fillingId").equals(id).toArray()))
+    ).flat();
     for (const rl of productFillings) productIds.add(rl.productId);
   }
 
@@ -1935,22 +2157,65 @@ export async function clearAllProductCostSnapshots(): Promise<number> {
 
 // --- Allergen aggregation ---
 
+/**
+ * Aggregate the allergens for a single filling, walking through any nested
+ * filling components recursively. The result is the sorted union of leaf
+ * ingredient allergens reachable from this filling.
+ *
+ * Reads two tables (`fillingIngredients`, `fillingComponents`) and one ID set
+ * from `ingredients`. The recursion is defended against malformed cycles via
+ * `reachableIngredientIds`'s `seen` set, but real cycles can't appear in
+ * production — `saveFillingComponent` rejects them.
+ */
 export async function aggregateFillingAllergens(fillingId: string): Promise<string[]> {
-  const lis = await db.fillingIngredients.where("fillingId").equals(fillingId).toArray();
-  const ingredientIds = lis.map((li) => li.ingredientId);
-  const ingredients = (await Promise.all(ingredientIds.map((id) => db.ingredients.get(id)))).filter((i): i is Ingredient => i !== undefined);
-  const allergenSet = new Set<string>();
-  for (const ing of ingredients) {
-    for (const a of ing.allergens) {
-      allergenSet.add(a);
-    }
+  const [allLis, allComponents] = await Promise.all([
+    db.fillingIngredients.toArray(),
+    db.fillingComponents.toArray(),
+  ]);
+  const lisByFilling = new Map<string, FillingIngredient[]>();
+  for (const li of allLis) {
+    const arr = lisByFilling.get(li.fillingId);
+    if (arr) arr.push(li);
+    else lisByFilling.set(li.fillingId, [li]);
   }
+  const componentsByFilling = new Map<string, FillingComponent[]>();
+  for (const c of allComponents) {
+    const arr = componentsByFilling.get(c.fillingId);
+    if (arr) arr.push(c);
+    else componentsByFilling.set(c.fillingId, [c]);
+  }
+  const ingredientIds = reachableIngredientIds(fillingId, lisByFilling, componentsByFilling);
+  if (ingredientIds.size === 0) return [];
+  const ingredients = (
+    await Promise.all([...ingredientIds].map((id) => db.ingredients.get(id)))
+  ).filter((i): i is Ingredient => i !== undefined);
+  const allergenSet = new Set<string>();
+  for (const ing of ingredients) for (const a of ing.allergens) allergenSet.add(a);
   return Array.from(allergenSet).sort();
 }
 
 export async function updateFillingAllergens(fillingId: string) {
   const allergens = await aggregateFillingAllergens(fillingId);
   await db.fillings.update(fillingId, { allergens });
+}
+
+/**
+ * When a filling's ingredients or components change, every filling that
+ * (transitively) nests it may also need its cached `allergens` array
+ * refreshed. Walks the `fillingComponents` parent edges from `fillingId` up,
+ * and runs `updateFillingAllergens` on every ancestor (including the source
+ * filling itself).
+ *
+ * Single read of the full component table — typically tiny (< a few hundred
+ * rows), so the cost is fine. The set of ancestors per leaf is small in
+ * practice (most fillings have at most 1-2 hosts), so the parallel updates
+ * stay cheap.
+ */
+export async function cascadeAllergensFromFilling(fillingId: string): Promise<void> {
+  const allComponents = await db.fillingComponents.toArray();
+  const parentMap = buildParentMap(allComponents);
+  const ancestors = ancestorFillingIds(parentMap, fillingId);
+  await Promise.all([...ancestors].map((id) => updateFillingAllergens(id)));
 }
 
 // --- Lab (Experiments) ---

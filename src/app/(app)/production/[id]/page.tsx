@@ -9,8 +9,9 @@ import {
   saveFillingStock, deductFillingStock, useShelfStableCategoryNames,
   useProductCategoryMap, useCollections, usePackagingList, useAllCollectionPackagings, useCurrencySymbol,
   packagePlanProductAsSales,
+  useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
 } from "@/lib/hooks";
-import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
+import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
 import { normalizeApplyAt } from "@/types";
 import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
@@ -210,21 +211,49 @@ function PlanContent({
     [planProducts, productNames, productFillingsMap, fillingIngredientsMap, fillingsMap, mouldsMap, fillingOverrides, fillingPreviousBatches, productsMap, shelfStableCategoryNames]
   );
 
+  // Nested-filling expansion (Phase 3): treat every nested filling as its own
+  // batch entry so consolidation can produce per-filling totals across the
+  // whole plan. Loaded ahead of `standaloneAmounts` because that calc also
+  // looks at component edges to scale nested rows on the standalone card.
+  const allFillingComponentsByFilling = useAllFillingComponentsByFilling();
+  const allFillingIngredientsByFilling = useAllFillingIngredientsByFilling();
+
   /** Standalone (PlanFilling-driven) batch amounts — scaled ingredients for
    *  each row. Empty for pure full-production plans. */
   const standaloneAmounts = useMemo(
-    () => calculateStandaloneFillingAmounts(planFillings, fillingsMap, fillingIngredientsMap),
-    [planFillings, fillingsMap, fillingIngredientsMap],
+    () => calculateStandaloneFillingAmounts(planFillings, fillingsMap, fillingIngredientsMap, allFillingComponentsByFilling),
+    [planFillings, fillingsMap, fillingIngredientsMap, allFillingComponentsByFilling],
   );
+  const fillingAmountsWithNested = useMemo(() => {
+    attachScaledNestedFillings(
+      fillingAmounts,
+      allFillingComponentsByFilling,
+      allFillingIngredientsByFilling,
+      fillingsMap,
+    );
+    const nested = expandNestedFillings(
+      fillingAmounts.filter((la) => !la.isFromPreviousBatch),
+      allFillingComponentsByFilling,
+      allFillingIngredientsByFilling,
+      fillingsMap,
+    );
+    attachScaledNestedFillings(
+      nested,
+      allFillingComponentsByFilling,
+      allFillingIngredientsByFilling,
+      fillingsMap,
+    );
+    return [...fillingAmounts, ...nested];
+  }, [fillingAmounts, allFillingComponentsByFilling, allFillingIngredientsByFilling, fillingsMap]);
 
-  const consolidatedFillings = useMemo(
-    () => consolidateSharedFillings(fillingAmounts.filter((la) => !la.isFromPreviousBatch)),
-    [fillingAmounts],
-  );
+  const consolidatedFillings = useMemo(() => {
+    const consolidated = consolidateSharedFillings(fillingAmountsWithNested.filter((la) => !la.isFromPreviousBatch));
+    return topoSortFillingsChildrenFirst(consolidated, allFillingComponentsByFilling);
+  }, [fillingAmountsWithNested, allFillingComponentsByFilling]);
 
   const steps = useMemo(() =>
-    generateSteps(planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap),
-    [planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap]
+    generateSteps(planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling),
+    [planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling]
   );
 
   /** Mode is derived from plan contents — no stored enum. */

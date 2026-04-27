@@ -8,6 +8,7 @@ const ALL_TABLES = [
   "fillings",
   "productFillings",
   "fillingIngredients",
+  "fillingComponents",
   "moulds",
   "productionPlans",
   "planProducts",

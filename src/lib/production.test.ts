@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
+import { calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, topoSortFillingsChildrenFirst, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
 import type { ColorTask, FillingAmount, ConsolidatedFilling, IngredientRef, StandaloneFillingAmount } from "./production";
-import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, Mould, Product, DecorationMaterial } from "@/types";
+import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, FillingComponent, Mould, Product, DecorationMaterial } from "@/types";
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -1363,8 +1363,11 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
     expect(result[0].weightG).toBe(expected);
   });
 
-  it("uses total cavities across slots for grams-mode fillings", () => {
-    // Product with fillMode "grams" + explicit fillGrams per cavity → weight = fillGrams × totalCavities
+  it("scales grams-mode fillings by each slot's cavity volume", () => {
+    // Product with fillMode "grams" stores fillFraction (0–1 of cavity volume).
+    // Fraction 0.5 against the 10g/cavity reference mould = 6g/cavity originally,
+    // but production rescales to each planned mould's actual cavity weight so the
+    // fill-to-shell ratio is preserved.
     const product: Product = {
       id: "1", name: "Gram product", createdAt: new Date(), updatedAt: new Date(),
       fillMode: "grams", shellPercentage: 40,
@@ -1372,7 +1375,7 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
     const result = calculateFillingAmounts(
       [makePlanProduct({ quantity: 1, additionalMoulds: [{ mouldId: "2", quantity: 1 }] })],
       new Map([["1", "Gram product"]]),
-      new Map([["1", [makeProductFilling({ fillGrams: 5 })]]]),
+      new Map([["1", [makeProductFilling({ fillFraction: 0.5 })]]]),
       new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
       new Map([["1", makeFilling()]]),
       new Map([["1", mould], ["2", mouldB]]),
@@ -1380,8 +1383,33 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
       {},
       new Map([["1", product]]),
     );
-    // 5g × (15 + 24) cavities = 195g
-    expect(result[0].weightG).toBe(195);
+    // mould (15 cavities × 10g) × 0.5 × 1.2 + mouldB (24 cavities × 8g) × 0.5 × 1.2
+    // = 90 + 115.2 = 205.2 → rounded 205
+    const expected = Math.round((15 * 10 + 24 * 8) * 0.5 * DENSITY_G_PER_ML);
+    expect(result[0].weightG).toBe(expected);
+  });
+
+  it("rescales grams-mode fillings when produced on a different mould than the reference", () => {
+    // Recipe authored against the 10g-cavity reference (e.g. user typed 6g per cavity,
+    // stored as 0.5). Producing on the 8g-cavity mouldB instead should yield 4.8g per cavity.
+    const product: Product = {
+      id: "1", name: "Gram product", createdAt: new Date(), updatedAt: new Date(),
+      fillMode: "grams", shellPercentage: 40,
+    };
+    const result = calculateFillingAmounts(
+      [makePlanProduct({ quantity: 1, mouldId: "2" })], // produce on mouldB only
+      new Map([["1", "Gram product"]]),
+      new Map([["1", [makeProductFilling({ fillFraction: 0.5 })]]]),
+      new Map([["1", [makeFillingIngredient({ amount: 100 })]]]),
+      new Map([["1", makeFilling()]]),
+      new Map([["1", mould], ["2", mouldB]]),
+      {},
+      {},
+      new Map([["1", product]]),
+    );
+    // 24 cavities × 8g × 0.5 × 1.2 = 115.2 → rounded 115
+    const expected = Math.round(24 * 8 * 0.5 * DENSITY_G_PER_ML);
+    expect(result[0].weightG).toBe(expected);
   });
 });
 
@@ -1563,6 +1591,7 @@ describe("generateSteps with standalone fillings (fillings-only and hybrid plans
     targetGrams: 500,
     multiplier: 2,
     scaledIngredients: [],
+    scaledNestedFillings: [],
   };
 
   it("emits no product-phase steps for a pure fillings-only plan", () => {
@@ -1637,6 +1666,7 @@ describe("generateBatchSummary for fillings-only and hybrid plans", () => {
     targetGrams: 500,
     multiplier: 2,
     scaledIngredients: [{ ingredientId: "sugar", amount: 200, unit: "g" }],
+    scaledNestedFillings: [],
   };
 
   it("skips PRODUCTS PRODUCED when no planProducts and emits FILLING BATCHES section", () => {
@@ -1708,5 +1738,148 @@ describe("generateBatchSummary for fillings-only and hybrid plans", () => {
     });
     expect(out).toContain("PRODUCTS PRODUCED");
     expect(out).not.toContain("FILLING BATCHES");
+  });
+});
+
+// ─── Phase 3: nested-filling expansion + topo sort ──────────────────────────
+
+describe("expandNestedFillings", () => {
+  function liG(fillingId: string, ingredientId: string, amount: number, sortOrder = 0): FillingIngredient {
+    return { fillingId, ingredientId, amount, unit: "g", sortOrder };
+  }
+  function comp(fillingId: string, childFillingId: string, amount: number, sortOrder = 0): FillingComponent {
+    return { fillingId, childFillingId, amount, unit: "g", sortOrder };
+  }
+  function indexBy<T extends { fillingId: string }>(rows: T[]): Map<string, T[]> {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const arr = m.get(r.fillingId);
+      if (arr) arr.push(r);
+      else m.set(r.fillingId, [r]);
+    }
+    return m;
+  }
+
+  it("returns empty when no host has nested components", () => {
+    const hostAmounts: FillingAmount[] = [
+      { fillingId: "A", fillingName: "A", planProductId: "pb-1", productName: "Truffle", weightG: 200, scaledIngredients: [] },
+    ];
+    const out = expandNestedFillings(hostAmounts, new Map(), indexBy([liG("A", "x", 100)]), new Map([["A", makeFilling({ id: "A", name: "A" })]]));
+    expect(out).toEqual([]);
+  });
+
+  it("scales a one-level nested batch by host's portion of the recipe", () => {
+    // Host A recipe: 50g of B + 50g of own ingredient → total 100g
+    // Plan calls for 200g of A → so the B batch should be 100g (50/100 × 200)
+    const fillingsMap = new Map([
+      ["A", makeFilling({ id: "A", name: "A" })],
+      ["B", makeFilling({ id: "B", name: "B" })],
+    ]);
+    const components = indexBy([comp("A", "B", 50)]);
+    const lis = indexBy([liG("A", "own", 50), liG("B", "leaf", 100)]);
+    const hostAmounts: FillingAmount[] = [
+      { fillingId: "A", fillingName: "A", planProductId: "pb-1", productName: "Truffle", weightG: 200, scaledIngredients: [] },
+    ];
+    const out = expandNestedFillings(hostAmounts, components, lis, fillingsMap);
+    expect(out).toHaveLength(1);
+    expect(out[0].fillingId).toBe("B");
+    expect(out[0].weightG).toBe(100);
+    // B inherits planProductId/productName so consolidation merges across hosts.
+    expect(out[0].planProductId).toBe("pb-1");
+    expect(out[0].productName).toBe("Truffle");
+    // B's ingredients are scaled to its batch weight (100g) — leaf is 100% of B.
+    expect(out[0].scaledIngredients).toHaveLength(1);
+    expect(out[0].scaledIngredients[0].ingredientId).toBe("leaf");
+    expect(out[0].scaledIngredients[0].amount).toBeCloseTo(100, 1);
+  });
+
+  it("composes scales through a 3-level chain (A → B → C)", () => {
+    // A recipe = 100g of B (only). B recipe = 50g of C + 50g of own. C recipe = 100g of leaf.
+    // Plan calls for 200g of A → B batch = 200g; C batch = (50/100) × 200 = 100g.
+    const fillingsMap = new Map([
+      ["A", makeFilling({ id: "A", name: "A" })],
+      ["B", makeFilling({ id: "B", name: "B" })],
+      ["C", makeFilling({ id: "C", name: "C" })],
+    ]);
+    const components = indexBy([comp("A", "B", 100), comp("B", "C", 50)]);
+    const lis = indexBy([liG("B", "own", 50), liG("C", "leaf", 100)]);
+    const hostAmounts: FillingAmount[] = [
+      { fillingId: "A", fillingName: "A", planProductId: "pb-1", productName: "Truffle", weightG: 200, scaledIngredients: [] },
+    ];
+    const out = expandNestedFillings(hostAmounts, components, lis, fillingsMap);
+    const byId = new Map(out.map((fa) => [fa.fillingId, fa]));
+    expect(byId.get("B")?.weightG).toBe(200);
+    expect(byId.get("C")?.weightG).toBe(100);
+  });
+
+  it("survives a malformed cycle in the data", () => {
+    const fillingsMap = new Map([
+      ["A", makeFilling({ id: "A", name: "A" })],
+      ["B", makeFilling({ id: "B", name: "B" })],
+    ]);
+    // Pre-existing cycle: A → B → A. Should terminate, not loop.
+    const components = indexBy([comp("A", "B", 50), comp("B", "A", 50)]);
+    const lis = indexBy<FillingIngredient>([]);
+    const hostAmounts: FillingAmount[] = [
+      { fillingId: "A", fillingName: "A", planProductId: "pb-1", productName: "Truffle", weightG: 100, scaledIngredients: [] },
+    ];
+    const out = expandNestedFillings(hostAmounts, components, lis, fillingsMap);
+    // Just check the call returned and produced finite numbers.
+    for (const fa of out) expect(Number.isFinite(fa.weightG)).toBe(true);
+  });
+});
+
+describe("topoSortFillingsChildrenFirst", () => {
+  function consolidatedRow(id: string): ConsolidatedFilling {
+    return {
+      fillingId: id,
+      fillingName: id,
+      totalWeightG: 100,
+      scaledIngredients: [],
+      scaledNestedFillings: [],
+      usedBy: [{ planProductId: "pb-1", productName: "Truffle", weightG: 100 }],
+      shared: false,
+    };
+  }
+  function comp(fillingId: string, childFillingId: string): FillingComponent {
+    return { fillingId, childFillingId, amount: 50, unit: "g", sortOrder: 0 };
+  }
+  function indexComp(rows: FillingComponent[]): Map<string, FillingComponent[]> {
+    const m = new Map<string, FillingComponent[]>();
+    for (const r of rows) {
+      const arr = m.get(r.fillingId);
+      if (arr) arr.push(r);
+      else m.set(r.fillingId, [r]);
+    }
+    return m;
+  }
+
+  it("places children before hosts (A → B becomes B then A)", () => {
+    const fillings = [consolidatedRow("A"), consolidatedRow("B")];
+    const components = indexComp([comp("A", "B")]);
+    const sorted = topoSortFillingsChildrenFirst(fillings, components);
+    expect(sorted.map((cf) => cf.fillingId)).toEqual(["B", "A"]);
+  });
+
+  it("orders a 3-level chain children-first (A → B → C becomes C, B, A)", () => {
+    const fillings = [consolidatedRow("A"), consolidatedRow("B"), consolidatedRow("C")];
+    const components = indexComp([comp("A", "B"), comp("B", "C")]);
+    const sorted = topoSortFillingsChildrenFirst(fillings, components);
+    expect(sorted.map((cf) => cf.fillingId)).toEqual(["C", "B", "A"]);
+  });
+
+  it("keeps unrelated fillings in their original order", () => {
+    const fillings = [consolidatedRow("X"), consolidatedRow("Y"), consolidatedRow("Z")];
+    const sorted = topoSortFillingsChildrenFirst(fillings, new Map());
+    expect(sorted.map((cf) => cf.fillingId)).toEqual(["X", "Y", "Z"]);
+  });
+
+  it("survives a malformed cycle in the data", () => {
+    const fillings = [consolidatedRow("A"), consolidatedRow("B")];
+    const components = indexComp([comp("A", "B"), comp("B", "A")]);
+    // Should terminate; both fillings present in the output.
+    const sorted = topoSortFillingsChildrenFirst(fillings, components);
+    expect(sorted).toHaveLength(2);
+    expect(new Set(sorted.map((cf) => cf.fillingId))).toEqual(new Set(["A", "B"]));
   });
 });

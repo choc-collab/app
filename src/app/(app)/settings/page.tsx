@@ -43,6 +43,7 @@ export default function SettingsPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importState, setImportState] = useState<ImportState>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [importResult, setImportResult] = useState<import("@/lib/backup").BackupImportResult | null>(null);
   const [exporting, setExporting] = useState(false);
 
   async function handleExport() {
@@ -67,7 +68,8 @@ export default function SettingsPage() {
     if (!selectedFile) return;
     setImportState("importing");
     try {
-      await importBackup(selectedFile);
+      const result = await importBackup(selectedFile);
+      setImportResult(result);
       setImportState("done");
       setSelectedFile(null);
     } catch (err) {
@@ -80,6 +82,7 @@ export default function SettingsPage() {
     setSelectedFile(null);
     setImportState("idle");
     setErrorMessage("");
+    setImportResult(null);
   }
 
   return (
@@ -127,6 +130,7 @@ export default function SettingsPage() {
             exporting={exporting}
             importState={importState}
             errorMessage={errorMessage}
+            importResult={importResult}
             selectedFile={selectedFile}
             onExport={handleExport}
             onFileSelected={handleFileSelected}
@@ -292,6 +296,7 @@ function BackupTab({
   exporting,
   importState,
   errorMessage,
+  importResult,
   selectedFile,
   onExport,
   onFileSelected,
@@ -302,6 +307,7 @@ function BackupTab({
   exporting: boolean;
   importState: ImportState;
   errorMessage: string;
+  importResult: import("@/lib/backup").BackupImportResult | null;
   selectedFile: File | null;
   onExport: () => void;
   onFileSelected: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -416,11 +422,40 @@ function BackupTab({
           ) : importState === "importing" ? (
             <div className="py-2 text-center text-sm text-muted-foreground">Importing…</div>
           ) : importState === "done" ? (
-            <div className="flex items-center gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
-              <CheckCircle className="w-4 h-4 text-status-ok shrink-0" />
-              <p className="text-xs text-status-ok">
-                Restore complete. Reload the page to see your data.
-              </p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
+                <CheckCircle className="w-4 h-4 text-status-ok shrink-0" />
+                <p className="text-xs text-status-ok">
+                  Restore complete. Reload the page to see your data.
+                </p>
+              </div>
+              {/* Surface any nested-filling validation issues the importer
+                  recovered from. The restore itself succeeded — these are
+                  rows that were dropped because their refs didn't resolve
+                  (or would have closed a cycle). */}
+              {importResult && (importResult.droppedFillingComponentRefs.length > 0 || importResult.droppedFillingComponentCycles.length > 0) && (
+                <div
+                  className="rounded-md border border-warning/40 bg-warning-muted/40 px-3 py-2 text-xs space-y-1"
+                  data-testid="import-result-warnings"
+                  role="status"
+                >
+                  {importResult.droppedFillingComponentRefs.length > 0 && (
+                    <p>
+                      Dropped {importResult.droppedFillingComponentRefs.length} nested-filling row
+                      {importResult.droppedFillingComponentRefs.length === 1 ? "" : "s"}
+                      {" "}with unknown filling IDs:
+                      {" "}<span className="font-mono">{importResult.droppedFillingComponentRefs.join(", ")}</span>
+                    </p>
+                  )}
+                  {importResult.droppedFillingComponentCycles.length > 0 && (
+                    <p>
+                      Dropped {importResult.droppedFillingComponentCycles.length} nested-filling row
+                      {importResult.droppedFillingComponentCycles.length === 1 ? "" : "s"}
+                      {" "}that would have closed a cycle.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ) : null}
         </div>

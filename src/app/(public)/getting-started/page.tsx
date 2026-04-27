@@ -432,6 +432,20 @@ const SECTIONS: Section[] = [
             inline-editable — tap the weight and the unit to change them.
           </li>
           <li>
+            <strong>Nest other fillings inside this one.</strong> Below the ingredient list there&apos;s
+            a <em>Nested fillings</em> section. Tap <em>+ Add nested filling</em> and pick another
+            filling — useful when one recipe sits inside another (a caramel base inside a caramel
+            ganache, a praliné inside a gianduja, a biscuit base inside a croustillant). The picker
+            blocks options that would close a loop with a <em>Cycle</em> badge, so you can&apos;t
+            accidentally make A nest B nest A. Cost, allergens, and nutrition flow through every
+            nesting level automatically — editing the inner filling re-snapshots cost on every
+            product that uses it (transitively), and a new allergen on a leaf ingredient cascades
+            up to every host filling that contains it. Production plans that include a host filling
+            also schedule the nested batches: you&apos;ll see <em>Make caramel base</em> as its own
+            step before <em>Make caramel ganache</em>, with weights scaled to the host&apos;s portion
+            of the recipe.
+          </li>
+          <li>
             <strong>Allergens compute themselves.</strong> You&apos;ll see the derived list under
             the card header — no need to re-tick anything.
           </li>
@@ -450,6 +464,13 @@ const SECTIONS: Section[] = [
               <li>The app shows which products currently use this filling.</li>
               <li>You decide whether to fork or overwrite.</li>
               <li>Forking preserves the old version, so history stays intact.</li>
+              <li>
+                If this filling is nested inside another, the fork panel shows a heads-up listing
+                the host fillings — those keep using the old version. Open each host separately if
+                you want to swap in the new one. Archiving a filling that&apos;s still nested
+                somewhere is blocked for the same reason: clean up the host first, or the
+                aggregations would lose a leg.
+              </li>
             </ul>
           </li>
         </ol>

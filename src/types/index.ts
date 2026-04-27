@@ -346,9 +346,12 @@ export interface ProductFilling {
   /** Percentage of the fill volume this filling occupies (0–100). Must sum to 100 across
    *  all fillings for a product. Used when `Product.fillMode === "percentage"` (the default). */
   fillPercentage: number;
-  /** Exact grams of this filling per cavity. Used when `Product.fillMode === "grams"`.
-   *  Shell weight is derived as cavity weight minus the sum of all fillGrams (÷ density). */
-  fillGrams?: number;
+  /** Fraction of cavity volume this filling occupies (0–1). Used when
+   *  `Product.fillMode === "grams"`. The user enters grams against the product's default
+   *  mould; we store the volume fraction so production on a different mould can rescale
+   *  proportionally (`gramsForMould = fillFraction × mould.cavityWeightG × density`).
+   *  Shell weight is derived as `1 - sum(fillFraction across fillings)` of cavity volume. */
+  fillFraction?: number;
 }
 
 export interface FillingIngredient {
@@ -356,6 +359,29 @@ export interface FillingIngredient {
   fillingId: string;
   ingredientId: string;
   amount: number;
+  unit: string;
+  sortOrder?: number;
+  note?: string;
+}
+
+/** A filling-in-filling component: row that links a host filling to a child
+ *  filling used as one of its components, with a measured weight on the same
+ *  scale as `FillingIngredient.amount`. Lives in its own table so existing
+ *  ingredient-only readers (cost calc, planner, backup, CSV) keep working
+ *  unchanged; nested-aware code opts in by also reading `fillingComponents`.
+ *
+ *  Cycles must be rejected on save — see `wouldCreateCycle` in
+ *  `@/lib/fillingComponents`. */
+export interface FillingComponent {
+  id?: string;
+  /** The filling that contains this component. */
+  fillingId: string;
+  /** The filling used as a component. */
+  childFillingId: string;
+  /** Grams of the child filling per host batch (matches FillingIngredient.amount). */
+  amount: number;
+  /** Always "g" today; kept for symmetry with FillingIngredient.unit so future
+   *  unit work can land in one place. */
   unit: string;
   sortOrder?: number;
   note?: string;

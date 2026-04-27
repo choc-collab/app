@@ -2,12 +2,12 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingGrams, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useFillingIngredientsForFillings, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap } from "@/lib/hooks";
+import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap } from "@/lib/hooks";
 import { deriveShopColor, resolveShopColor } from "@/lib/shopColor";
 import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type Product, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
 import { colorToCSS } from "@/lib/colors";
-import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromGrams } from "@/lib/costCalculation";
-import { DENSITY_G_PER_ML } from "@/lib/production";
+import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromFractions, fillFractionToGrams, gramsToFillFraction } from "@/lib/costCalculation";
+import { reachableIngredientIds } from "@/lib/fillingComponents";
 import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition } from "@/lib/nutrition";
 import { calculateShellWeightG, calculateCapWeightG } from "@/lib/costCalculation";
 import type { MarketRegion } from "@/types";
@@ -236,8 +236,8 @@ export default function ProductDetailPage() {
       const mould = allMoulds.find((m) => m.id === localMouldId);
       const category = productCategories.find((c) => c.id === localProductCategoryId);
       if (mould && category) {
-        const totalFillGrams = productFillings.reduce((sum, pf) => sum + (pf.fillGrams ?? 0), 0);
-        const derived = deriveShellPercentageFromGrams(mould.cavityWeightG, totalFillGrams, DENSITY_G_PER_ML);
+        const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
+        const derived = deriveShellPercentageFromFractions(totalFillFraction);
         effectiveShellPct = derived;
         if (derived < category.shellPercentMin || derived > category.shellPercentMax) {
           errors.push(`Derived shell % (${derived}%) is outside the ${category.name} category range (${category.shellPercentMin}%–${category.shellPercentMax}%). Adjust fill grams or pick a different mould.`);
@@ -563,7 +563,10 @@ export default function ProductDetailPage() {
           const shellPct = parseFloat(localShellPercentageStr) || 0;
           const selectedCategory = productCategories.find((c) => c.id === localProductCategoryId);
 
-          // In grams mode, derive shell % from fillGrams on the productFillings
+          // In grams mode, derive shell % from the stored fillFraction values
+          // (mould-agnostic, so the result is the same regardless of which mould
+          // we're displaying against — but we still require a default mould so
+          // gram inputs/outputs can be shown to the user).
           const isGramsMode = localFillMode === "grams";
           let derivedShellPct: number | null = null;
           let derivedShellLabel: string | null = null;
@@ -573,8 +576,8 @@ export default function ProductDetailPage() {
             if (!mould) {
               derivedShellLabel = "Set a mould to see derived shell %";
             } else {
-              const totalFillGrams = productFillings.reduce((sum, pf) => sum + (pf.fillGrams ?? 0), 0);
-              derivedShellPct = deriveShellPercentageFromGrams(mould.cavityWeightG, totalFillGrams, DENSITY_G_PER_ML);
+              const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
+              derivedShellPct = deriveShellPercentageFromFractions(totalFillFraction);
               derivedShellLabel = `${derivedShellPct}% (derived from fill grams)`;
               if (selectedCategory && (derivedShellPct < selectedCategory.shellPercentMin || derivedShellPct > selectedCategory.shellPercentMax)) {
                 derivedOutOfRange = true;
@@ -830,19 +833,37 @@ export default function ProductDetailPage() {
             </p>
           ) : (
             <>
+              {localFillMode === "grams" && (
+                <p className="text-xs text-muted-foreground italic">
+                  Grams are entered against the default mould and stored as a proportion of cavity volume.
+                  When you produce on a different mould, the grams scale automatically to preserve the recipe.
+                </p>
+              )}
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFillingDragEnd}>
                 <SortableContext items={productFillings.map((bl) => bl.id!)} strategy={verticalListSortingStrategy}>
                   <ul className="space-y-2">
-                    {productFillings.map((bl) => (
-                      <SortableProductFillingRow
-                        key={bl.id}
-                        productFilling={bl}
-                        fillMode={localFillMode}
-                        onRemove={() => handleRemoveFilling(bl.id!)}
-                        onUpdatePercentage={(pct) => updateProductFillingPercentage(bl.id!, pct)}
-                        onUpdateGrams={(g) => updateProductFillingGrams(bl.id!, g)}
-                      />
-                    ))}
+                    {productFillings.map((bl) => {
+                      const editMould = allMoulds.find((m) => m.id === localMouldId);
+                      const editCavityG = editMould?.cavityWeightG ?? null;
+                      return (
+                        <SortableProductFillingRow
+                          key={bl.id}
+                          productFilling={bl}
+                          fillMode={localFillMode}
+                          cavityWeightG={editCavityG}
+                          onRemove={() => handleRemoveFilling(bl.id!)}
+                          onUpdatePercentage={(pct) => updateProductFillingPercentage(bl.id!, pct)}
+                          onUpdateGrams={(g) => {
+                            // Convert the user's grams (against the default mould) to a
+                            // mould-agnostic fraction before storing. Skip if no default
+                            // mould — the grams input is disabled in that state.
+                            if (editCavityG == null) return;
+                            const fraction = gramsToFillFraction(g, editCavityG);
+                            void updateProductFillingFraction(bl.id!, fraction);
+                          }}
+                        />
+                      );
+                    })}
                   </ul>
                 </SortableContext>
               </DndContext>
@@ -996,17 +1017,21 @@ export default function ProductDetailPage() {
           ) : (
             <>
               <ul className="space-y-2">
-                {productFillings.map((bl) => (
-                  <ProductFillingRow
-                    key={bl.id}
-                    productFilling={bl}
-                    fillMode={product?.fillMode ?? defaultFillMode}
-                    onRemove={() => {}}
-                    onUpdatePercentage={() => {}}
-                    onUpdateGrams={() => {}}
-                    readonly
-                  />
-                ))}
+                {productFillings.map((bl) => {
+                  const viewMould = allMoulds.find((m) => m.id === product.defaultMouldId);
+                  return (
+                    <ProductFillingRow
+                      key={bl.id}
+                      productFilling={bl}
+                      fillMode={product?.fillMode ?? defaultFillMode}
+                      cavityWeightG={viewMould?.cavityWeightG ?? null}
+                      onRemove={() => {}}
+                      onUpdatePercentage={() => {}}
+                      onUpdateGrams={() => {}}
+                      readonly
+                    />
+                  );
+                })}
               </ul>
               {productFillings.length > 1 && (
                 <FillBar productFillings={productFillings.map((bl) => ({
@@ -1429,8 +1454,9 @@ function ProductCostTab({
   const snapshots = useProductCostSnapshots(productId);
   const latest = useLatestProductCostSnapshot(productId);
   const allIngredients = useIngredients();
-  const fillingIds = productFillings.map((rl) => rl.fillingId);
-  const fillingIngredientsMap = useFillingIngredientsForFillings(fillingIds);
+  // Full table reads so the missing-pricing warning sees nested fillings too.
+  const allFillingIngredientsMap = useAllFillingIngredientsByFilling();
+  const allFillingComponentsMap = useAllFillingComponentsByFilling();
   const allFillings = useFillings();
 
   const [recalculating, setRecalculating] = useState(false);
@@ -1447,18 +1473,20 @@ function ProductCostTab({
   const ingredientsMap = new Map(allIngredients.map((i) => [i.id!, i]));
   const fillingsMap = new Map(allFillings.map((l) => [l.id!, l]));
 
-  // Ingredients used in this product that have no pricing (and aren't marked irrelevant)
+  // Ingredients used in this product that have no pricing (and aren't marked
+  // irrelevant). Walks nested fillings so an unpriced leaf inside a child
+  // filling is still surfaced to the user.
   const missingPricingIngredients = useMemo(() => {
     const names = new Set<string>();
     for (const rl of productFillings) {
-      const lis = fillingIngredientsMap.get(rl.fillingId) ?? [];
-      for (const li of lis) {
-        const ing = ingredientsMap.get(li.ingredientId);
+      const ids = reachableIngredientIds(rl.fillingId, allFillingIngredientsMap, allFillingComponentsMap);
+      for (const id of ids) {
+        const ing = ingredientsMap.get(id);
         if (ing && costPerGram(ing) === null) names.add(ing.name);
       }
     }
     return Array.from(names);
-  }, [productFillings, fillingIngredientsMap, ingredientsMap]);
+  }, [productFillings, allFillingIngredientsMap, allFillingComponentsMap, ingredientsMap]);
 
   const latestBreakdown: BreakdownEntry[] = latest
     ? enrichBreakdownLabels(deserializeBreakdown(latest.breakdown), ingredientsMap, fillingsMap)
@@ -2439,12 +2467,17 @@ function ShellDesignSection({
 function SortableProductFillingRow({
   productFilling,
   fillMode,
+  cavityWeightG,
   onRemove,
   onUpdatePercentage,
   onUpdateGrams,
 }: {
   productFilling: ProductFilling;
   fillMode: FillMode;
+  /** Cavity weight of the product's default mould, used to convert the stored
+   *  `fillFraction` to/from grams for display and input. Null when no default
+   *  mould is set (grams mode is then disabled — handled upstream). */
+  cavityWeightG: number | null;
   onRemove: () => void;
   onUpdatePercentage: (pct: number) => void;
   onUpdateGrams: (g: number) => void;
@@ -2468,6 +2501,7 @@ function SortableProductFillingRow({
       <ProductFillingRow
         productFilling={productFilling}
         fillMode={fillMode}
+        cavityWeightG={cavityWeightG}
         onRemove={onRemove}
         onUpdatePercentage={onUpdatePercentage}
         onUpdateGrams={onUpdateGrams}
@@ -2483,6 +2517,7 @@ function SortableProductFillingRow({
 function ProductFillingRow({
   productFilling,
   fillMode,
+  cavityWeightG,
   onRemove,
   onUpdatePercentage,
   onUpdateGrams,
@@ -2493,6 +2528,10 @@ function ProductFillingRow({
 }: {
   productFilling: ProductFilling;
   fillMode: FillMode;
+  /** Default mould's cavity weight (g of water ≈ ml). Required to convert the
+   *  stored `fillFraction` (mould-agnostic) to user-facing grams. Null when no
+   *  default mould is set — grams display falls back to "—". */
+  cavityWeightG: number | null;
   onRemove: () => void;
   onUpdatePercentage: (pct: number) => void;
   onUpdateGrams: (g: number) => void;
@@ -2503,17 +2542,22 @@ function ProductFillingRow({
 }) {
   const filling = useFilling(productFilling.fillingId);
   const isGrams = fillMode === "grams";
+  // Convert the stored fraction back to grams for display/input, against the
+  // product's default mould. Rounded to 1 decimal so the field stays tidy.
+  const gramsForDefault = cavityWeightG != null && productFilling.fillFraction != null
+    ? Math.round(fillFractionToGrams(productFilling.fillFraction, cavityWeightG) * 10) / 10
+    : null;
   const [pctInput, setPctInput] = useState(String(productFilling.fillPercentage ?? 100));
-  const [gramsInput, setGramsInput] = useState(String(productFilling.fillGrams ?? ""));
+  const [gramsInput, setGramsInput] = useState(gramsForDefault != null ? String(gramsForDefault) : "");
   const [focused, setFocused] = useState(false);
   const [pendingRemove, setPendingRemove] = useState(false);
 
   useEffect(() => {
     if (!focused) {
       setPctInput(String(productFilling.fillPercentage ?? 100));
-      setGramsInput(String(productFilling.fillGrams ?? ""));
+      setGramsInput(gramsForDefault != null ? String(gramsForDefault) : "");
     }
-  }, [productFilling.fillPercentage, productFilling.fillGrams, focused]);
+  }, [productFilling.fillPercentage, gramsForDefault, focused]);
 
   if (!filling) return null;
 
@@ -2531,7 +2575,7 @@ function ProductFillingRow({
     if (!isNaN(val) && val >= 0) {
       onUpdateGrams(val);
     } else {
-      setGramsInput(String(productFilling.fillGrams ?? ""));
+      setGramsInput(gramsForDefault != null ? String(gramsForDefault) : "");
     }
   }
 
@@ -2553,7 +2597,7 @@ function ProductFillingRow({
         <div className="flex items-center gap-2">
           <h3 className="font-medium text-sm">{filling.name}</h3>
           <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-semibold shrink-0 tabular-nums">
-            {isGrams ? `${productFilling.fillGrams ?? 0}g` : `${productFilling.fillPercentage ?? 100}%`}
+            {isGrams ? `${gramsForDefault ?? 0}g` : `${productFilling.fillPercentage ?? 100}%`}
           </span>
         </div>
         {(filling.category || filling.subcategory) && (
@@ -2579,7 +2623,7 @@ function ProductFillingRow({
       </Link>
       {readonly ? (
         <span className="text-xs text-muted-foreground shrink-0">
-          {isGrams ? `${productFilling.fillGrams ?? 0}g` : `${productFilling.fillPercentage ?? 100}%`}
+          {isGrams ? `${gramsForDefault ?? 0}g` : `${productFilling.fillPercentage ?? 100}%`}
         </span>
       ) : (
         <>
@@ -2596,7 +2640,7 @@ function ProductFillingRow({
                   onBlur={() => { setFocused(false); commitGrams(); }}
                   onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
                   placeholder="0"
-                  title="Grams of filling per cavity — shell % is derived from the mould's cavity weight minus the total fill grams."
+                  title="Grams of filling per cavity in the default mould. Stored as a fraction of cavity volume so production on a different mould rescales the recipe automatically."
                   className="input w-16 text-right"
                 />
                 <span className="text-xs text-muted-foreground">g</span>
@@ -2722,18 +2766,23 @@ function ProductNutritionTab({ productId, productFillings, market }: { productId
   const product = useProduct(productId);
   const allIngredients = useIngredients(true);
   const allMoulds = useMouldsList(true);
-  const fillingIds = useMemo(() => productFillings.map(rl => rl.fillingId), [productFillings]);
-  const fillingIngredientsMap = useFillingIngredientsForFillings(fillingIds);
+  // Read the *full* filling-ingredient and filling-component tables so the
+  // recursive flattener inside `calculateProductNutrition` can expand nested
+  // fillings — its walk needs every level, not just the host fillings on
+  // this product.
+  const fillingIngredientsMap = useAllFillingIngredientsByFilling();
+  const fillingComponentsMap = useAllFillingComponentsByFilling();
 
   const ingredientMap = useMemo(() => new Map(allIngredients.map(i => [i.id!, i])), [allIngredients]);
   const mould = allMoulds.find(m => m.id === product?.defaultMouldId);
   const shellIngredient = product?.shellIngredientId ? (ingredientMap.get(product.shellIngredientId) ?? null) : null;
 
-  // In grams mode, derive shell percentage from fillGrams on the product fillings
+  // In grams mode, derive shell percentage from the stored fillFraction values.
+  // Fractions are mould-agnostic, so the shell ratio is the same on any mould.
   const effectiveShellPercentage = useMemo(() => {
     if (product?.fillMode === "grams" && mould) {
-      const totalFillGrams = productFillings.reduce((sum, pf) => sum + (pf.fillGrams ?? 0), 0);
-      return deriveShellPercentageFromGrams(mould.cavityWeightG, totalFillGrams, DENSITY_G_PER_ML);
+      const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
+      return deriveShellPercentageFromFractions(totalFillFraction);
     }
     return product?.shellPercentage ?? 37;
   }, [product?.fillMode, product?.shellPercentage, mould, productFillings]);
@@ -2743,11 +2792,12 @@ function ProductNutritionTab({ productId, productFillings, market }: { productId
       mould: mould ?? null,
       productFillings,
       fillingIngredientsMap,
+      fillingComponentsMap,
       ingredientMap,
       shellIngredient: shellIngredient ?? null,
       shellPercentage: effectiveShellPercentage,
     }),
-    [mould, productFillings, fillingIngredientsMap, ingredientMap, shellIngredient, effectiveShellPercentage],
+    [mould, productFillings, fillingIngredientsMap, fillingComponentsMap, ingredientMap, shellIngredient, effectiveShellPercentage],
   );
 
   const { per100g, perProduct, productWeightG, ingredientsWithData, ingredientsTotal, warnings } = result;

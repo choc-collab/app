@@ -10,8 +10,9 @@
  * computed by weighted aggregation across all fillings and their ingredients.
  */
 
-import type { MarketRegion, Mould, ProductFilling, FillingIngredient, Filling, Ingredient, CoatingChocolateMapping } from "@/types";
-import { calculateShellWeightG, calculateFillingWeightPerCavityG, DEFAULT_SHELL_PERCENTAGE } from "@/lib/costCalculation";
+import type { MarketRegion, Mould, ProductFilling, FillingIngredient, FillingComponent, Filling, Ingredient, CoatingChocolateMapping } from "@/types";
+import { flattenFillingToIngredients, rollUpAmounts } from "@/lib/fillingComponents";
+import { calculateShellWeightG, calculateFillingWeightPerCavityG, fillFractionToGrams, DEFAULT_SHELL_PERCENTAGE } from "@/lib/costCalculation";
 
 // ---------------------------------------------------------------------------
 // Nutrition data shape — stored on Ingredient, all values per 100g
@@ -293,11 +294,17 @@ export interface ProductNutritionInput {
   /** Shell chocolate ingredient (resolved from Product.shellIngredientId). */
   shellIngredient: Ingredient | null | undefined;
   /** Shell as % of total cavity weight (0–100). Default 37.
-   *  In grams mode, pass the derived value from `deriveShellPercentageFromGrams`. */
+   *  In grams mode, pass the derived value from `deriveShellPercentageFromFractions`. */
   shellPercentage?: number;
   /** "percentage" (default) or "grams". In grams mode, each ProductFilling's
-   *  `fillGrams` is used directly instead of computing weight from fillPercentage. */
+   *  `fillFraction` (0–1 of cavity volume) is converted to grams using the supplied
+   *  mould's `cavityWeightG`, instead of computing weight from `fillPercentage`. */
   fillMode?: "percentage" | "grams";
+  /** Optional: nested-filling component edges keyed by host fillingId.
+   *  When supplied, each filling on the product is flattened recursively
+   *  (child fillings expand into their leaf ingredients) before nutrition is
+   *  aggregated. Omit to keep the legacy ingredient-only behaviour. */
+  fillingComponentsMap?: Map<string, FillingComponent[]>;
 }
 
 export interface ProductNutritionResult {
@@ -329,6 +336,7 @@ export function calculateProductNutrition(input: ProductNutritionInput): Product
     shellIngredient,
     shellPercentage = DEFAULT_SHELL_PERCENTAGE,
     fillMode = "percentage",
+    fillingComponentsMap,
   } = input;
   const warnings: string[] = [];
 
@@ -363,19 +371,24 @@ export function calculateProductNutrition(input: ProductNutritionInput): Product
 
   // --- Fill fillings ---
   for (const rl of productFillings) {
-    const lis = fillingIngredientsMap.get(rl.fillingId) ?? [];
-    const fillingWeightG = fillMode === "grams" && rl.fillGrams != null
-      ? rl.fillGrams
-      : calculateFillingWeightPerCavityG(mould, rl.fillPercentage, shellPercentage);
-    const fillingTotalProductG = lis.reduce((s, li) => s + li.amount, 0);
+    // Flatten through nested fillings if the caller supplied the components
+    // map; otherwise fall back to the legacy ingredient-only view.
+    const flatRows = fillingComponentsMap
+      ? rollUpAmounts(flattenFillingToIngredients(rl.fillingId, fillingIngredientsMap, fillingComponentsMap))
+      : (fillingIngredientsMap.get(rl.fillingId) ?? []).map((li) => ({ ingredientId: li.ingredientId, amount: li.amount }));
 
-    for (const li of lis) {
-      allIngredientIds.add(li.ingredientId);
-      const ing = ingredientMap.get(li.ingredientId);
+    const fillingWeightG = fillMode === "grams" && rl.fillFraction != null
+      ? fillFractionToGrams(rl.fillFraction, mould.cavityWeightG)
+      : calculateFillingWeightPerCavityG(mould, rl.fillPercentage, shellPercentage);
+    const fillingTotalProductG = flatRows.reduce((s, row) => s + row.amount, 0);
+
+    for (const row of flatRows) {
+      allIngredientIds.add(row.ingredientId);
+      const ing = ingredientMap.get(row.ingredientId);
       if (!ing?.nutrition || !hasNutritionData(ing.nutrition)) continue;
 
-      ingredientIdsWithData.add(li.ingredientId);
-      const fraction = fillingTotalProductG > 0 ? li.amount / fillingTotalProductG : 0;
+      ingredientIdsWithData.add(row.ingredientId);
+      const fraction = fillingTotalProductG > 0 ? row.amount / fillingTotalProductG : 0;
       const ingredientGrams = fillingWeightG * fraction;
 
       entries.push({

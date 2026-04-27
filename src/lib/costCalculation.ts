@@ -1,5 +1,6 @@
-import type { Mould, ProductFilling, FillingIngredient, Filling, CoatingChocolateMapping, BreakdownEntry } from "@/types";
+import type { Mould, ProductFilling, FillingIngredient, FillingComponent, Filling, CoatingChocolateMapping, BreakdownEntry } from "@/types";
 import { costPerGram as deriveIngredientCostPerGram } from "@/types";
+import { flattenFillingToIngredients, rollUpAmounts } from "@/lib/fillingComponents";
 import type { Ingredient } from "@/types";
 import { DENSITY_G_PER_ML } from "@/lib/production";
 
@@ -48,25 +49,48 @@ export function calculateFillingWeightPerCavityG(mould: Mould, fillPercentage: n
 }
 
 /**
- * Derive the shell percentage from fill-by-grams data. In grams mode, the user
- * specifies exact grams per filling per cavity. Shell = whatever cavity volume
- * remains after subtracting the total fill volume.
+ * Convert a stored fill fraction (0–1, fraction of cavity volume) to grams of
+ * filling per cavity, against a specific mould. This is the per-mould scaling
+ * step: the same `fillFraction` produces different gram amounts depending on
+ * the mould's cavity weight, preserving the recipe's fill-to-shell ratio.
  *
- * fillGrams is actual weight; cavityWeightG is volume in ml (≈ grams of water).
- * We divide fillGrams by density to convert back to ml-equivalent volume, then
- * compute what fraction of the cavity is shell.
+ * `cavityWeightG` is cavity volume expressed as grams of water (≈ ml), so
+ * we multiply by ganache density to get actual filling weight in grams.
+ */
+export function fillFractionToGrams(
+  fillFraction: number,
+  cavityWeightG: number,
+  density: number = DENSITY_G_PER_ML,
+): number {
+  return fillFraction * cavityWeightG * density;
+}
+
+/**
+ * Convert a user-entered grams-per-cavity value to a stored fill fraction
+ * (0–1, fraction of cavity volume). Inverse of `fillFractionToGrams`. The
+ * mould passed here is the *reference* (the user's selected default mould at
+ * input time) — the resulting fraction is mould-agnostic and can be rescaled
+ * to any other mould later.
+ */
+export function gramsToFillFraction(
+  grams: number,
+  cavityWeightG: number,
+  density: number = DENSITY_G_PER_ML,
+): number {
+  if (cavityWeightG <= 0) return 0;
+  return grams / density / cavityWeightG;
+}
+
+/**
+ * Derive the shell percentage from fill fractions. In grams mode, each filling
+ * stores a `fillFraction` (0–1) of cavity volume; shell = whatever cavity
+ * volume remains after subtracting all filling fractions.
  *
  * Returns a clamped [0, 100] percentage. If the fillings exceed the cavity
  * volume, returns 0 (no room for shell — the UI should warn).
  */
-export function deriveShellPercentageFromGrams(
-  cavityWeightG: number,
-  totalFillGrams: number,
-  density: number = DENSITY_G_PER_ML,
-): number {
-  if (cavityWeightG <= 0) return 0;
-  const fillVolumeMl = totalFillGrams / density;
-  const shellFraction = 1 - fillVolumeMl / cavityWeightG;
+export function deriveShellPercentageFromFractions(totalFillFraction: number): number {
+  const shellFraction = 1 - totalFillFraction;
   return Math.max(0, Math.min(100, Math.round(shellFraction * 1000) / 10));
 }
 
@@ -84,11 +108,18 @@ export interface CostCalculationInput {
   /** Display label for the shell chocolate (ingredient name). */
   shellChocolateLabel?: string;
   /** Shell as % of total cavity weight (0–100). Default 37.
-   *  In grams mode this is derived from the fill grams — pass the derived value. */
+   *  In grams mode this is derived from the fill fractions — pass the derived value. */
   shellPercentage?: number;
   /** "percentage" (default) or "grams". In grams mode, each ProductFilling's
-   *  `fillGrams` is used directly instead of computing weight from fillPercentage. */
+   *  `fillFraction` (0–1 of cavity volume) is converted to grams using the supplied
+   *  mould's `cavityWeightG`, instead of computing weight from `fillPercentage`. */
   fillMode?: "percentage" | "grams";
+  /** Optional: nested-filling component edges keyed by host fillingId. When
+   *  present, each filling on the product is flattened recursively (child
+   *  fillings expand into their own ingredients, scaled by the host's portion
+   *  of the child) before cost is summed. Omit to keep the legacy
+   *  ingredient-only behaviour — used by callers that haven't migrated. */
+  fillingComponentsMap?: Map<string, FillingComponent[]>;
 }
 
 export interface CostCalculationResult {
@@ -103,6 +134,7 @@ export function calculateProductCost(input: CostCalculationInput): CostCalculati
     shellChocolateCostPerGram, shellChocolateLabel,
     shellPercentage = DEFAULT_SHELL_PERCENTAGE,
     fillMode = "percentage",
+    fillingComponentsMap,
   } = input;
   const breakdown: BreakdownEntry[] = [];
   const warnings: string[] = [];
@@ -115,29 +147,38 @@ export function calculateProductCost(input: CostCalculationInput): CostCalculati
   // --- Filling ingredients ---
   for (const rl of productFillings) {
     const filling = fillingsMap.get(rl.fillingId);
-    const lis = fillingIngredientsMap.get(rl.fillingId) ?? [];
-    // In grams mode, use fillGrams directly; in percentage mode, derive from fill volume
-    const fillingWeightG = fillMode === "grams" && rl.fillGrams != null
-      ? rl.fillGrams
-      : calculateFillingWeightPerCavityG(mould, rl.fillPercentage, shellPercentage);
-    const fillingTotalG = lis.reduce((s, li) => s + li.amount, 0);
+    // Flatten the host filling — child fillings expand into their own
+    // ingredients. When `fillingComponentsMap` is omitted we still get
+    // {ingredientId, amount} rows that match the legacy
+    // `fillingIngredients`-only view, so the math below is unchanged for
+    // ingredient-only fillings.
+    const flatRows = fillingComponentsMap
+      ? rollUpAmounts(flattenFillingToIngredients(rl.fillingId, fillingIngredientsMap, fillingComponentsMap))
+      : (fillingIngredientsMap.get(rl.fillingId) ?? []).map((li) => ({ ingredientId: li.ingredientId, amount: li.amount }));
 
-    for (const li of lis) {
-      const ingredientFraction = fillingTotalG > 0 ? li.amount / fillingTotalG : 0;
+    // In grams mode, scale the stored fillFraction to grams using the mould's
+    // cavity weight. In percentage mode, derive from total fill volume × fillPercentage.
+    const fillingWeightG = fillMode === "grams" && rl.fillFraction != null
+      ? fillFractionToGrams(rl.fillFraction, mould.cavityWeightG)
+      : calculateFillingWeightPerCavityG(mould, rl.fillPercentage, shellPercentage);
+    const fillingTotalG = flatRows.reduce((s, row) => s + row.amount, 0);
+
+    for (const row of flatRows) {
+      const ingredientFraction = fillingTotalG > 0 ? row.amount / fillingTotalG : 0;
       const ingredientGrams = fillingWeightG * ingredientFraction;
-      const cpg = ingredientCostMap.get(li.ingredientId) ?? null;
+      const cpg = ingredientCostMap.get(row.ingredientId) ?? null;
       if (cpg === null || cpg === undefined) {
-        warnings.push(`Ingredient #${li.ingredientId} has no purchase price — skipped in cost.`);
+        warnings.push(`Ingredient #${row.ingredientId} has no purchase price — skipped in cost.`);
         continue;
       }
       const subtotal = ingredientGrams * cpg;
       breakdown.push({
-        label: filling ? `${filling.name} — ingredient #${li.ingredientId}` : `Filling #${rl.fillingId} — ingredient #${li.ingredientId}`,
+        label: filling ? `${filling.name} — ingredient #${row.ingredientId}` : `Filling #${rl.fillingId} — ingredient #${row.ingredientId}`,
         grams: Math.round(ingredientGrams * 1000) / 1000,
         costPerGram: cpg,
         subtotal,
         kind: "filling_ingredient",
-        ingredientId: li.ingredientId,
+        ingredientId: row.ingredientId,
         fillingId: rl.fillingId,
       });
     }

@@ -1,4 +1,4 @@
-import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, Mould, Product, FillingPreviousBatch, DecorationMaterial, ProductCategory } from "@/types";
+import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, FillingComponent, Mould, Product, FillingPreviousBatch, DecorationMaterial, ProductCategory } from "@/types";
 import { SHELF_STABLE_CATEGORIES, normalizeApplyAt } from "@/types";
 
 // Legacy fill factor — used as the default when a product has no per-product
@@ -259,6 +259,19 @@ export type ScaledIngredient = {
   note?: string;
 };
 
+/** A nested filling that the host's recipe lists as a component, scaled to
+ *  the host's batch size. Renders inline alongside `scaledIngredients` on
+ *  the production-wizard card so the chocolatier reads "100g cream, 200g
+ *  caramel base, 50g butter" the way a recipe would normally write it. */
+export type ScaledNestedFilling = {
+  fillingId: string;
+  fillingName: string;
+  /** Grams of this nested filling per host batch. */
+  amount: number;
+  unit: string;
+  note?: string;
+};
+
 export type FillingAmount = {
   fillingId: string;
   fillingName: string;
@@ -267,6 +280,11 @@ export type FillingAmount = {
   weightG: number;
   // Scaled ingredient amounts for this batch
   scaledIngredients: ScaledIngredient[];
+  /** Nested filling components for this batch, scaled the same way. Empty
+   *  when the filling has no nested components. The planner emits a
+   *  separate top-level FillingAmount per nested child too (so it gets its
+   *  own batch tab); this list is for *recipe display* on the host. */
+  scaledNestedFillings?: ScaledNestedFilling[];
   // True when this filling is being sourced from a prior batch — no ingredients to prepare
   isFromPreviousBatch?: boolean;
   // When isFromPreviousBatch is true: the date it was made (ISO string)
@@ -281,6 +299,9 @@ export type ConsolidatedFilling = {
   totalWeightG: number;
   /** Merged & summed ingredient amounts for the consolidated batch. */
   scaledIngredients: ScaledIngredient[];
+  /** Merged & summed nested-filling rows for the consolidated batch.
+   *  Empty for fillings without nested components. */
+  scaledNestedFillings: ScaledNestedFilling[];
   /** Which products use this filling and how much each needs. */
   usedBy: { planProductId: string; productName: string; weightG: number }[];
   /** True when shared by 2+ plan products. */
@@ -319,12 +340,24 @@ export function consolidateSharedFillings(fillingAmounts: FillingAmount[]): Cons
           existing.scaledIngredients.push({ ...si });
         }
       }
+      // Merge scaled nested fillings the same way (sum by fillingId).
+      for (const sn of la.scaledNestedFillings ?? []) {
+        const existingNested = existing.scaledNestedFillings.find(
+          (e) => e.fillingId === sn.fillingId,
+        );
+        if (existingNested) {
+          existingNested.amount = Math.round((existingNested.amount + sn.amount) * 10) / 10;
+        } else {
+          existing.scaledNestedFillings.push({ ...sn });
+        }
+      }
     } else {
       map.set(la.fillingId, {
         fillingId: la.fillingId,
         fillingName: la.fillingName,
         totalWeightG: la.weightG,
         scaledIngredients: la.scaledIngredients.map((si) => ({ ...si })),
+        scaledNestedFillings: (la.scaledNestedFillings ?? []).map((sn) => ({ ...sn })),
         usedBy: [{
           planProductId: la.planProductId,
           productName: la.productName,
@@ -344,6 +377,177 @@ export function consolidateSharedFillings(fillingAmounts: FillingAmount[]): Cons
   }
 
   return Array.from(map.values());
+}
+
+/**
+ * Expand a list of host-level `FillingAmount` rows so every nested filling
+ * appears as its own batch entry, scaled by its host's portion of the
+ * recipe. The chocolatier needs to make the inner filling *before* the host,
+ * so each nested-component edge becomes a separate batch in the planner's
+ * output.
+ *
+ * Math (mirrors `flattenFillingToIngredients` from `fillingComponents.ts`,
+ * but stops at each filling level instead of walking all the way to leaves):
+ *
+ *   When host H contains 50g of child C, and H's recipe sums to 1000g, then
+ *   for every gram of H batch we need (50 / 1000) g of C. So if H batch is
+ *   2000g, the C batch is 100g. Recurse for grandchildren.
+ *
+ * The synthetic child rows inherit `planProductId` + `productName` from
+ * their host so `consolidateSharedFillings` merges children used across
+ * multiple plan products correctly. They get fresh `scaledIngredients` from
+ * the child filling's own ingredient list, scaled to the child batch
+ * weight. Cycles in the data are defended against via a `seen` set per
+ * walk path; in practice the cycle check at save time prevents them.
+ */
+export function expandNestedFillings(
+  hostAmounts: FillingAmount[],
+  fillingComponentsByFilling: ReadonlyMap<string, ReadonlyArray<FillingComponent>>,
+  fillingIngredientsByFilling: ReadonlyMap<string, ReadonlyArray<FillingIngredient>>,
+  fillingsMap: ReadonlyMap<string, Filling>,
+): FillingAmount[] {
+  const out: FillingAmount[] = [];
+
+  function recipeTotalGrams(fillingId: string): number {
+    let total = 0;
+    for (const li of fillingIngredientsByFilling.get(fillingId) ?? []) total += li.amount;
+    for (const c of fillingComponentsByFilling.get(fillingId) ?? []) total += c.amount;
+    return total;
+  }
+
+  function visit(fillingId: string, batchWeightG: number, planProductId: string, productName: string, seen: ReadonlySet<string>) {
+    if (seen.has(fillingId)) return;
+    const components = fillingComponentsByFilling.get(fillingId) ?? [];
+    if (components.length === 0) return;
+    const recipeTotal = recipeTotalGrams(fillingId);
+    if (recipeTotal <= 0) return;
+
+    for (const c of components) {
+      const childTotal = recipeTotalGrams(c.childFillingId);
+      const childBatchWeightG = (c.amount / recipeTotal) * batchWeightG;
+      const childFilling = fillingsMap.get(c.childFillingId);
+      const childName = childFilling?.name ?? "Unknown filling";
+
+      // Scale the child's own ingredients to its batch weight. Same shape as
+      // the host scaling in `calculateFillingAmounts`: per-ingredient amount
+      // = (recipe amount / recipe total) × batch weight.
+      const scaledIngredients: ScaledIngredient[] = [];
+      if (childTotal > 0) {
+        for (const li of fillingIngredientsByFilling.get(c.childFillingId) ?? []) {
+          scaledIngredients.push({
+            ingredientId: li.ingredientId,
+            amount: Math.round((li.amount / childTotal) * childBatchWeightG * 10) / 10,
+            unit: li.unit,
+            note: li.note,
+          });
+        }
+      }
+
+      out.push({
+        fillingId: c.childFillingId,
+        fillingName: childName,
+        planProductId,
+        productName,
+        weightG: Math.round(childBatchWeightG),
+        scaledIngredients,
+      });
+
+      // Recurse for grandchildren — defends against cycles via the seen set.
+      const next = new Set(seen);
+      next.add(fillingId);
+      visit(c.childFillingId, childBatchWeightG, planProductId, productName, next);
+    }
+  }
+
+  for (const ha of hostAmounts) {
+    visit(ha.fillingId, ha.weightG, ha.planProductId, ha.productName, new Set<string>());
+  }
+
+  return out;
+}
+
+/**
+ * For each host `FillingAmount`, populate `scaledNestedFillings` with one row
+ * per direct nested-component edge, scaled to the host's batch weight. The
+ * host's own ingredients already live on `scaledIngredients`; this fills in
+ * the recipe-display companion list so the production card can show
+ *
+ *     200g cream
+ *     150g caramel base   ← nested filling, click to switch tab
+ *     50g  butter
+ *
+ * Only direct children are listed (not grandchildren) because each level is
+ * its own batch tab — the chocolatier reading the host card needs to know
+ * "weigh out 150g of *prepared* caramel base," not the leaf recipe of the
+ * grandchild. The grandchild appears on the caramel-base card.
+ *
+ * Mutates `hostAmounts` in place. The function is a no-op for fillings with
+ * no nested components, so it's cheap to call unconditionally.
+ */
+export function attachScaledNestedFillings(
+  hostAmounts: FillingAmount[],
+  fillingComponentsByFilling: ReadonlyMap<string, ReadonlyArray<FillingComponent>>,
+  fillingIngredientsByFilling: ReadonlyMap<string, ReadonlyArray<FillingIngredient>>,
+  fillingsMap: ReadonlyMap<string, Filling>,
+): void {
+  function recipeTotalGrams(fillingId: string): number {
+    let total = 0;
+    for (const li of fillingIngredientsByFilling.get(fillingId) ?? []) total += li.amount;
+    for (const c of fillingComponentsByFilling.get(fillingId) ?? []) total += c.amount;
+    return total;
+  }
+
+  for (const ha of hostAmounts) {
+    const components = fillingComponentsByFilling.get(ha.fillingId) ?? [];
+    if (components.length === 0) continue;
+    const recipeTotal = recipeTotalGrams(ha.fillingId);
+    if (recipeTotal <= 0) continue;
+    const out: ScaledNestedFilling[] = [];
+    for (const c of components) {
+      const fraction = c.amount / recipeTotal;
+      const scaledAmount = Math.round(ha.weightG * fraction * 10) / 10;
+      out.push({
+        fillingId: c.childFillingId,
+        fillingName: fillingsMap.get(c.childFillingId)?.name ?? "Unknown filling",
+        amount: scaledAmount,
+        unit: c.unit,
+        note: c.note,
+      });
+    }
+    ha.scaledNestedFillings = out;
+  }
+}
+
+/**
+ * Reorder a list of `ConsolidatedFilling` so children appear before their
+ * hosts in the planner's batch list — chocolatier ergonomics: you need to
+ * make the inner filling first so it's available when you start the host.
+ *
+ * Stable for everything else: fillings with no nesting relationship keep
+ * their original order. Topological sort using DFS post-order. Defends
+ * against cycles in the data by visiting each node at most once.
+ */
+export function topoSortFillingsChildrenFirst(
+  fillings: ConsolidatedFilling[],
+  fillingComponentsByFilling: ReadonlyMap<string, ReadonlyArray<FillingComponent>>,
+): ConsolidatedFilling[] {
+  const byId = new Map(fillings.map((cf) => [cf.fillingId, cf]));
+  const visited = new Set<string>();
+  const out: ConsolidatedFilling[] = [];
+
+  function visit(fillingId: string) {
+    if (visited.has(fillingId)) return;
+    visited.add(fillingId);
+    // Visit children first so they end up earlier in `out`.
+    for (const c of fillingComponentsByFilling.get(fillingId) ?? []) {
+      if (byId.has(c.childFillingId)) visit(c.childFillingId);
+    }
+    const cf = byId.get(fillingId);
+    if (cf) out.push(cf);
+  }
+
+  for (const cf of fillings) visit(cf.fillingId);
+  return out;
 }
 
 /**
@@ -422,13 +626,19 @@ export function calculateFillingAmounts(
 
       const isShelfStable = shelfStableSet.has(filling.category);
       const prevBatch = fillingPreviousBatches[lw.fillingId];
-      const isGramsMode = product?.fillMode === "grams" && bl.fillGrams != null;
+      const isGramsMode = product?.fillMode === "grams" && bl.fillFraction != null;
+      // In grams mode, fillFraction is a fraction of cavity volume — multiply by
+      // each planned slot's cavity volume (not the product's default mould) so
+      // production on a different mould rescales the recipe proportionally.
+      const fillGramsForPlannedMoulds = isGramsMode
+        ? slots.reduce((s, sl) => s + bl.fillFraction! * sl.mould.cavityWeightG * DENSITY_G_PER_ML * sl.cavityCount, 0)
+        : 0;
       let weightG: number;
 
       if (isShelfStable && prevBatch && !fillingOverrides[lw.fillingId]) {
         // Fully from a prior batch (no additional fresh batch) — compute how much is needed for reference
         if (isGramsMode) {
-          weightG = Math.round(bl.fillGrams! * totalCavities);
+          weightG = Math.round(fillGramsForPlannedMoulds);
         } else {
           const fillPct = (bl.fillPercentage ?? 100) / 100;
           weightG = Math.round(fillWeightG * fillPct);
@@ -451,8 +661,11 @@ export function calculateFillingAmounts(
         const baseYield = filling.measuredYieldG ?? lw.totalWeight;
         weightG = Math.round(baseYield * multiplier);
       } else if (isGramsMode) {
-        // Grams mode: fillGrams per cavity × total cavities across all slots
-        weightG = Math.round(bl.fillGrams! * totalCavities);
+        // Grams mode: fillFraction × cavity volume × density, summed per planned slot.
+        // This rescales the recipe to the actual moulds being produced — a 0.5
+        // fraction means "fill half the cavity," which yields different gram
+        // amounts on a 10g vs a 15g cavity but preserves the fill-to-shell ratio.
+        weightG = Math.round(fillGramsForPlannedMoulds);
       } else {
         // Percentage mode: scale by this filling's fill percentage of the total fill volume
         const fillPct = (bl.fillPercentage ?? 100) / 100;
@@ -499,6 +712,10 @@ export type StandaloneFillingAmount = {
   /** Ratio of target grams to recipe base weight — shown as "×N.N base" in UI. */
   multiplier: number;
   scaledIngredients: ScaledIngredient[];
+  /** Nested-filling rows scaled the same way. Empty when the filling has
+   *  no nested components or when the caller didn't supply the components
+   *  map (legacy behaviour). */
+  scaledNestedFillings: ScaledNestedFilling[];
   notes?: string;
 };
 
@@ -511,13 +728,21 @@ export function calculateStandaloneFillingAmounts(
   planFillings: PlanFilling[],
   fillingsMap: Map<string, Filling>,
   fillingIngredientsMap: Map<string, FillingIngredient[]>,
+  /** Optional: nested-filling component edges keyed by host fillingId. When
+   *  present, each filling's `scaledNestedFillings` is populated with its
+   *  direct nested components scaled to the standalone target. */
+  fillingComponentsByFilling?: ReadonlyMap<string, ReadonlyArray<FillingComponent>>,
 ): StandaloneFillingAmount[] {
   const results: StandaloneFillingAmount[] = [];
   for (const pf of planFillings) {
     const filling = fillingsMap.get(pf.fillingId);
     if (!filling || !pf.id) continue;
     const lis = fillingIngredientsMap.get(pf.fillingId) ?? [];
-    const rawTotal = lis.reduce((s, li) => s + li.amount, 0);
+    const components = fillingComponentsByFilling?.get(pf.fillingId) ?? [];
+    // Recipe total includes nested components — same definition the host card
+    // uses on the filling detail page.
+    const rawTotal = lis.reduce((s, li) => s + li.amount, 0)
+      + components.reduce((s, c) => s + c.amount, 0);
     const baseYield = filling.measuredYieldG ?? rawTotal;
     const multiplier = baseYield > 0 ? pf.targetGrams / baseYield : 0;
     const scaledIngredients: ScaledIngredient[] = lis.map((li) => ({
@@ -526,6 +751,13 @@ export function calculateStandaloneFillingAmounts(
       unit: li.unit,
       note: li.note,
     }));
+    const scaledNestedFillings: ScaledNestedFilling[] = components.map((c) => ({
+      fillingId: c.childFillingId,
+      fillingName: fillingsMap.get(c.childFillingId)?.name ?? "Unknown filling",
+      amount: Math.round(c.amount * multiplier * 10) / 10,
+      unit: c.unit,
+      note: c.note,
+    }));
     results.push({
       planFillingId: pf.id,
       fillingId: pf.fillingId,
@@ -533,6 +765,7 @@ export function calculateStandaloneFillingAmounts(
       targetGrams: pf.targetGrams,
       multiplier: Math.round(multiplier * 100) / 100,
       scaledIngredients,
+      scaledNestedFillings,
       notes: pf.notes,
     });
   }
@@ -808,6 +1041,11 @@ export function generateSteps(
    *  no package steps are generated (back-compat for callers that haven't
    *  wired this through yet). */
   productCategoriesMap: Map<string, ProductCategory> = new Map(),
+  /** Optional: nested-filling component edges keyed by host fillingId. When
+   *  present, the consolidated "Make X" filling steps are reordered so
+   *  children appear before their hosts — chocolatier ergonomics. Omit to
+   *  keep the legacy emission order. */
+  fillingComponentsByFilling: ReadonlyMap<string, ReadonlyArray<FillingComponent>> = new Map(),
 ): ProductionStep[] {
   const steps: ProductionStep[] = [];
 
@@ -932,8 +1170,14 @@ export function generateSteps(
     }
   }
 
-  // 3: Make each filling — one step per unique filling (consolidated across products)
-  const consolidated = consolidateSharedFillings(fillingAmounts);
+  // 3: Make each filling — one step per unique filling (consolidated across
+  // products). When the caller passed a `fillingComponentsByFilling` map,
+  // reorder so nested children appear before their hosts (you make the inner
+  // filling first so it's ready when you start the outer batch).
+  const consolidatedRaw = consolidateSharedFillings(fillingAmounts);
+  const consolidated = fillingComponentsByFilling.size > 0
+    ? topoSortFillingsChildrenFirst(consolidatedRaw, fillingComponentsByFilling)
+    : consolidatedRaw;
   for (const cl of consolidated) {
     const filling = fillingsMap.get(cl.fillingId);
     if (!filling) continue;

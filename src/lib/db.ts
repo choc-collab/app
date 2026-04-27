@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -10,6 +10,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   fillings: EntityTable<Filling, "id">;
   productFillings: EntityTable<ProductFilling, "id">;
   fillingIngredients: EntityTable<FillingIngredient, "id">;
+  fillingComponents: EntityTable<FillingComponent, "id">;
   moulds: EntityTable<Mould, "id">;
   productionPlans: EntityTable<ProductionPlan, "id">;
   planProducts: EntityTable<PlanProduct, "id">;
@@ -443,6 +444,79 @@ db.version(11).stores({}).upgrade(async (tx) => {
   }
 });
 
+// v12 — fillingComponents table for the filling-in-filling feature.
+//
+// Purely additive: a new table that links a host filling to a child filling
+// used as one of its components. Existing ingredient-only readers (cost calc,
+// planner, backup, CSV) keep working untouched. No upgrade hook needed.
+db.version(12).stores({
+  fillingComponents: "id, fillingId, childFillingId, sortOrder",
+});
+
+// v13 — Convert ProductFilling.fillGrams (per-cavity grams against an unstated
+// reference mould) into ProductFilling.fillFraction (fraction of cavity volume,
+// mould-agnostic). The previous representation didn't rescale when production
+// switched moulds — the same 5g would be poured into a 10g and a 15g cavity,
+// changing the fill-to-shell ratio. Fractions preserve the recipe across
+// moulds: production multiplies `fillFraction × plannedCavityWeightG × density`.
+//
+// Migration rule: for each grams-mode product with a `defaultMouldId`, convert
+// each row's `fillGrams` to a fraction using the default mould's cavity weight
+// (the implicit reference at input time). Products in grams mode without a
+// default mould are reverted to percentage mode — there's no anchor against
+// which to interpret the absolute grams.
+//
+// `fillGrams` is dropped from every row in either case; the field no longer
+// exists in the type.
+db.version(13).stores({}).upgrade(async (tx) => {
+  const productsTable = tx.table("products");
+  const productFillingsTable = tx.table("productFillings");
+  const mouldsTable = tx.table("moulds");
+
+  const products = await productsTable.toArray();
+  const moulds = await mouldsTable.toArray();
+  const mouldById = new Map<string, { cavityWeightG: number }>();
+  for (const m of moulds) {
+    if (m?.id) mouldById.set(m.id, { cavityWeightG: m.cavityWeightG ?? 0 });
+  }
+
+  const DENSITY = 1.2; // g/ml — keep in sync with DENSITY_G_PER_ML in production.ts
+
+  for (const p of products) {
+    if (!p?.id) continue;
+    const isGramsMode = p.fillMode === "grams";
+    const refMould = p.defaultMouldId ? mouldById.get(p.defaultMouldId) : undefined;
+    const refCavityG = refMould?.cavityWeightG ?? 0;
+
+    const rows = await productFillingsTable.where("productId").equals(p.id).toArray();
+
+    if (isGramsMode && refCavityG > 0) {
+      // Convert each row's fillGrams to a fraction relative to the default mould.
+      for (const r of rows) {
+        if (!r?.id) continue;
+        const grams = (r as { fillGrams?: number }).fillGrams;
+        const fraction = grams != null ? grams / DENSITY / refCavityG : undefined;
+        await productFillingsTable.update(r.id, {
+          fillFraction: fraction,
+          fillGrams: undefined,
+        });
+      }
+    } else {
+      // Either not in grams mode, or grams mode without a default mould — drop
+      // any stale fillGrams. Revert orphaned grams-mode products to percentage.
+      for (const r of rows) {
+        if (!r?.id) continue;
+        if ((r as { fillGrams?: number }).fillGrams !== undefined) {
+          await productFillingsTable.update(r.id, { fillGrams: undefined });
+        }
+      }
+      if (isGramsMode && refCavityG <= 0) {
+        await productsTable.update(p.id, { fillMode: "percentage" });
+      }
+    }
+  }
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -474,7 +548,7 @@ export function newId(): string {
 // foreign-key references stay intact.
 const AUTO_ID_TABLES = [
   db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings,
-  db.fillingIngredients, db.moulds, db.productionPlans, db.planProducts, db.planFillings,
+  db.fillingIngredients, db.fillingComponents, db.moulds, db.productionPlans, db.planProducts, db.planFillings,
   db.planStepStatus, db.productFillingHistory, db.ingredientPriceHistory,
   db.coatingChocolateMappings, db.productCostSnapshots, db.experiments,
   db.experimentIngredients, db.packaging, db.packagingOrders,
