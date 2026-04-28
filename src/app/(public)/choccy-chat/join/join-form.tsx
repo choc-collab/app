@@ -138,11 +138,11 @@ export function JoinForm() {
             name="business_name"
             required
             maxLength={120}
-            placeholder="e.g. L'Artisan Chocolates"
+            placeholder="e.g. sosase_chocolat"
           />
           <Row>
-            <Field label="City" name="city" required maxLength={80} placeholder="Frederiksoord" />
-            <Field label="Country" name="country" required maxLength={80} placeholder="Netherlands" />
+            <Field label="City" name="city" required maxLength={80} placeholder="City" />
+            <Field label="Country" name="country" required maxLength={80} placeholder="Country" />
           </Row>
           <Field
             label="Instagram handle (optional)"
@@ -162,7 +162,7 @@ export function JoinForm() {
             label="One-line blurb (optional)"
             name="blurb"
             maxLength={200}
-            placeholder="Small-batch bonbons inspired by Belgian classics."
+            placeholder="Small-batch bonbons inspired by James Parsons."
             hint="200 characters max — appears under your pin."
           />
         </Fieldset>
