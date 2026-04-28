@@ -8,7 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "schema": "wrangler d1 execute choc-collab-friends --file=./schema.sql",
+    "schema": "wrangler d1 execute choc-collab-friends --remote --file=./schema.sql",
     "schema:local": "wrangler d1 execute choc-collab-friends --local --file=./schema.sql",
     "test": "vitest run"
   },
