@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import type { Chocolatier } from "./types";
+import { normalizeWebsite } from "./utils";
 
 type Props = { chocolatiers: Chocolatier[] };
 
@@ -149,9 +150,10 @@ function renderPopupHtml(c: Chocolatier): string {
       `<a href="https://instagram.com/${handle}" target="_blank" rel="noreferrer">@${handle}</a>`,
     );
   }
-  if (c.website) {
+  const website = normalizeWebsite(c.website);
+  if (website) {
     links.push(
-      `<a href="${escapeHtml(c.website)}" target="_blank" rel="noreferrer">Website</a>`,
+      `<a href="${escapeHtml(website)}" target="_blank" rel="noreferrer">Website</a>`,
     );
   }
   const linksRow = links.length

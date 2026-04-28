@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Chocolatier } from "./types";
+import { normalizeWebsite } from "./utils";
 import { WorldMap } from "./world-map";
 
 const FRIENDS_ENDPOINT = "/api/choccy-chat/friends";
@@ -91,16 +92,19 @@ export function Directory({ initialEntries }: Props) {
                       @{c.instagram}
                     </a>
                   )}
-                  {c.website && (
-                    <a
-                      href={c.website}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-foreground underline underline-offset-2 hover:opacity-80"
-                    >
-                      Website
-                    </a>
-                  )}
+                  {(() => {
+                    const url = normalizeWebsite(c.website);
+                    return url ? (
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-foreground underline underline-offset-2 hover:opacity-80"
+                      >
+                        Website
+                      </a>
+                    ) : null;
+                  })()}
                 </div>
               </li>
             ))}
