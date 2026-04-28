@@ -138,7 +138,7 @@ export function JoinForm() {
             name="business_name"
             required
             maxLength={120}
-            placeholder="e.g. sosase_chocolat"
+            placeholder="e.g. My Choccy Business"
           />
           <Row>
             <Field label="City" name="city" required maxLength={80} placeholder="City" />
@@ -148,7 +148,7 @@ export function JoinForm() {
             label="Instagram handle (optional)"
             name="instagram"
             maxLength={60}
-            placeholder="l.artisan.chocolates"
+            placeholder="sosase_chocolat"
             hint="Without the @"
           />
           <Field
