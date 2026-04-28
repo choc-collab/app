@@ -1,0 +1,22 @@
+{
+  "name": "choc-collab-worker",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Cloudflare Worker backing the Choccy Chat directory: form intake, public read, admin approve/reject, self-removal.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "schema": "wrangler d1 execute choc-collab-friends --file=./schema.sql",
+    "schema:local": "wrangler d1 execute choc-collab-friends --local --file=./schema.sql",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@cloudflare/workers-types": "^4.20251101.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.85.0"
+  }
+}
