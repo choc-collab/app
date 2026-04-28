@@ -12,8 +12,8 @@ workers_dev = false
 # Secret key (TURNSTILE_SECRET) and Cloudflare Access team domain are
 # secrets — set with `wrangler secret put TURNSTILE_SECRET` etc.
 [vars]
-ACCESS_TEAM_DOMAIN = "REPLACE_WITH_YOUR_TEAM.cloudflareaccess.com"
-ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD"
+ACCESS_TEAM_DOMAIN = "choc-collab.cloudflareaccess.com"
+ACCESS_AUD = "a279767ae8cf5c44adf92f85bfc301e5d8115c1e2a70e639ee2b542094088406"
 ALLOWED_ADMIN_EMAILS = "lizi.vermaas@gmail.com"
 ALLOWED_ORIGIN = "https://choc-collab.org"
 
@@ -22,7 +22,7 @@ ALLOWED_ORIGIN = "https://choc-collab.org"
 [[d1_databases]]
 binding = "DB"
 database_name = "choc-collab-friends"
-database_id = "REPLACE_WITH_DATABASE_ID"
+database_id = "2f34a6fd-c872-43cd-abc3-d96d74a1e18b"
 
 # Route the Worker at `choc-collab.org/api/*`. Adjust if you mount it on
 # a different path or zone.
