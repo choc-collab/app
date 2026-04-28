@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { COUNTRY_NAMES } from "@/lib/countries";
 
 const ADMIN_LIST = "/api/choccy-chat/admin/list";
 const ADMIN_APPROVE = "/api/choccy-chat/admin/approve";
 const ADMIN_REJECT = "/api/choccy-chat/admin/reject";
+const ADMIN_UPDATE = "/api/choccy-chat/admin/update";
 
 type Status = "pending" | "approved" | "rejected" | "all";
 
@@ -27,7 +29,9 @@ type AdminEntry = {
   approved_by: string | null;
 };
 
-type Action = { id: string; kind: "approve" | "reject" } | null;
+type Action =
+  | { id: string; kind: "approve" | "reject" | "save" }
+  | null;
 type Banner =
   | { kind: "info"; message: string }
   | { kind: "error"; message: string }
@@ -39,6 +43,7 @@ export function AdminApp() {
   const [busy, setBusy] = useState<Action>(null);
   const [banner, setBanner] = useState<Banner>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // Per-row lat/lng overrides if Lizi wants to correct geocode before approve.
   const [overrides, setOverrides] = useState<
@@ -48,6 +53,7 @@ export function AdminApp() {
   useEffect(() => {
     let cancelled = false;
     setEntries(null);
+    setEditingId(null);
     (async () => {
       try {
         const res = await fetch(`${ADMIN_LIST}?status=${status}`, {
@@ -157,6 +163,40 @@ export function AdminApp() {
     }
   }
 
+  async function saveEdit(id: string, changes: Record<string, unknown>) {
+    setBusy({ id, kind: "save" });
+    setBanner(null);
+    try {
+      const res = await fetch(ADMIN_UPDATE, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ...changes }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        entry?: AdminEntry;
+      };
+      if (!res.ok || !body.entry) {
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      const updated = body.entry;
+      setEntries((prev) =>
+        prev ? prev.map((e) => (e.id === id ? updated : e)) : prev,
+      );
+      setEditingId(null);
+      setBanner({ kind: "info", message: `Saved changes to ${updated.name}.` });
+    } catch (e) {
+      setBanner({
+        kind: "error",
+        message: `Save failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
       <div className="flex items-end justify-between mb-6">
@@ -196,6 +236,12 @@ export function AdminApp() {
         </div>
       )}
 
+      <datalist id="admin-country-options">
+        {COUNTRY_NAMES.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+
       {entries === null ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : entries.length === 0 ? (
@@ -208,6 +254,7 @@ export function AdminApp() {
             <li
               key={e.id}
               className="bg-card border border-border rounded-lg p-4"
+              data-entry-id={e.id}
             >
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0 flex-1">
@@ -263,85 +310,341 @@ export function AdminApp() {
                   </div>
                 </div>
 
-                {e.status === "pending" && (
-                  <div className="flex flex-col items-end gap-2 min-w-[260px]">
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        className="input text-xs font-mono"
-                        placeholder="lat (auto)"
-                        inputMode="decimal"
-                        value={overrides[e.id]?.lat ?? ""}
-                        onChange={(ev) =>
-                          setOverrides((m) => ({
-                            ...m,
-                            [e.id]: {
-                              lat: ev.target.value,
-                              lng: m[e.id]?.lng ?? "",
-                            },
-                          }))
-                        }
-                      />
-                      <input
-                        className="input text-xs font-mono"
-                        placeholder="lng (auto)"
-                        inputMode="decimal"
-                        value={overrides[e.id]?.lng ?? ""}
-                        onChange={(ev) =>
-                          setOverrides((m) => ({
-                            ...m,
-                            [e.id]: {
-                              lat: m[e.id]?.lat ?? "",
-                              lng: ev.target.value,
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => reject(e)}
-                        disabled={busy?.id === e.id}
-                      >
-                        {busy?.id === e.id && busy.kind === "reject"
-                          ? "…"
-                          : "Reject"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        style={{
-                          background: "var(--accent-mint-bg)",
-                          color: "var(--accent-mint-ink)",
-                        }}
-                        onClick={() => approve(e)}
-                        disabled={busy?.id === e.id}
-                      >
-                        {busy?.id === e.id && busy.kind === "approve"
-                          ? "Approving…"
-                          : "Approve"}
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground text-right max-w-[260px]">
-                      Leave lat/lng blank to auto-geocode from city + country.
-                    </p>
-                  </div>
-                )}
+                <div className="flex flex-col items-end gap-2 min-w-[260px]">
+                  {e.status === "pending" && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2 w-full">
+                        <input
+                          className="input text-xs font-mono"
+                          placeholder="lat (auto)"
+                          inputMode="decimal"
+                          value={overrides[e.id]?.lat ?? ""}
+                          onChange={(ev) =>
+                            setOverrides((m) => ({
+                              ...m,
+                              [e.id]: {
+                                lat: ev.target.value,
+                                lng: m[e.id]?.lng ?? "",
+                              },
+                            }))
+                          }
+                        />
+                        <input
+                          className="input text-xs font-mono"
+                          placeholder="lng (auto)"
+                          inputMode="decimal"
+                          value={overrides[e.id]?.lng ?? ""}
+                          onChange={(ev) =>
+                            setOverrides((m) => ({
+                              ...m,
+                              [e.id]: {
+                                lat: m[e.id]?.lat ?? "",
+                                lng: ev.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground text-right max-w-[260px]">
+                        Leave lat/lng blank to auto-geocode from city + country.
+                      </p>
+                    </>
+                  )}
 
-                {e.status === "approved" && (
-                  <div className="text-right text-xs text-muted-foreground font-mono">
-                    {e.lat.toFixed(4)}, {e.lng.toFixed(4)}
-                    {e.approved_by && (
-                      <div>by {e.approved_by}</div>
+                  {e.status === "approved" && (
+                    <div className="text-right text-xs text-muted-foreground font-mono">
+                      {e.lat.toFixed(4)}, {e.lng.toFixed(4)}
+                      {e.approved_by && <div>by {e.approved_by}</div>}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 flex-wrap justify-end">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() =>
+                        setEditingId((cur) => (cur === e.id ? null : e.id))
+                      }
+                      disabled={busy?.id === e.id}
+                      data-testid={`edit-${e.id}`}
+                    >
+                      {editingId === e.id ? "Close" : "Edit"}
+                    </button>
+
+                    {e.status === "pending" && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => reject(e)}
+                          disabled={busy?.id === e.id}
+                        >
+                          {busy?.id === e.id && busy.kind === "reject"
+                            ? "…"
+                            : "Reject"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          style={{
+                            background: "var(--accent-mint-bg)",
+                            color: "var(--accent-mint-ink)",
+                          }}
+                          onClick={() => approve(e)}
+                          disabled={busy?.id === e.id}
+                        >
+                          {busy?.id === e.id && busy.kind === "approve"
+                            ? "Approving…"
+                            : "Approve"}
+                        </button>
+                      </>
                     )}
                   </div>
-                )}
+                </div>
               </div>
+
+              {editingId === e.id && (
+                <EditForm
+                  entry={e}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(changes) => saveEdit(e.id, changes)}
+                  saving={busy?.id === e.id && busy.kind === "save"}
+                />
+              )}
             </li>
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/* ─── Edit form ───────────────────────────────────────────────────────── */
+type EditableField =
+  | "business_name"
+  | "city"
+  | "country"
+  | "lat"
+  | "lng"
+  | "instagram"
+  | "website"
+  | "blurb"
+  | "contact_name"
+  | "email"
+  | "notes";
+
+function EditForm({
+  entry,
+  onCancel,
+  onSave,
+  saving,
+}: {
+  entry: AdminEntry;
+  onCancel: () => void;
+  onSave: (changes: Record<string, unknown>) => void;
+  saving: boolean;
+}) {
+  const initial = useMemo(
+    () => ({
+      business_name: entry.name,
+      city: entry.city,
+      country: entry.country,
+      lat: entry.lat ? String(entry.lat) : "",
+      lng: entry.lng ? String(entry.lng) : "",
+      instagram: entry.instagram ?? "",
+      website: entry.website ?? "",
+      blurb: entry.blurb ?? "",
+      contact_name: entry.contact_name,
+      email: entry.email,
+      notes: entry.notes ?? "",
+    }),
+    [entry],
+  );
+  const [draft, setDraft] = useState(initial);
+
+  function set<K extends EditableField>(k: K, v: string) {
+    setDraft((d) => ({ ...d, [k]: v }));
+  }
+
+  function buildChanges(): Record<string, unknown> {
+    const changes: Record<string, unknown> = {};
+    if (draft.business_name !== initial.business_name) changes.business_name = draft.business_name;
+    if (draft.city !== initial.city) changes.city = draft.city;
+    if (draft.country !== initial.country) changes.country = draft.country;
+    if (draft.lat !== initial.lat) changes.lat = draft.lat === "" ? null : draft.lat;
+    if (draft.lng !== initial.lng) changes.lng = draft.lng === "" ? null : draft.lng;
+    if (draft.instagram !== initial.instagram) changes.instagram = draft.instagram;
+    if (draft.website !== initial.website) changes.website = draft.website;
+    if (draft.blurb !== initial.blurb) changes.blurb = draft.blurb;
+    if (draft.contact_name !== initial.contact_name) changes.contact_name = draft.contact_name;
+    if (draft.email !== initial.email) changes.email = draft.email;
+    if (draft.notes !== initial.notes) changes.notes = draft.notes;
+    return changes;
+  }
+
+  const dirty = Object.keys(buildChanges()).length > 0;
+
+  return (
+    <form
+      className="mt-4 pt-4 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-3"
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        const changes = buildChanges();
+        if (Object.keys(changes).length === 0) {
+          onCancel();
+          return;
+        }
+        onSave(changes);
+      }}
+    >
+      {entry.status === "approved" && (
+        <p className="sm:col-span-2 text-xs italic text-muted-foreground">
+          This entry is live on the public map — changes apply immediately on save.
+        </p>
+      )}
+
+      <EditField
+        label="Business name"
+        value={draft.business_name}
+        onChange={(v) => set("business_name", v)}
+      />
+      <EditField
+        label="City"
+        value={draft.city}
+        onChange={(v) => set("city", v)}
+      />
+      <EditField
+        label="Country"
+        value={draft.country}
+        onChange={(v) => set("country", v)}
+        list="admin-country-options"
+        hint="Pick from the list — UK / GB / United Kingdom all normalise."
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <EditField
+          label="Latitude"
+          value={draft.lat}
+          onChange={(v) => set("lat", v)}
+          inputMode="decimal"
+          mono
+        />
+        <EditField
+          label="Longitude"
+          value={draft.lng}
+          onChange={(v) => set("lng", v)}
+          inputMode="decimal"
+          mono
+        />
+      </div>
+      <EditField
+        label="Instagram handle"
+        value={draft.instagram}
+        onChange={(v) => set("instagram", v)}
+        hint="@handle, username, or full URL — we'll normalise it."
+      />
+      <EditField
+        label="Website"
+        value={draft.website}
+        onChange={(v) => set("website", v)}
+        type="url"
+      />
+      <EditField
+        label="Blurb"
+        value={draft.blurb}
+        onChange={(v) => set("blurb", v)}
+        textarea
+        wide
+      />
+      <EditField
+        label="Contact name"
+        value={draft.contact_name}
+        onChange={(v) => set("contact_name", v)}
+      />
+      <EditField
+        label="Email"
+        value={draft.email}
+        onChange={(v) => set("email", v)}
+        type="email"
+      />
+      <EditField
+        label="Admin notes"
+        value={draft.notes}
+        onChange={(v) => set("notes", v)}
+        textarea
+        wide
+      />
+
+      <div className="sm:col-span-2 flex justify-end gap-2 pt-2">
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={onCancel}
+          disabled={saving}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={saving || !dirty}
+          data-testid={`save-${entry.id}`}
+        >
+          {saving ? "Saving…" : dirty ? "Save changes" : "No changes"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  type,
+  inputMode,
+  textarea,
+  wide,
+  list,
+  hint,
+  mono,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  inputMode?: "decimal";
+  textarea?: boolean;
+  wide?: boolean;
+  list?: string;
+  hint?: string;
+  mono?: boolean;
+}) {
+  const id = `edit-${label.toLowerCase().replace(/\s+/g, "-")}`;
+  return (
+    <div className={wide ? "sm:col-span-2" : undefined}>
+      <label className="label" htmlFor={id}>
+        {label}
+      </label>
+      {textarea ? (
+        <textarea
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={2}
+          className="input"
+        />
+      ) : (
+        <input
+          id={id}
+          type={type ?? "text"}
+          inputMode={inputMode}
+          list={list}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`input${mono ? " font-mono text-xs" : ""}`}
+        />
+      )}
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
     </div>
   );
 }

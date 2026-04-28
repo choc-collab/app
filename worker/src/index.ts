@@ -10,11 +10,13 @@
  *   GET  /api/choccy-chat/admin/list?status=…   admin (CF Access)
  *   POST /api/choccy-chat/admin/approve         admin (CF Access)
  *   POST /api/choccy-chat/admin/reject          admin (CF Access)
+ *   POST /api/choccy-chat/admin/update          admin (CF Access)
  */
 import {
   handleAdminApprove,
   handleAdminList,
   handleAdminReject,
+  handleAdminUpdate,
   handleFriends,
   handleSelfRemove,
   handleSubmit,
@@ -49,6 +51,9 @@ export default {
       }
       if (path === "/api/choccy-chat/admin/reject") {
         return await handleAdminReject(req, env);
+      }
+      if (path === "/api/choccy-chat/admin/update") {
+        return await handleAdminUpdate(req, env);
       }
       return json({ error: "Not found" }, { status: 404 }, env);
     } catch (e) {

@@ -8,6 +8,12 @@ import {
   verifyAccessJwt,
   verifyTurnstile,
 } from "./lib";
+import {
+  isValidLat,
+  isValidLng,
+  normalizeCountryInput,
+  normalizeInstagramHandle,
+} from "./normalize";
 import type {
   Env,
   FriendPublic,
@@ -69,6 +75,17 @@ export async function handleSubmit(
   if ("error" in city) return json(city, { status: 400 }, env);
   const country = cleanRequired(payload.country, 80, "country");
   if ("error" in country) return json(country, { status: 400 }, env);
+  const countryCanonical = normalizeCountryInput(country.value);
+  if (!countryCanonical) {
+    return json(
+      {
+        error:
+          "We didn't recognise that country — please pick one from the list.",
+      },
+      { status: 400 },
+      env,
+    );
+  }
   const contactName = cleanRequired(payload.contact_name, 120, "contact_name");
   if ("error" in contactName) return json(contactName, { status: 400 }, env);
   const email = cleanRequired(payload.email, 200, "email");
@@ -78,8 +95,7 @@ export async function handleSubmit(
   }
 
   // Optional public fields
-  const instagramRaw = clean(payload.instagram, 60);
-  const instagram = instagramRaw ? instagramRaw.replace(/^@+/, "") : null;
+  const instagram = normalizeInstagramHandle(clean(payload.instagram, 250));
   const website = clean(payload.website, 250);
   if (website && !/^https?:\/\//i.test(website)) {
     return json(
@@ -112,7 +128,7 @@ export async function handleSubmit(
       id,
       businessName.value,
       city.value,
-      country.value,
+      countryCanonical,
       instagram,
       website,
       blurb,
@@ -335,6 +351,192 @@ export async function handleAdminReject(
     .bind(Date.now(), body.id)
     .run();
   return json({ ok: true }, { status: 200 }, env);
+}
+
+/* ─── Admin: update editable fields ──────────────────────────────────── */
+type UpdatePayload = {
+  id?: string;
+  business_name?: unknown;
+  city?: unknown;
+  country?: unknown;
+  lat?: unknown;
+  lng?: unknown;
+  instagram?: unknown;
+  website?: unknown;
+  blurb?: unknown;
+  contact_name?: unknown;
+  email?: unknown;
+  notes?: unknown;
+};
+
+export async function handleAdminUpdate(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const auth = await requireAdmin(req, env);
+  if (auth instanceof Response) return auth;
+
+  if (req.method !== "POST" && req.method !== "PATCH") {
+    return json({ error: "Method not allowed" }, { status: 405 }, env);
+  }
+
+  const body = (await req.json().catch(() => ({}))) as UpdatePayload;
+  if (!body.id || typeof body.id !== "string") {
+    return json({ error: "Missing id" }, { status: 400 }, env);
+  }
+
+  const sets: string[] = [];
+  const values: Array<string | number | null> = [];
+
+  // Required fields — only update if a non-empty cleaned value is provided.
+  // (We refuse to null-out NOT NULL columns.)
+  if (body.business_name !== undefined) {
+    const v = clean(body.business_name, 120);
+    if (!v) return json({ error: "business_name cannot be empty" }, { status: 400 }, env);
+    sets.push("business_name = ?");
+    values.push(v);
+  }
+  if (body.city !== undefined) {
+    const v = clean(body.city, 80);
+    if (!v) return json({ error: "city cannot be empty" }, { status: 400 }, env);
+    sets.push("city = ?");
+    values.push(v);
+  }
+  if (body.country !== undefined) {
+    const cleaned = clean(body.country, 80);
+    if (!cleaned) return json({ error: "country cannot be empty" }, { status: 400 }, env);
+    const canonical = normalizeCountryInput(cleaned);
+    if (!canonical) {
+      return json(
+        { error: "Unrecognised country — please pick one from the list." },
+        { status: 400 },
+        env,
+      );
+    }
+    sets.push("country = ?");
+    values.push(canonical);
+  }
+  if (body.contact_name !== undefined) {
+    const v = clean(body.contact_name, 120);
+    if (!v) return json({ error: "contact_name cannot be empty" }, { status: 400 }, env);
+    sets.push("contact_name = ?");
+    values.push(v);
+  }
+  if (body.email !== undefined) {
+    const v = clean(body.email, 200);
+    if (!v) return json({ error: "email cannot be empty" }, { status: 400 }, env);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+      return json({ error: "Invalid email" }, { status: 400 }, env);
+    }
+    sets.push("email = ?");
+    values.push(v);
+  }
+
+  // Optional / nullable fields — empty string or null clears the column.
+  if (body.instagram !== undefined) {
+    const cleaned = clean(body.instagram, 250);
+    const handle = cleaned ? normalizeInstagramHandle(cleaned) : null;
+    if (cleaned && !handle) {
+      return json(
+        { error: "Instagram handle looks invalid — try just the username." },
+        { status: 400 },
+        env,
+      );
+    }
+    sets.push("instagram = ?");
+    values.push(handle);
+  }
+  if (body.website !== undefined) {
+    const v = clean(body.website, 250);
+    if (v && !/^https?:\/\//i.test(v)) {
+      return json(
+        { error: "Website must start with http:// or https://" },
+        { status: 400 },
+        env,
+      );
+    }
+    sets.push("website = ?");
+    values.push(v);
+  }
+  if (body.blurb !== undefined) {
+    sets.push("blurb = ?");
+    values.push(clean(body.blurb, 200));
+  }
+  if (body.notes !== undefined) {
+    sets.push("notes = ?");
+    values.push(clean(body.notes, 1000));
+  }
+
+  // Coordinates: must be numeric & in range, or explicit null to clear.
+  if (body.lat !== undefined) {
+    if (body.lat === null || body.lat === "") {
+      sets.push("lat = ?");
+      values.push(null);
+    } else {
+      const n = typeof body.lat === "number" ? body.lat : parseFloat(String(body.lat));
+      if (!isValidLat(n)) {
+        return json({ error: "lat must be a number between -90 and 90" }, { status: 400 }, env);
+      }
+      sets.push("lat = ?");
+      values.push(n);
+    }
+  }
+  if (body.lng !== undefined) {
+    if (body.lng === null || body.lng === "") {
+      sets.push("lng = ?");
+      values.push(null);
+    } else {
+      const n = typeof body.lng === "number" ? body.lng : parseFloat(String(body.lng));
+      if (!isValidLng(n)) {
+        return json({ error: "lng must be a number between -180 and 180" }, { status: 400 }, env);
+      }
+      sets.push("lng = ?");
+      values.push(n);
+    }
+  }
+
+  if (sets.length === 0) {
+    return json({ error: "No fields to update" }, { status: 400 }, env);
+  }
+
+  values.push(body.id);
+  const result = await env.DB.prepare(
+    `UPDATE submissions SET ${sets.join(", ")} WHERE id = ?`,
+  )
+    .bind(...values)
+    .run();
+
+  if (result.meta.changes === 0) {
+    return json({ error: "Not found" }, { status: 404 }, env);
+  }
+
+  // Return the updated row so the admin UI can refresh in place.
+  const row = await env.DB.prepare(
+    `SELECT * FROM submissions WHERE id = ?`,
+  )
+    .bind(body.id)
+    .first<SubmissionRow>();
+  if (!row) return json({ error: "Not found" }, { status: 404 }, env);
+
+  const entry: SubmissionAdmin = {
+    id: row.id,
+    status: row.status,
+    name: row.business_name,
+    city: row.city,
+    country: row.country,
+    lat: row.lat ?? 0,
+    lng: row.lng ?? 0,
+    instagram: row.instagram,
+    website: row.website,
+    blurb: row.blurb,
+    contact_name: row.contact_name,
+    email: row.email,
+    notes: row.notes,
+    created_at: row.created_at,
+    approved_at: row.approved_at,
+    approved_by: row.approved_by,
+  };
+  return json({ ok: true, entry }, { status: 200 }, env);
 }
 
 /* ─── Geocoding via Nominatim (OpenStreetMap) ────────────────────────── */

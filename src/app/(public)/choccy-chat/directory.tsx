@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Chocolatier } from "./types";
 import { normalizeWebsite } from "./utils";
 import { WorldMap } from "./world-map";
@@ -12,6 +12,7 @@ type Props = { initialEntries: Chocolatier[] };
 
 export function Directory({ initialEntries }: Props) {
   const [entries, setEntries] = useState<Chocolatier[]>(initialEntries);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -37,29 +38,85 @@ export function Directory({ initialEntries }: Props) {
     };
   }, []);
 
-  const count = entries.length;
+  const total = entries.length;
   const countries = new Set(entries.map((e) => e.country)).size;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.city.toLowerCase().includes(q) ||
+        e.country.toLowerCase().includes(q),
+    );
+  }, [entries, query]);
+
+  const filteredCount = filtered.length;
+  const isFiltering = query.trim().length > 0;
 
   return (
     <>
       <div className="mono-label text-muted-foreground mb-4">
-        Friends of Choccy Chat · {count} maker{count === 1 ? "" : "s"} ·{" "}
+        Friends of Choccy Chat · {total} maker{total === 1 ? "" : "s"} ·{" "}
         {countries} countr{countries === 1 ? "y" : "ies"}
       </div>
 
+      <section className="pb-4">
+        <label htmlFor="choccy-search" className="sr-only">
+          Search by name, city, or country
+        </label>
+        <div className="relative">
+          <input
+            id="choccy-search"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name, city, or country…"
+            className="input pr-10"
+            data-testid="choccy-search"
+            autoComplete="off"
+          />
+          {isFiltering && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              data-testid="choccy-search-clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-sm px-2 py-1"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {isFiltering && (
+          <div
+            className="mono-label text-muted-foreground mt-2"
+            aria-live="polite"
+            data-testid="choccy-search-summary"
+          >
+            {filteredCount === 0
+              ? `No matches for "${query.trim()}"`
+              : `Showing ${filteredCount} of ${total}`}
+          </div>
+        )}
+      </section>
+
       <section className="pb-10">
         <div className="rounded-lg border border-border overflow-hidden">
-          <WorldMap chocolatiers={entries} />
+          <WorldMap chocolatiers={filtered} />
         </div>
       </section>
 
       <section className="pb-12">
-        <div className="mono-label text-muted-foreground mb-4">Everyone on the map</div>
-        {count === 0 ? (
-          <EmptyState />
+        <div className="mono-label text-muted-foreground mb-4">
+          {isFiltering ? "Matching the search" : "Everyone on the map"}
+        </div>
+        {filteredCount === 0 ? (
+          isFiltering ? <NoMatchesState onClear={() => setQuery("")} /> : <EmptyState />
         ) : (
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {entries.map((c) => (
+            {filtered.map((c) => (
               <li
                 key={c.id}
                 className="bg-card border border-border rounded-lg p-4"
@@ -123,6 +180,24 @@ function EmptyState() {
         <Link href="/choccy-chat/join" className="text-foreground underline underline-offset-2">
           Add yourself
         </Link>
+        .
+      </p>
+    </div>
+  );
+}
+
+function NoMatchesState({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="bg-card border border-border rounded-lg p-8 text-center">
+      <p className="text-muted-foreground">
+        No chocolatiers match that search.{" "}
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-foreground underline underline-offset-2"
+        >
+          Clear search
+        </button>
         .
       </p>
     </div>

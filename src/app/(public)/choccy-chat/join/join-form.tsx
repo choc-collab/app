@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Script from "next/script";
 import { useEffect, useRef, useState } from "react";
+import { COUNTRY_NAMES } from "@/lib/countries";
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 const SUBMIT_ENDPOINT = "/api/choccy-chat/submit";
@@ -142,14 +143,14 @@ export function JoinForm() {
           />
           <Row>
             <Field label="City" name="city" required maxLength={80} placeholder="City" />
-            <Field label="Country" name="country" required maxLength={80} placeholder="Country" />
+            <CountryField />
           </Row>
           <Field
             label="Instagram handle (optional)"
             name="instagram"
-            maxLength={60}
+            maxLength={250}
             placeholder="sosase_chocolat"
-            hint="Without the @"
+            hint="Username, @handle, or full instagram.com URL — we'll clean it up."
           />
           <Field
             label="Website (optional)"
@@ -306,6 +307,38 @@ function Field({
         className="input"
       />
       {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function CountryField() {
+  const id = "field-country";
+  return (
+    <div>
+      <label className="label" htmlFor={id}>
+        Country{" "}
+        <span aria-hidden style={{ color: "var(--accent-terracotta-ink)" }}>
+          *
+        </span>
+      </label>
+      <input
+        id={id}
+        name="country"
+        list="country-options"
+        required
+        maxLength={80}
+        autoComplete="country-name"
+        placeholder="Start typing…"
+        className="input"
+      />
+      <datalist id="country-options">
+        {COUNTRY_NAMES.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+      <p className="text-xs text-muted-foreground mt-1">
+        Pick from the list — we standardise spellings (e.g. UK → United Kingdom).
+      </p>
     </div>
   );
 }
