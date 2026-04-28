@@ -1,0 +1,31 @@
+name = "choc-collab-choccy-chat"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Disable the *.workers.dev URL so the Worker is only reachable via the
+# Access-protected route on the production domain. Defence-in-depth for
+# admin endpoints — they're additionally JWT-verified inside the Worker.
+workers_dev = false
+
+# Public Turnstile site key (also exposed to the frontend via env var).
+# Secret key (TURNSTILE_SECRET) and Cloudflare Access team domain are
+# secrets — set with `wrangler secret put TURNSTILE_SECRET` etc.
+[vars]
+ACCESS_TEAM_DOMAIN = "REPLACE_WITH_YOUR_TEAM.cloudflareaccess.com"
+ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD"
+ALLOWED_ADMIN_EMAILS = "lizi.vermaas@gmail.com"
+ALLOWED_ORIGIN = "https://choc-collab.org"
+
+# Bind the production D1 database — replace `database_id` after running
+# `wrangler d1 create choc-collab-friends` (the command prints the id).
+[[d1_databases]]
+binding = "DB"
+database_name = "choc-collab-friends"
+database_id = "REPLACE_WITH_DATABASE_ID"
+
+# Route the Worker at `choc-collab.org/api/*`. Adjust if you mount it on
+# a different path or zone.
+[[routes]]
+pattern = "choc-collab.org/api/*"
+zone_name = "choc-collab.org"

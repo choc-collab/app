@@ -1,0 +1,27 @@
+{
+  "_README": "Approved Choccy Chat friends shown on /choccy-chat. Add a new entry by appending to the `entries` array below, then commit + deploy. Geocode city -> lat/lng using https://www.openstreetmap.org/search (copy the centre coordinate). Use 4-decimal precision. The id should be a kebab-case slug, unique across the file.",
+  "_schema": {
+    "id": "kebab-case unique slug",
+    "name": "Public business or maker name",
+    "city": "City",
+    "country": "Country (English)",
+    "lat": "Decimal degrees, e.g. 51.2194",
+    "lng": "Decimal degrees, e.g. 4.4025",
+    "instagram": "Handle without the @ (or null)",
+    "website": "Full https URL (or null)",
+    "blurb": "<= 200 chars (or null)"
+  },
+  "entries": [
+    {
+      "id": "lartisan-chocolates",
+      "name": "L'Artisan Chocolates",
+      "city": "Frederiksoord",
+      "country": "Netherlands",
+      "lat": 52.8434,
+      "lng": 6.1839,
+      "instagram": "l.artisan.chocolates",
+      "website": "choc-collab.org",
+      "blurb": "Hand-crafted bonbons from a small workshop in Frederiksoord. Developer of choc-collab, an open source app for small scale artisan chocolatiers."
+    }
+  ]
+}
