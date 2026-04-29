@@ -111,9 +111,22 @@ function PlanContent({
 }) {
   const [backHref, setBackHref] = useState("/production");
   const [backLabel, setBackLabel] = useState("Production");
+
+  const sanitizeBackHref = (value: string | null): string | null => {
+    if (!value) return null;
+    if (!value.startsWith("/") || value.startsWith("//")) return null;
+    try {
+      const parsed = new URL(value, window.location.origin);
+      if (parsed.origin !== window.location.origin) return null;
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const from = params.get("from");
+    const from = sanitizeBackHref(params.get("from"));
     if (from) { setBackHref(from); setBackLabel("Back to product"); }
     const tab = params.get("tab") as PhaseId | null;
     if (tab && PHASES.some((p) => p.id === tab)) setActivePhase(tab);
