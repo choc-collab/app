@@ -534,6 +534,7 @@ function PlanContent({
         planId,
         madeAt,
         createdAt: Date.now(),
+        ...(pf.notes ? { notes: pf.notes } : {}),
       });
       existingKey.add(key);
     }
