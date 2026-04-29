@@ -327,7 +327,7 @@ const SECTIONS: Section[] = [
             <strong>AU</strong>
             <ul>
               <li>PEAL allergens (no celery, lupin, or mustard).</li>
-              <li>kJ only, mandatory &ldquo;Contains:&rdquo; summary.</li>
+              <li>kJ mandatory (kcal voluntary), mandatory &ldquo;Contains:&rdquo; summary.</li>
             </ul>
           </li>
           <li>

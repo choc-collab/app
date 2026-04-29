@@ -93,9 +93,13 @@ const US_NUTRIENTS: NutrientDef[] = [
   { key: "potassiumMg",   label: "Potassium",           unit: "mg",   mandatory: true,  indent: 0, dailyValue: 4700 },
 ];
 
-/** Australia — FSANZ Nutrition Information Panel (NIP) */
+/** Australia — FSANZ Nutrition Information Panel (NIP).
+ *  kcal is voluntary under FSANZ but commonly shown for international audiences;
+ *  non-mandatory so AU-only users aren't warned when they leave it blank. It
+ *  auto-fills from kJ via `fillDerivedNutrition` when kJ is entered. */
 const AU_NUTRIENTS: NutrientDef[] = [
   { key: "energyKj",      label: "Energy",           unit: "kJ",   mandatory: true,  indent: 0 },
+  { key: "energyKcal",    label: "Energy",           unit: "kcal", mandatory: false, indent: 0 },
   { key: "protein",       label: "Protein",          unit: "g",    mandatory: true,  indent: 0 },
   { key: "fat",           label: "Fat, total",       unit: "g",    mandatory: true,  indent: 0 },
   { key: "saturatedFat",  label: "– saturated",      unit: "g",    mandatory: true,  indent: 1 },

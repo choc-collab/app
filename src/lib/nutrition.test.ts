@@ -356,10 +356,13 @@ describe("getNutrientsByMarket", () => {
     expect(us.some(n => n.key === "cholesterolMg")).toBe(true);
   });
 
-  it("AU uses energyKj (not kcal) and sodium (not salt)", () => {
+  it("AU uses kJ (mandatory) plus kcal (voluntary) and sodium (not salt)", () => {
     const au = getNutrientsByMarket("AU");
-    expect(au.some(n => n.key === "energyKj")).toBe(true);
-    expect(au.some(n => n.key === "energyKcal")).toBe(false);
+    const kj = au.find(n => n.key === "energyKj");
+    const kcal = au.find(n => n.key === "energyKcal");
+    expect(kj?.mandatory).toBe(true);
+    // kcal is shown for international readability but isn't required by FSANZ
+    expect(kcal?.mandatory).toBe(false);
     expect(au.some(n => n.key === "sodium")).toBe(true);
     expect(au.some(n => n.key === "salt")).toBe(false);
   });
