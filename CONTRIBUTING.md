@@ -46,6 +46,23 @@ The app runs fully local — no backend or API keys required.
 
 See `AGENT.md` for the full architecture guide, data model, and component patterns.
 
+## A note on `/choccy-chat` and `worker/`
+
+The repo also contains a side-project hosted on the same domain — a fan-run directory of chocolatiers, called Choccy Chat. It is **not part of Choc-collab the app**; see the [About `/choccy-chat` section in the README](README.md#about-choccy-chat) for context.
+
+PRs touching the following paths are reviewed with **extra care** because they handle community PII (submitter emails, names, and free-text notes):
+
+- `src/app/(public)/choccy-chat/**`
+- `src/app/admin/**`
+- `worker/**`
+- `src/data/chocolatiers.json`
+
+When reviewing or writing changes in those areas, watch for:
+- **Private columns leaking into public responses.** The Worker's `/api/choccy-chat/friends` endpoint must only return the fields in [`worker/src/types.ts:FriendPublic`](worker/src/types.ts) — never `email`, `contact_name`, `notes`, `ip_hash`, or `removal_token`.
+- **PII in logs.** `console.log` / `console.error` in the Worker is fine for status codes and operation names, but never log full row contents.
+- **PII in git history.** Don't commit D1 dumps, even temporarily — once it's in history it's effectively unremovable from a public repo. Use `wrangler d1 execute --command` for ad-hoc reads instead of saving to a file.
+- **CSP regressions.** New external resources for the directory go through `public/_headers` and `vercel.json`; preserve `connect-src 'self'` for the Worker calls and avoid widening `default-src`.
+
 ## What to work on
 
 - Check the open issues before starting something new — someone may already be on it
