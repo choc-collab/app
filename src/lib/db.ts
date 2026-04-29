@@ -517,6 +517,27 @@ db.version(13).stores({}).upgrade(async (tx) => {
   }
 });
 
+// v14 — Backfill `color` on FillingCategory rows that were seeded before the
+// colour-blind-safe palette landed. The product-cost page reads this colour to
+// paint bar segments and chips; without a value the segment falls back to a
+// neutral grey, which is harmless but unhelpful. Match by name (case-insensitive)
+// against the current DEFAULT_FILLING_CATEGORIES seed; user-created or already
+// coloured rows are left untouched.
+db.version(14).stores({}).upgrade(async (tx) => {
+  const fillingCategoriesTable = tx.table("fillingCategories");
+  const colorByName = new Map<string, string>();
+  for (const seed of DEFAULT_FILLING_CATEGORIES) {
+    colorByName.set(seed.name.toLowerCase(), seed.color);
+  }
+  const rows = await fillingCategoriesTable.toArray();
+  for (const r of rows) {
+    if (!r?.id) continue;
+    if (r.color) continue; // already set (user choice or cloud sync)
+    const hex = colorByName.get((r.name ?? "").toString().trim().toLowerCase());
+    if (hex) await fillingCategoriesTable.update(r.id, { color: hex, updatedAt: new Date() });
+  }
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 

@@ -539,7 +539,7 @@ export async function saveFillingCategory(obj: Omit<FillingCategory, "id" | "cre
   if (obj.id) {
     const existing = await db.fillingCategories.get(obj.id);
     const oldName = existing?.name;
-    await db.fillingCategories.update(obj.id, { name: obj.name, shelfStable: obj.shelfStable, archived: obj.archived, updatedAt: now });
+    await db.fillingCategories.update(obj.id, { name: obj.name, shelfStable: obj.shelfStable, color: obj.color, archived: obj.archived, updatedAt: now });
     // Cascade rename to all fillings that reference the old name.
     if (oldName && oldName !== obj.name) {
       const affected = await db.fillings.where("category").equals(oldName).toArray();
@@ -552,6 +552,7 @@ export async function saveFillingCategory(obj: Omit<FillingCategory, "id" | "cre
   return await db.fillingCategories.add({
     name: obj.name,
     shelfStable: obj.shelfStable,
+    color: obj.color,
     archived: obj.archived,
     createdAt: now,
     updatedAt: now,
@@ -593,6 +594,7 @@ export async function ensureDefaultFillingCategories(): Promise<void> {
       await db.fillingCategories.add({
         name: cat.name,
         shelfStable: cat.shelfStable,
+        color: cat.color,
         createdAt: now,
         updatedAt: now,
       } as FillingCategory);

@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap } from "@/lib/hooks";
+import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap, useFillingCategoryMap } from "@/lib/hooks";
 import { deriveShopColor, resolveShopColor } from "@/lib/shopColor";
 import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type Product, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
 import { colorToCSS } from "@/lib/colors";
+import { NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
 import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromFractions, fillFractionToGrams, gramsToFillFraction } from "@/lib/costCalculation";
 import { reachableIngredientIds } from "@/lib/fillingComponents";
 import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition } from "@/lib/nutrition";
@@ -29,6 +30,7 @@ export default function ProductDetailPage() {
   const product = useProduct(productId);
   const productFillings = useProductFillings(productId);
   const allFillings = useFillings();
+  const fillingCategoryMap = useFillingCategoryMap();
   const allMoulds = useMouldsList(true);
   const productCategories = useProductCategories();
   const productCategory = useProductCategory(product?.productCategoryId);
@@ -868,10 +870,14 @@ export default function ProductDetailPage() {
                 </SortableContext>
               </DndContext>
               {productFillings.length > 1 && localFillMode !== "grams" && (
-                <FillBar productFillings={productFillings.map((bl) => ({
-                  ...bl,
-                  fillingName: allFillings.find((l) => l.id === bl.fillingId)?.name ?? "Filling",
-                }))} />
+                <FillBar productFillings={productFillings.map((bl) => {
+                  const filling = allFillings.find((l) => l.id === bl.fillingId);
+                  return {
+                    ...bl,
+                    fillingName: filling?.name ?? "Filling",
+                    categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
+                  };
+                })} />
               )}
             </>
           )}
@@ -1034,10 +1040,14 @@ export default function ProductDetailPage() {
                 })}
               </ul>
               {productFillings.length > 1 && (
-                <FillBar productFillings={productFillings.map((bl) => ({
-                  ...bl,
-                  fillingName: allFillings.find((l) => l.id === bl.fillingId)?.name ?? "Filling",
-                }))} />
+                <FillBar productFillings={productFillings.map((bl) => {
+                  const filling = allFillings.find((l) => l.id === bl.fillingId);
+                  return {
+                    ...bl,
+                    fillingName: filling?.name ?? "Filling",
+                    categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
+                  };
+                })} />
               )}
             </>
           )}
@@ -2707,16 +2717,7 @@ function ProductFillingRow({
   );
 }
 
-// Distinct hues for up to 5 fillings — using Tailwind bg classes
-const SEGMENT_COLORS = [
-  "bg-primary",
-  "bg-status-warn-edge",
-  "bg-emerald-400",
-  "bg-violet-400",
-  "bg-rose-400",
-];
-
-function FillBar({ productFillings }: { productFillings: { id?: string; fillingId: string; fillPercentage: number; fillingName: string }[] }) {
+function FillBar({ productFillings }: { productFillings: { id?: string; fillingId: string; fillPercentage: number; fillingName: string; categoryColor: string }[] }) {
   const total = productFillings.reduce((s, bl) => s + (bl.fillPercentage ?? 0), 0);
   const isValid = total === 100;
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
@@ -2749,8 +2750,8 @@ function FillBar({ productFillings }: { productFillings: { id?: string; fillingI
             return (
               <div
                 key={bl.id}
-                className={`${SEGMENT_COLORS[i % SEGMENT_COLORS.length]} transition-all cursor-default`}
-                style={{ width: `${pct}%` }}
+                className="transition-all cursor-default"
+                style={{ width: `${pct}%`, backgroundColor: bl.categoryColor }}
                 onMouseEnter={() => setHoveredIdx(i)}
                 onMouseLeave={() => setHoveredIdx(null)}
                 onTouchStart={() => setHoveredIdx(i)}
