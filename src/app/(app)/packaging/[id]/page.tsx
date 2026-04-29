@@ -13,6 +13,17 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { StockStatusPanel } from "@/components/stock-status-panel";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { useSpaId } from "@/lib/use-spa-id";
+import type { PackagingKind } from "@/types";
+
+const PACKAGING_KIND_OPTIONS: ReadonlyArray<{
+  value: PackagingKind;
+  label: string;
+  description: string;
+}> = [
+  { value: "bonbon",    label: "Bonbon box",        description: "Multi-cavity gift box for moulded + enrobed bonbons." },
+  { value: "snack-bar", label: "Snack-bar pack",    description: "Multi-pack of snack bars (e.g. 2-, 3-, 4-pack)." },
+  { value: "bar",       label: "Bar wrapper",       description: "Single-bar wrapper. Capacity is always 1." },
+];
 
 function formatDate(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
@@ -43,6 +54,7 @@ export default function PackagingDetailPage() {
   const [capacity, setCapacity] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [notes, setNotes] = useState("");
+  const [productKind, setProductKind] = useState<PackagingKind>("bonbon");
 
   // Order form state
   const [orderDate, setOrderDate] = useState(todayISO());
@@ -68,13 +80,15 @@ export default function PackagingDetailPage() {
     setCapacity(String(pkg.capacity));
     setManufacturer(pkg.manufacturer ?? "");
     setNotes(pkg.notes ?? "");
+    setProductKind(pkg.productKind ?? "bonbon");
   }
 
   const [savedOnce, setSavedOnce] = useState(false);
   const formDirty = editing && pkg != null && (
     capacity !== String(pkg.capacity) ||
     manufacturer !== (pkg.manufacturer ?? "") ||
-    notes !== (pkg.notes ?? "")
+    notes !== (pkg.notes ?? "") ||
+    productKind !== (pkg.productKind ?? "bonbon")
   );
   const isDirty = (isNew && !savedOnce) || formDirty;
 
@@ -96,6 +110,7 @@ export default function PackagingDetailPage() {
     setCapacity(String(pkg!.capacity));
     setManufacturer(pkg!.manufacturer ?? "");
     setNotes(pkg!.notes ?? "");
+    setProductKind(pkg!.productKind ?? "bonbon");
     setEditing(true);
   }
 
@@ -107,11 +122,15 @@ export default function PackagingDetailPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!packagingId) return;
-    const cap = parseInt(capacity) || 1;
+    // Bar wrappers are single-piece by definition — clamp on save so the user
+    // can't accidentally configure a bar wrapper that holds multiple bars.
+    const rawCap = parseInt(capacity) || 1;
+    const cap = productKind === "bar" ? 1 : rawCap;
     await savePackaging({
       id: packagingId,
       name: pkg!.name,
       capacity: cap,
+      productKind,
       manufacturer: manufacturer.trim() || undefined,
       notes: notes.trim() || undefined,
       createdAt: pkg!.createdAt,
@@ -181,6 +200,8 @@ export default function PackagingDetailPage() {
               {!editing && (
                 <>
                   <p className="text-sm text-muted-foreground mt-0.5">
+                    {(PACKAGING_KIND_OPTIONS.find((o) => o.value === (pkg.productKind ?? "bonbon"))?.label ?? "Box")}
+                    {" · "}
                     fits {pkg.capacity} product{pkg.capacity !== 1 ? "s" : ""}
                   </p>
                   {pkg.manufacturer && (
@@ -226,6 +247,28 @@ export default function PackagingDetailPage() {
           /* ── Edit form (excludes name — handled by InlineNameEditor) ── */
           <form onSubmit={handleSave} className="space-y-3">
             <div>
+              <label className="label" htmlFor="pkg-product-kind">Holds</label>
+              <select
+                id="pkg-product-kind"
+                value={productKind}
+                onChange={(e) => {
+                  const next = e.target.value as PackagingKind;
+                  setProductKind(next);
+                  // Bar wrappers are always 1; force-correct any stale value
+                  // the moment the user picks "bar" so the input matches.
+                  if (next === "bar") setCapacity("1");
+                }}
+                className="input"
+              >
+                {PACKAGING_KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {PACKAGING_KIND_OPTIONS.find((o) => o.value === productKind)?.description}
+              </p>
+            </div>
+            <div>
               <label className="label">Product capacity *</label>
               <input
                 type="number"
@@ -235,10 +278,15 @@ export default function PackagingDetailPage() {
                 min="1"
                 step="1"
                 required
+                disabled={productKind === "bar"}
                 autoFocus={isNew}
                 className="input"
               />
-              <p className="text-xs text-muted-foreground mt-0.5">How many products fit in this packaging</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {productKind === "bar"
+                  ? "Bar wrappers always hold a single bar."
+                  : "How many products fit in this packaging"}
+              </p>
             </div>
             <div>
               <label className="label">Manufacturer / Brand</label>

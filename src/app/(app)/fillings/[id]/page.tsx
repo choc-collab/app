@@ -2,11 +2,13 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useFilling, useFillingIngredients, useIngredients, saveFilling, deleteFilling, deleteFillingWithCleanup, archiveFillingWithCleanup, unarchiveFilling, updateFillingAllergens, useFillingUsage, reorderFillingIngredients, useFillingVersionHistory, forkFillingVersion, getFillingForkImpact, getFillingDeleteImpact, hasProductBeenProduced, hasFillingBeenProduced, getFillingArchiveImpact, useProductsList, saveProduct, addFillingToProduct, duplicateFilling, useAllFillingStatuses } from "@/lib/hooks";
+import { useFilling, useFillingIngredients, useFillingComponents, useFillings, useIngredients, saveFilling, deleteFilling, deleteFillingWithCleanup, archiveFillingWithCleanup, unarchiveFilling, cascadeAllergensFromFilling, useFillingUsage, reorderFillingIngredients, useFillingVersionHistory, forkFillingVersion, getFillingForkImpact, getFillingDeleteImpact, hasProductBeenProduced, hasFillingBeenProduced, getFillingArchiveImpact, useProductsList, saveProduct, addFillingToProduct, duplicateFilling, useAllFillingStatuses } from "@/lib/hooks";
 import { useSpaId } from "@/lib/use-spa-id";
 import type { FillingArchiveImpact, FillingDeleteImpact } from "@/lib/hooks";
 import { SortableFillingIngredientRow } from "@/components/sortable-filling-ingredient-row";
 import { AddFillingIngredient } from "@/components/add-filling-ingredient";
+import { AddFillingComponent } from "@/components/add-filling-component";
+import { NestedFillingList } from "@/components/nested-filling-list";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -50,6 +52,10 @@ export default function FillingDetailPage() {
   const [showForkPanel, setShowForkPanel] = useState(false);
   const [forkNotes, setForkNotes] = useState("");
   const [forkImpact, setForkImpact] = useState<Product[] | null>(null);
+  // Host fillings that nest the current filling. Forking does NOT touch
+  // their component edges — listed for context so the user knows what stays
+  // on the old version.
+  const [forkNestedHosts, setForkNestedHosts] = useState<import("@/types").Filling[]>([]);
   const [forking, setForking] = useState(false);
 
   // Duplicate state
@@ -66,11 +72,12 @@ export default function FillingDetailPage() {
   const [archiveSoleProducts, setArchiveSoleProducts] = useState(true);
   const [removeFromMultiProducts, setRemoveFromMultiProducts] = useState(true);
   const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      if (showForkPanel) { setShowForkPanel(false); setForkNotes(""); setForkImpact(null); }
+      if (showForkPanel) { setShowForkPanel(false); setForkNotes(""); setForkImpact(null); setForkNestedHosts([]); }
       else if (showArchivePanel) { setShowArchivePanel(false); setArchiveImpact(null); }
       else if (confirmDelete) { setConfirmDelete(false); }
       else if (editing) { handleCancel(); }
@@ -127,10 +134,25 @@ export default function FillingDetailPage() {
     return null;
   }
 
-  const totalGrams = fillingIngredients.reduce((sum, li) => {
+  // Subscribe at the top level so the recipe total here can include nested
+  // filling components alongside this filling's own ingredients. The
+  // `NestedFillingSection` further down also uses `useFillingComponents`;
+  // useLiveQuery dedupes the underlying subscription so this is cheap.
+  const ownComponents = useFillingComponents(fillingId);
+
+  // Recipe total = own ingredient grams + nested filling component grams.
+  // Components carry their unit too (always "g" today, but the same toGrams
+  // helper handles future units the way ingredients do). Nested components
+  // are part of the recipe for cook-loss math and per-ingredient % display.
+  const ownIngredientGrams = fillingIngredients.reduce((sum, li) => {
     const g = toGrams(li.amount, li.unit);
     return g != null ? sum + g : sum;
   }, 0);
+  const nestedComponentGrams = ownComponents.reduce((sum, c) => {
+    const g = toGrams(c.amount, c.unit);
+    return g != null ? sum + g : sum;
+  }, 0);
+  const totalGrams = ownIngredientGrams + nestedComponentGrams;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -138,7 +160,10 @@ export default function FillingDetailPage() {
   );
 
   const handleIngredientChanged = useCallback(() => {
-    if (fillingId) updateFillingAllergens(fillingId);
+    // Cascade so any host that nests this filling refreshes its cached
+    // allergens too (Phase 2). The cascade walks the parent edges from
+    // `fillingId` upward and refreshes each host's `Filling.allergens`.
+    if (fillingId) cascadeAllergensFromFilling(fillingId);
   }, [fillingId]);
 
   async function handleDragEnd(event: DragEndEvent) {
@@ -202,8 +227,9 @@ export default function FillingDetailPage() {
 
   async function handleOpenForkPanel() {
     if (!fillingId) return;
-    const { products } = await getFillingForkImpact(fillingId);
+    const { products, nestedInsideFillings } = await getFillingForkImpact(fillingId);
     setForkImpact(products);
+    setForkNestedHosts(nestedInsideFillings);
     setForkNotes("");
     setShowForkPanel(true);
     setConfirmDelete(false);
@@ -496,6 +522,12 @@ export default function FillingDetailPage() {
               <AddFillingIngredient fillingId={fillingId} onAdded={handleIngredientChanged} />
             </div>
           )}
+
+          {/* Nested fillings (filling-in-filling, Phase 1). Visible read-only
+              when there are any rows; the add-and-remove controls only show
+              while editing. Sits below the ingredient list because reads are
+              additive — most fillings won't use nested components today. */}
+          <NestedFillingSection fillingId={fillingId} editing={editing} />
         </div>
       )}
 
@@ -542,6 +574,23 @@ export default function FillingDetailPage() {
                   <p className="text-xs text-muted-foreground">This filling isn&rsquo;t used in any products yet — only the filling record will be versioned.</p>
                 )
               )}
+              {forkNestedHosts.length > 0 && (
+                <div className="rounded-md bg-muted/50 px-3 py-2 text-xs space-y-1" data-testid="fork-nested-hosts-notice">
+                  <p className="font-medium">
+                    Nested in {forkNestedHosts.length === 1 ? "1 filling" : `${forkNestedHosts.length} fillings`} — these will keep using the old version:
+                  </p>
+                  <ul className="space-y-0.5 pl-3">
+                    {forkNestedHosts.map((f) => (
+                      <li key={f.id} className="list-disc">{f.name}</li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-muted-foreground">
+                    Edit{" "}
+                    {forkNestedHosts.length === 1 ? "that filling" : "those fillings"}
+                    {" "}separately if you want to swap in the new version.
+                  </p>
+                </div>
+              )}
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={handleFork}
@@ -551,7 +600,7 @@ export default function FillingDetailPage() {
                   {forking ? "Creating…" : "Create new version"}
                 </button>
                 <button
-                  onClick={() => { setShowForkPanel(false); setForkImpact(null); setForkNotes(""); }}
+                  onClick={() => { setShowForkPanel(false); setForkImpact(null); setForkNotes(""); setForkNestedHosts([]); }}
                   className="btn-secondary px-3 py-1.5 text-sm"
                 >
                   Cancel
@@ -607,6 +656,36 @@ export default function FillingDetailPage() {
               <p className="text-xs text-muted-foreground">
                 This filling has been used in production and cannot be deleted. Archiving will hide it from lists but preserve it for production history.
               </p>
+
+              {/* Block archive while this filling is nested inside others.
+                  We don't cascade-remove component edges silently — that would
+                  be a surprising side-effect, so the user has to clear the
+                  edges manually first. */}
+              {archiveImpact.nestedInsideFillings.length > 0 && (
+                <div
+                  className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive space-y-1"
+                  data-testid="archive-blocked-nested"
+                  role="alert"
+                >
+                  <p className="font-medium">
+                    Can&rsquo;t archive — nested inside{" "}
+                    {archiveImpact.nestedInsideFillings.length === 1 ? "another filling" : "other fillings"}.
+                  </p>
+                  <ul className="space-y-0.5 pl-3">
+                    {archiveImpact.nestedInsideFillings.map((f) => (
+                      <li key={f.id} className="list-disc">{f.name}</li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] opacity-80">
+                    Remove this filling as a nested component on{" "}
+                    {archiveImpact.nestedInsideFillings.length === 1 ? "that filling" : "those fillings"} first.
+                  </p>
+                </div>
+              )}
+
+              {archiveError && (
+                <p className="text-xs text-destructive" role="alert">{archiveError}</p>
+              )}
 
               {archiveImpact.soleFillingProducts.length > 0 && (
                 <div className="space-y-2">
@@ -670,23 +749,26 @@ export default function FillingDetailPage() {
                 <button
                   onClick={async () => {
                     setArchiving(true);
+                    setArchiveError(null);
                     try {
                       await archiveFillingWithCleanup(fillingId, {
                         archiveSoleProducts,
                         removeFromMultiProducts,
                       });
                       router.replace("/fillings");
+                    } catch (err) {
+                      setArchiveError(err instanceof Error ? err.message : "Archive failed");
                     } finally {
                       setArchiving(false);
                     }
                   }}
-                  disabled={archiving}
+                  disabled={archiving || archiveImpact.nestedInsideFillings.length > 0}
                   className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
                 >
                   {archiving ? "Archiving…" : "Archive filling"}
                 </button>
                 <button
-                  onClick={() => { setShowArchivePanel(false); setArchiveImpact(null); setArchiveSoleProducts(true); setRemoveFromMultiProducts(true); }}
+                  onClick={() => { setShowArchivePanel(false); setArchiveImpact(null); setArchiveSoleProducts(true); setRemoveFromMultiProducts(true); setArchiveError(null); }}
                   className="btn-secondary px-4 py-2"
                 >
                   Cancel
@@ -1046,5 +1128,44 @@ function FillingVersionHistoryTab({ versions, currentId }: { versions: import("@
         );
       })}
     </ul>
+  );
+}
+
+function NestedFillingSection({
+  fillingId,
+  editing,
+}: {
+  fillingId: string;
+  editing: boolean;
+}) {
+  const components = useFillingComponents(fillingId);
+  const allFillings = useFillings(/* includeArchived */ true);
+  // Reads "all" fillings (including archived) so a row whose child got
+  // archived after being linked still resolves to a name. The picker
+  // (AddFillingComponent) filters archived fillings out of its list.
+  const fillingsById = new Map(allFillings.filter((f) => f.id != null).map((f) => [f.id!, f]));
+  const existingChildIds = components.map((c) => c.childFillingId);
+
+  // Collapse to nothing when there's no list and we're not editing — keeps
+  // the page clean for fillings that don't use this feature at all.
+  if (components.length === 0 && !editing) return null;
+
+  return (
+    <div className="mt-6">
+      <h2 className="text-sm font-medium text-muted-foreground mb-2">
+        Nested fillings ({components.length})
+      </h2>
+      <NestedFillingList
+        components={components}
+        fillingsById={fillingsById}
+        editable={editing}
+      />
+      {editing && (
+        <AddFillingComponent
+          fillingId={fillingId}
+          existingChildIds={existingChildIds}
+        />
+      )}
+    </div>
   );
 }

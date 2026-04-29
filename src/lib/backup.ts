@@ -11,6 +11,11 @@ export interface BackupData {
   fillings: unknown[];
   productFillings: unknown[];
   fillingIngredients: unknown[];
+  /** Nested-filling component edges (filling-in-filling, v0.3+). Optional so
+   *  pre-feature backups still import cleanly. The importer drops rows whose
+   *  fillingId or childFillingId isn't present in the imported `fillings`
+   *  list, and reports the count via the resolved import result. */
+  fillingComponents?: unknown[];
   moulds: unknown[];
   productionPlans: unknown[];
   planProducts: unknown[];
@@ -63,6 +68,7 @@ async function buildBackupData(): Promise<BackupData> {
     fillings,
     productFillings,
     fillingIngredients,
+    fillingComponents,
     moulds,
     productionPlans,
     planProducts,
@@ -95,6 +101,7 @@ async function buildBackupData(): Promise<BackupData> {
     db.fillings.toArray(),
     db.productFillings.toArray(),
     db.fillingIngredients.toArray(),
+    db.fillingComponents.toArray(),
     db.moulds.toArray(),
     db.productionPlans.toArray(),
     db.planProducts.toArray(),
@@ -131,6 +138,7 @@ async function buildBackupData(): Promise<BackupData> {
     fillings,
     productFillings,
     fillingIngredients,
+    fillingComponents,
     moulds,
     productionPlans,
     planProducts,
@@ -165,7 +173,8 @@ async function buildBackupData(): Promise<BackupData> {
 function hasAnyData(data: BackupData): boolean {
   const arrays: unknown[][] = [
     data.ingredients, data.products, data.productCategories ?? [], data.fillings,
-    data.productFillings, data.fillingIngredients, data.moulds, data.productionPlans,
+    data.productFillings, data.fillingIngredients, data.fillingComponents ?? [],
+    data.moulds, data.productionPlans,
     data.planProducts, data.planFillings ?? [], data.planStepStatus, data.userPreferences ?? [],
     data.productFillingHistory ?? [], data.ingredientPriceHistory ?? [],
     data.coatingChocolateMappings ?? [], data.productCostSnapshots ?? [],
@@ -217,6 +226,21 @@ export interface DestructiveOpOptions {
   snapshot?: boolean;
 }
 
+/** Result of a backup import — surfaces validation problems the importer
+ *  recovered from (instead of failing the whole restore). Today this only
+ *  reports nested-filling ref problems; future schemas can extend it. */
+export interface BackupImportResult {
+  /** Filling-component rows that were dropped because their `fillingId` or
+   *  `childFillingId` didn't match any imported filling. Each entry is the
+   *  unknown id we encountered, deduped, sorted. */
+  droppedFillingComponentRefs: string[];
+  /** Filling-component rows that were dropped because they would have
+   *  introduced a cycle in the imported graph (e.g. a hand-edited backup).
+   *  Each entry is the row's own id (when present) or a synthetic
+   *  fillingId→childFillingId tag. */
+  droppedFillingComponentCycles: string[];
+}
+
 export async function clearAllData(options?: DestructiveOpOptions): Promise<void> {
   if (options?.snapshot !== false) {
     await writeSafetySnapshot("choc-collab-snapshot-before-clear");
@@ -225,6 +249,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
     "rw",
     [
       db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings, db.fillingIngredients,
+      db.fillingComponents,
       db.moulds, db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.settings, db.userPreferences,
       db.productFillingHistory, db.ingredientPriceHistory, db.coatingChocolateMappings,
       db.productCostSnapshots, db.packaging, db.packagingOrders, db.decorationMaterials,
@@ -236,7 +261,8 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
     async () => {
       await Promise.all([
         db.ingredients.clear(), db.products.clear(), db.productCategories.clear(), db.fillings.clear(),
-        db.productFillings.clear(), db.fillingIngredients.clear(), db.moulds.clear(),
+        db.productFillings.clear(), db.fillingIngredients.clear(), db.fillingComponents.clear(),
+        db.moulds.clear(),
         db.productionPlans.clear(), db.planProducts.clear(), db.planFillings.clear(), db.planStepStatus.clear(),
         db.settings.clear(), db.userPreferences.clear(), db.productFillingHistory.clear(), db.ingredientPriceHistory.clear(),
         db.coatingChocolateMappings.clear(), db.productCostSnapshots.clear(),
@@ -256,6 +282,31 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
 // --- Legacy-field migrators (applied on import so old Recipe/Layer/Bonbon backups keep working) ---
 
 type AnyRec = Record<string, unknown>;
+
+/**
+ * Inline mirror of `wouldCreateCycle` from `@/lib/fillingComponents`. Lives
+ * here so backup.ts doesn't pull in a hooks dep just to import that helper.
+ * Asks: would adding `host → candidate` close a loop in the graph defined
+ * by `childMap`?
+ */
+function closesCycle(
+  childMap: Map<string, string[]>,
+  hostId: string,
+  candidateChildId: string,
+): boolean {
+  if (hostId === candidateChildId) return true;
+  const visited = new Set<string>();
+  const stack = [candidateChildId];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    if (cur === hostId) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    const children = childMap.get(cur);
+    if (children) for (const c of children) stack.push(c);
+  }
+  return false;
+}
 
 function renameField<T extends AnyRec>(obj: T, oldKey: string, newKey: string): T {
   if (obj && oldKey in obj && !(newKey in obj)) {
@@ -343,7 +394,7 @@ function applyAll<T>(rows: unknown[] | undefined, fn: (r: AnyRec) => AnyRec): T[
   return rows.map(r => fn((r ?? {}) as AnyRec)) as T[];
 }
 
-export async function importBackup(file: File, options?: DestructiveOpOptions): Promise<void> {
+export async function importBackup(file: File, options?: DestructiveOpOptions): Promise<BackupImportResult> {
   const text = await file.text();
   const data: BackupData = JSON.parse(text);
 
@@ -394,6 +445,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const rawFillingStock            = data.fillingStock            ?? data.layerStock             ?? [];
   const rawFillingCategories       = data.fillingCategories       ?? [];
   const rawIngredientCategories    = data.ingredientCategories    ?? [];
+  const rawFillingComponents       = data.fillingComponents       ?? [];
 
   // Apply field-level migrations for backups written pre-rename.
   const ingredients              = rawIngredients as never[];
@@ -428,10 +480,59 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const fillingCategories        = rawFillingCategories as never[];
   const ingredientCategories     = rawIngredientCategories as never[];
 
+  // Validate filling-component refs against the fillings list. A backup that
+  // names a fillingId/childFillingId without including the corresponding row
+  // would leave the imported DB in an inconsistent state (cost / nutrition /
+  // allergen aggregation walks would break), so drop the row and report it.
+  // Also reject rows that would close a cycle in the imported graph — same
+  // invariant the live save mutator enforces.
+  const fillingIdSet = new Set<string>(
+    (fillings as Array<{ id?: string }>).map((f) => f?.id).filter((id): id is string => typeof id === "string"),
+  );
+  const droppedFillingComponentRefs = new Set<string>();
+  const droppedFillingComponentCycles: string[] = [];
+  const refValidComponents: AnyRec[] = [];
+  for (const row of rawFillingComponents as AnyRec[]) {
+    const fillingId = typeof row?.fillingId === "string" ? row.fillingId : undefined;
+    const childFillingId = typeof row?.childFillingId === "string" ? row.childFillingId : undefined;
+    if (!fillingId || !fillingIdSet.has(fillingId)) {
+      if (fillingId) droppedFillingComponentRefs.add(fillingId);
+      continue;
+    }
+    if (!childFillingId || !fillingIdSet.has(childFillingId)) {
+      if (childFillingId) droppedFillingComponentRefs.add(childFillingId);
+      continue;
+    }
+    if (fillingId === childFillingId) {
+      droppedFillingComponentCycles.push((row.id as string) ?? `${fillingId}->${childFillingId}`);
+      continue;
+    }
+    refValidComponents.push(row);
+  }
+  // Detect transitive cycles by walking the candidate graph and dropping any
+  // edge whose insertion would close a loop. Rejecting greedily — same shape
+  // as `wouldCreateCycle`, but inline because backup.ts shouldn't pull in a
+  // hooks dep just to import the helper.
+  const childMap = new Map<string, string[]>();
+  const fillingComponents: AnyRec[] = [];
+  for (const row of refValidComponents) {
+    const hostId = row.fillingId as string;
+    const childId = row.childFillingId as string;
+    if (closesCycle(childMap, hostId, childId)) {
+      droppedFillingComponentCycles.push((row.id as string) ?? `${hostId}->${childId}`);
+      continue;
+    }
+    fillingComponents.push(row);
+    const existing = childMap.get(hostId);
+    if (existing) existing.push(childId);
+    else childMap.set(hostId, [childId]);
+  }
+
   await db.transaction(
     "rw",
     [
       db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings, db.fillingIngredients,
+      db.fillingComponents,
       db.moulds, db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.settings, db.userPreferences,
       db.productFillingHistory, db.ingredientPriceHistory, db.coatingChocolateMappings,
       db.productCostSnapshots, db.packaging, db.packagingOrders, db.decorationMaterials,
@@ -443,7 +544,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
     async () => {
       await Promise.all([
         db.ingredients.clear(), db.products.clear(), db.productCategories.clear(), db.fillings.clear(),
-        db.productFillings.clear(), db.fillingIngredients.clear(), db.moulds.clear(),
+        db.productFillings.clear(), db.fillingIngredients.clear(), db.fillingComponents.clear(),
+        db.moulds.clear(),
         db.productionPlans.clear(), db.planProducts.clear(), db.planFillings.clear(), db.planStepStatus.clear(),
         db.settings.clear(), db.userPreferences.clear(), db.productFillingHistory.clear(), db.ingredientPriceHistory.clear(),
         db.coatingChocolateMappings.clear(), db.productCostSnapshots.clear(),
@@ -461,6 +563,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         fillings.length                 && db.fillings.bulkAdd(fillings),
         productFillings.length          && db.productFillings.bulkAdd(productFillings),
         fillingIngredients.length       && db.fillingIngredients.bulkAdd(fillingIngredients),
+        fillingComponents.length        && db.fillingComponents.bulkAdd(fillingComponents as never[]),
         moulds.length                   && db.moulds.bulkAdd(moulds),
         productionPlans.length          && db.productionPlans.bulkAdd(productionPlans),
         planProducts.length             && db.planProducts.bulkAdd(planProducts),
@@ -514,6 +617,11 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   // than the new `userPreferences` table. Migrate them if userPreferences is
   // empty but legacy settings exist.
   await reconcileUserPreferencesAfterImport(rawLegacySettings);
+
+  return {
+    droppedFillingComponentRefs: Array.from(droppedFillingComponentRefs).sort(),
+    droppedFillingComponentCycles: droppedFillingComponentCycles.sort(),
+  };
 }
 
 /**

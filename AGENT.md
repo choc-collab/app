@@ -75,7 +75,21 @@ Dexie Cloud generates entity IDs containing a `|` pipe character (e.g. `ing0Ppjy
 
 3. **When you add a new `[id]` route, also add the rewrite rule in both hosts' configs.** `public/_redirects` for Cloudflare (nested routes before parents — see the comment in that file) and `vercel.json` for Vercel. Each route needs **two** Cloudflare patterns: `/fillings/*/` (trailing slash, `*` glob — catches `/fillings/xyz/`) and `/fillings/:id` (no trailing slash, named placeholder — catches `/fillings/xyz`). A single `/fillings/*` is a trap: the `*` glob matches empty, so it swallows the list URL `/fillings/` into the detail placeholder.
 
+4. **Every new `[id]` route directory must include a sibling `layout.tsx` that exports `generateStaticParams()`.** `output: "export"` refuses to build a dynamic route without it, so omitting the layout fails the production build with `Page "…/[id]" is missing "generateStaticParams()"`. Follow the one-line convention used by every other dynamic route in the app:
+   ```tsx
+   // src/app/(app)/<segment>/[id]/layout.tsx
+   export async function generateStaticParams() {
+     return [{ id: "_spa" }];
+   }
+
+   export default function Layout({ children }: { children: React.ReactNode }) {
+     return children;
+   }
+   ```
+
 Never pass a raw route segment directly to a DB lookup or hook.
+
+**Always run `npm run build` before committing any change that adds or modifies a route, page, or `public/_redirects`.** `next dev` does not produce a static export, so route-level failures (missing `generateStaticParams()`, rewrite regressions, route-tree mismatches) only surface at build time. A clean `npm run build` is a precondition for the commit, not a release-time step.
 
 ---
 

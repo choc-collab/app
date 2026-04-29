@@ -146,7 +146,7 @@ export default function NestedComponentsProposalPage() {
       />
 
       {/* Tab strip — matches existing detail-page tab pattern */}
-      <div className="flex border-b border-border px-4 max-w-2xl">
+      <div className="flex border-b border-border px-4 max-w-2xl overflow-x-auto">
         {(
           [
             { id: "nested", label: "Filling-in-filling", icon: Layers },
@@ -158,7 +158,7 @@ export default function NestedComponentsProposalPage() {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm -mb-px border-b-2 transition-colors ${
+              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm whitespace-nowrap -mb-px border-b-2 transition-colors ${
                 tab === t.id
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"

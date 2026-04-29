@@ -29,8 +29,10 @@ test.describe("Product Categories", () => {
 
   test("seeded categories show their range and default", async ({ page }) => {
     await openCategoriesTab(page);
-    await expect(page.getByText("shell 15%–50%")).toBeVisible();   // moulded
-    await expect(page.getByText("shell 0%–100%")).toBeVisible();   // bar
+    // "shell 15%–50%" matches both `moulded` and `snack bar` rows; scope to
+    // the moulded link so the assertion is unambiguous.
+    await expect(page.getByRole("link", { name: /^moulded\b.*shell 15%–50%/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^bar\b.*shell 0%–100%/ })).toBeVisible();
   });
 
   test("creates a new category and lands on the detail page", async ({ page }) => {

@@ -7,8 +7,11 @@ import {
   useMouldsList, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, deletePlanFilling, toggleStep,
   useDecorationMaterials, setDecorationMaterialLowStock, useCurrentCoatingMappings,
   saveFillingStock, deductFillingStock, useShelfStableCategoryNames,
+  useProductCategoryMap, useCollections, usePackagingList, useAllCollectionPackagings, useCurrencySymbol,
+  packagePlanProductAsSales,
+  useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
 } from "@/lib/hooks";
-import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
+import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
 import { normalizeApplyAt } from "@/types";
 import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
@@ -16,6 +19,9 @@ import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 import { LeftoverModal } from "@/components/leftover-modal";
 import type { LeftoverEntry } from "@/components/leftover-modal";
+import { PackageModal } from "@/components/package-modal";
+import type { PackageChoice } from "@/components/package-modal";
+import { useRouter } from "next/navigation";
 import { LowStockFlagButton } from "@/components/pantry";
 import { printLabels } from "@/lib/printer";
 import type { LabelData } from "@/lib/printer";
@@ -29,6 +35,7 @@ const PHASES = [
   { id: "fill",    label: "Fill"     },
   { id: "cap",     label: "Cap"      },
   { id: "unmould", label: "Unmould"  },
+  { id: "package", label: "Package"  },
 ] as const;
 
 type PhaseId = typeof PHASES[number]["id"];
@@ -117,6 +124,12 @@ function PlanContent({
   const allIngredients = useIngredients();
   const allMaterials = useDecorationMaterials();
   const currentCoatingMappings = useCurrentCoatingMappings();
+  const productCategoryMap = useProductCategoryMap();
+  const collections = useCollections();
+  const packagings = usePackagingList(true);
+  const allCollectionPackagings = useAllCollectionPackagings();
+  const currencySymbol = useCurrencySymbol();
+  const router = useRouter();
   const materialsMap = useMemo(() => new Map(allMaterials.map((m) => [m.id!, m])), [allMaterials]);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
@@ -138,6 +151,20 @@ function PlanContent({
     entries: LeftoverEntry[];
     pendingStepKey?: string; // the fill step key that triggered the modal (single step)
     pendingFinishAll?: boolean; // true when triggered from "mark all done" flow
+  } | null>(null);
+
+  // Package modal state — wraps unmoulded bars into prepared Shop sales.
+  // `pendingStepKeys` are the package-* step keys that will be toggled ON
+  // when the modal confirms; on cancel, nothing is written.
+  //
+  // `mode: "single"` is a user clicking one package step inline (or ticking
+  // a package step's checkbox directly). `mode: "batch"` means the modal was
+  // opened mid-way through a "Mark all done" / yield-modal flow, so on confirm
+  // we should finish the rest of the plan and route to the Shop.
+  const [packageModal, setPackageModal] = useState<{
+    entries: Array<{ planProductId: string; productName: string; quantity: number }>;
+    pendingStepKeys: string[];
+    mode: "single" | "batch";
   } | null>(null);
 
   const printerEnabled = typeof window !== "undefined" && localStorage.getItem("niimbot-printer-enabled") === "true";
@@ -184,21 +211,49 @@ function PlanContent({
     [planProducts, productNames, productFillingsMap, fillingIngredientsMap, fillingsMap, mouldsMap, fillingOverrides, fillingPreviousBatches, productsMap, shelfStableCategoryNames]
   );
 
+  // Nested-filling expansion (Phase 3): treat every nested filling as its own
+  // batch entry so consolidation can produce per-filling totals across the
+  // whole plan. Loaded ahead of `standaloneAmounts` because that calc also
+  // looks at component edges to scale nested rows on the standalone card.
+  const allFillingComponentsByFilling = useAllFillingComponentsByFilling();
+  const allFillingIngredientsByFilling = useAllFillingIngredientsByFilling();
+
   /** Standalone (PlanFilling-driven) batch amounts — scaled ingredients for
    *  each row. Empty for pure full-production plans. */
   const standaloneAmounts = useMemo(
-    () => calculateStandaloneFillingAmounts(planFillings, fillingsMap, fillingIngredientsMap),
-    [planFillings, fillingsMap, fillingIngredientsMap],
+    () => calculateStandaloneFillingAmounts(planFillings, fillingsMap, fillingIngredientsMap, allFillingComponentsByFilling),
+    [planFillings, fillingsMap, fillingIngredientsMap, allFillingComponentsByFilling],
   );
+  const fillingAmountsWithNested = useMemo(() => {
+    attachScaledNestedFillings(
+      fillingAmounts,
+      allFillingComponentsByFilling,
+      allFillingIngredientsByFilling,
+      fillingsMap,
+    );
+    const nested = expandNestedFillings(
+      fillingAmounts.filter((la) => !la.isFromPreviousBatch),
+      allFillingComponentsByFilling,
+      allFillingIngredientsByFilling,
+      fillingsMap,
+    );
+    attachScaledNestedFillings(
+      nested,
+      allFillingComponentsByFilling,
+      allFillingIngredientsByFilling,
+      fillingsMap,
+    );
+    return [...fillingAmounts, ...nested];
+  }, [fillingAmounts, allFillingComponentsByFilling, allFillingIngredientsByFilling, fillingsMap]);
 
-  const consolidatedFillings = useMemo(
-    () => consolidateSharedFillings(fillingAmounts.filter((la) => !la.isFromPreviousBatch)),
-    [fillingAmounts],
-  );
+  const consolidatedFillings = useMemo(() => {
+    const consolidated = consolidateSharedFillings(fillingAmountsWithNested.filter((la) => !la.isFromPreviousBatch));
+    return topoSortFillingsChildrenFirst(consolidated, allFillingComponentsByFilling);
+  }, [fillingAmountsWithNested, allFillingComponentsByFilling]);
 
   const steps = useMemo(() =>
-    generateSteps(planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts),
-    [planProducts, productNames, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts]
+    generateSteps(planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling),
+    [planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling]
   );
 
   /** Mode is derived from plan contents — no stored enum. */
@@ -392,6 +447,30 @@ function PlanContent({
       }
     }
 
+    // Intercept package steps being checked ON → show package modal so the
+    // operator picks which collection × wrapper to wrap each bar batch into.
+    // Requires actualYield on the PlanProduct (set by the unmould step); if
+    // it's not set yet, fall back to the mould's totalProducts as the count.
+    if (!current && key.startsWith("package-")) {
+      const step = steps.find((s) => s.key === key);
+      if (step?.planProductId) {
+        const pb = planProducts.find((b) => b.id === step.planProductId);
+        const qty = pb?.actualYield ?? step.totalProducts ?? 0;
+        if (qty > 0) {
+          setPackageModal({
+            entries: [{
+              planProductId: step.planProductId,
+              productName: step.label.replace("Package: ", ""),
+              quantity: qty,
+            }],
+            pendingStepKeys: [key],
+            mode: "single",
+          });
+          return;
+        }
+      }
+    }
+
     await toggleStep(planId, key, !current);
     const newDoneCount = doneCount + (current ? -1 : 1);
     const newStatus = newDoneCount >= steps.length ? "done" : newDoneCount > 0 ? "active" : "draft";
@@ -455,6 +534,7 @@ function PlanContent({
         planId,
         madeAt,
         createdAt: Date.now(),
+        ...(pf.notes ? { notes: pf.notes } : {}),
       });
       existingKey.add(key);
     }
@@ -491,6 +571,29 @@ function PlanContent({
             };
           }),
           mode: "batch",
+        });
+        return;
+      }
+    }
+
+    // Intercept package phase "Mark all done" → show package modal for every
+    // bar batch that hasn't been wrapped yet. Same shape as the unmould
+    // intercept above; pending step keys are toggled on confirm.
+    if (targetDone && phaseId === "package") {
+      const pendingPackage = phaseSteps.filter((s) => s.planProductId && !(statusMap.get(s.key)));
+      if (pendingPackage.length > 0) {
+        setPackageModal({
+          entries: pendingPackage.map((s) => {
+            const pb = planProducts.find((b) => b.id === s.planProductId);
+            const qty = pb?.actualYield ?? s.totalProducts ?? 0;
+            return {
+              planProductId: s.planProductId!,
+              productName: s.label.replace("Package: ", ""),
+              quantity: qty,
+            };
+          }).filter((e) => e.quantity > 0),
+          pendingStepKeys: pendingPackage.map((s) => s.key),
+          mode: "single",
         });
         return;
       }
@@ -543,6 +646,32 @@ function PlanContent({
     setConfirmMarkDone(false);
   }
 
+  /** Build the PackageModal entry list for any pending `package-*` steps,
+   *  using `entries` (the yields just confirmed) to fill in quantities. Falls
+   *  back to the PlanProduct's current actualYield if the pending step wasn't
+   *  part of this yield-modal batch. */
+  function buildPendingPackageEntries(entries: YieldEntry[]): {
+    entries: Array<{ planProductId: string; productName: string; quantity: number }>;
+    pendingStepKeys: string[];
+  } {
+    const yieldByPlanProduct = new Map(entries.map((e) => [e.planProductId, e.yield]));
+    const pending = steps.filter(
+      (s) => s.group === "package" && s.planProductId && !statusMap.get(s.key),
+    );
+    return {
+      entries: pending.map((s) => {
+        const pb = planProducts.find((b) => b.id === s.planProductId);
+        const qty = yieldByPlanProduct.get(s.planProductId!) ?? pb?.actualYield ?? s.totalProducts ?? 0;
+        return {
+          planProductId: s.planProductId!,
+          productName: s.label.replace("Package: ", ""),
+          quantity: qty,
+        };
+      }).filter((e) => e.quantity > 0),
+      pendingStepKeys: pending.map((s) => s.key),
+    };
+  }
+
   async function handleYieldConfirm(entries: YieldEntry[]) {
     // Save actual yield on each PlanProduct
     for (const entry of entries) {
@@ -561,7 +690,23 @@ function PlanContent({
         await saveProductionPlan({ ...plan as any, id: plan.id, status: newStatus });
       }
     } else {
-      // Batch mode — toggle all steps, then show leftover modal before finishing
+      // Batch mode — handle package phase + leftover fillings before completing.
+      //
+      // Order matters: we park the yields, then (1) ask for bar packaging, then
+      // (2) deduct filling leftovers, then finishMarkAllDone. Both (1) and (2)
+      // are their own modals, so each continuation point lives in its own
+      // confirm handler.
+      const pendingPackage = buildPendingPackageEntries(entries);
+      if (pendingPackage.entries.length > 0) {
+        setPackageModal({
+          entries: pendingPackage.entries,
+          pendingStepKeys: pendingPackage.pendingStepKeys,
+          mode: "batch",
+        });
+        setYieldModal(null);
+        return;
+      }
+
       for (const step of steps) {
         if (!statusMap.get(step.key)) {
           await toggleStep(planId, step.key, true);
@@ -588,6 +733,69 @@ function PlanContent({
       await finishMarkAllDone();
     }
     setYieldModal(null);
+  }
+
+  /** Confirmed packaging choices — write the prepared sales, toggle the
+   *  package steps done, and either land back on the plan (single-step flow)
+   *  or continue the batch finish flow. Ends by routing to /shop so the
+   *  operator lands on the Shop counter with the new bars already in queue. */
+  async function handlePackageConfirm(choices: PackageChoice[]) {
+    for (const choice of choices) {
+      if (!choice.collectionId || !choice.packagingId || choice.quantity <= 0) continue;
+      const pb = planProducts.find((b) => b.id === choice.planProductId);
+      if (!pb) continue;
+      await packagePlanProductAsSales({
+        planProductId: choice.planProductId,
+        productId: pb.productId,
+        collectionId: choice.collectionId,
+        packagingId: choice.packagingId,
+        price: choice.price,
+        quantity: choice.quantity,
+      });
+    }
+
+    const pendingKeys = packageModal?.pendingStepKeys ?? [];
+    const mode = packageModal?.mode ?? "single";
+    for (const key of pendingKeys) {
+      if (!statusMap.get(key)) await toggleStep(planId, key, true);
+    }
+    setPackageModal(null);
+
+    if (mode === "batch") {
+      // Continue the "Mark all done" flow interrupted by the package modal:
+      // toggle remaining steps, handle leftover fillings, complete + route.
+      for (const step of steps) {
+        if (!statusMap.get(step.key) && !pendingKeys.includes(step.key)) {
+          await toggleStep(planId, step.key, true);
+        }
+      }
+      const hadPendingFillSteps = steps.filter((s) => s.group === "fill").some((s) => !statusMap.get(s.key));
+      if (hadPendingFillSteps) {
+        const leftoverEntries = buildAllLeftoverEntries();
+        if (leftoverEntries.length > 0) {
+          setLeftoverModal({ entries: leftoverEntries, pendingFinishAll: true });
+          return;
+        }
+        await deductPreviousBatchStock();
+      }
+      await finishMarkAllDone();
+      router.push("/shop");
+      return;
+    }
+
+    // Single-step flow — only the clicked package step(s) toggle. Don't touch
+    // other phases. If the plan happens to now be complete, complete + route
+    // to the Shop; otherwise refresh the plan status and stay put.
+    const newDoneCount = doneCount + pendingKeys.filter((k) => !statusMap.get(k)).length;
+    if (newDoneCount >= steps.length) {
+      await completePlan();
+      router.push("/shop");
+      return;
+    }
+    const newStatus = newDoneCount > 0 ? "active" : "draft";
+    if (newStatus !== plan.status) {
+      await saveProductionPlan({ ...plan as any, id: plan.id, status: newStatus });
+    }
   }
 
   async function handlePrintLabels() {
@@ -1149,6 +1357,19 @@ function PlanContent({
           mode={yieldModal.mode}
           onConfirm={handleYieldConfirm}
           onCancel={() => setYieldModal(null)}
+        />
+      )}
+
+      {/* Package modal — wraps unmoulded bars into prepared Shop sales. */}
+      {packageModal && (
+        <PackageModal
+          entries={packageModal.entries}
+          collections={collections}
+          packagings={packagings}
+          collectionPackagings={allCollectionPackagings}
+          currencySymbol={currencySymbol}
+          onConfirm={handlePackageConfirm}
+          onCancel={() => setPackageModal(null)}
         />
       )}
 

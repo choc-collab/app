@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useProductionPlans, useProductsList, usePendingShoppingCount } from "@/lib/hooks";
+import { useProductionPlans, useProductsList, usePendingShoppingCount, useShopKpis } from "@/lib/hooks";
 import { useMemo, useState, useEffect } from "react";
 
 function useGreeting() {
@@ -46,6 +46,17 @@ function ObservatoryHint() {
   return <span>{done} completed batch{done !== 1 ? "es" : ""} to explore</span>;
 }
 
+function ShopHint() {
+  const kpis = useShopKpis();
+  if (kpis.boxesSoldToday > 0) {
+    return <span>{kpis.boxesSoldToday} box{kpis.boxesSoldToday !== 1 ? "es" : ""} sold today</span>;
+  }
+  if (kpis.preparedCount > 0) {
+    return <span>{kpis.preparedCount} box{kpis.preparedCount !== 1 ? "es" : ""} ready to sell</span>;
+  }
+  return <span>Counter-side sales &amp; labels</span>;
+}
+
 const CARDS = [
   {
     name: "The Workshop",
@@ -83,9 +94,9 @@ const CARDS = [
     name: "The Shop",
     description: "Build a custom box, print labels with allergens and nutritional values.",
     href: "/shop",
-    hint: () => <span>Coming soon</span>,
+    hint: ShopHint,
     icon: ShopIcon,
-    enabled: false,
+    enabled: true,
   },
 ] as const;
 

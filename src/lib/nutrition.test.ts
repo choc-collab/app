@@ -19,7 +19,7 @@ import {
   type NutritionData,
   type IngredientNutritionEntry,
 } from "./nutrition";
-import type { Mould, Ingredient, ProductFilling, FillingIngredient, CoatingChocolateMapping } from "@/types";
+import type { Mould, Ingredient, ProductFilling, FillingIngredient, FillingComponent, CoatingChocolateMapping } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Energy conversion
@@ -356,10 +356,13 @@ describe("getNutrientsByMarket", () => {
     expect(us.some(n => n.key === "cholesterolMg")).toBe(true);
   });
 
-  it("AU uses energyKj (not kcal) and sodium (not salt)", () => {
+  it("AU uses kJ (mandatory) plus kcal (voluntary) and sodium (not salt)", () => {
     const au = getNutrientsByMarket("AU");
-    expect(au.some(n => n.key === "energyKj")).toBe(true);
-    expect(au.some(n => n.key === "energyKcal")).toBe(false);
+    const kj = au.find(n => n.key === "energyKj");
+    const kcal = au.find(n => n.key === "energyKcal");
+    expect(kj?.mandatory).toBe(true);
+    // kcal is shown for international readability but isn't required by FSANZ
+    expect(kcal?.mandatory).toBe(false);
     expect(au.some(n => n.key === "sodium")).toBe(true);
     expect(au.some(n => n.key === "salt")).toBe(false);
   });
@@ -567,5 +570,107 @@ describe("resolveCoatingIngredient", () => {
     ];
     const result = resolveCoatingIngredient("dark", mappings, ingredientMap);
     expect(result?.id).toBe("chocA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nested-filling nutrition (Phase 2 contract)
+// ---------------------------------------------------------------------------
+//
+// The nutrition engine has to walk through nested fillings and weight each
+// leaf ingredient by the host's portion of the child. The contract here:
+// nesting a filling that contributes 50% of the parent's mass should produce
+// nutrition rolled-up at exactly 50% from each side.
+
+describe("calculateProductNutrition — nested fillings", () => {
+  // Two leaf ingredients with very different nutrition so it's easy to read
+  // out the per-g weighting in the result.
+  const cream = makeIngredient("cream", "Cream", { fat: 35, protein: 2 });
+  const sugar = makeIngredient("sugar", "Sugar", { fat: 0, sugars: 100 });
+
+  const productFillings: ProductFilling[] = [
+    { id: "pf-1", productId: "p-1", fillingId: "host", sortOrder: 0, fillPercentage: 100 },
+  ];
+
+  it("flattens a nested filling into the host's nutrition", () => {
+    // Inner: 100g cream → totals 100g; nutrition is 35g fat per 100g.
+    // Host: 100g of inner (no own ingredients) → flattened: 100g cream.
+    const fillingIngredientsMap = new Map<string, FillingIngredient[]>([
+      ["inner", [{ id: "li-1", fillingId: "inner", ingredientId: "cream", amount: 100, unit: "g" }]],
+    ]);
+    const fillingComponentsMap = new Map<string, FillingComponent[]>([
+      ["host", [{ id: "fc-1", fillingId: "host", childFillingId: "inner", amount: 100, unit: "g" }]],
+    ]);
+    const ingredientMap = new Map([["cream", cream]]);
+
+    const result = calculateProductNutrition({
+      mould: testMould,
+      productFillings,
+      fillingIngredientsMap,
+      fillingComponentsMap,
+      ingredientMap,
+      shellIngredient: null,
+      shellPercentage: 0,
+    });
+
+    // Without nesting support the result would be empty (host has no own
+    // ingredients). With it, the cream's nutrition flows through.
+    expect(result.per100g.fat).toBeCloseTo(35);
+    expect(result.per100g.protein).toBeCloseTo(2);
+  });
+
+  it("weights leaf nutrition by the host's portion of the nested filling", () => {
+    // Inner: 50g cream + 50g sugar → 100g total.
+    //   Cream contributes 35g fat / 100g → 17.5g fat per inner-100g.
+    //   Sugar contributes 0 fat → 0g.
+    //   Inner per-100g: fat = 17.5g.
+    //
+    // Host: 100g of inner only. So host per-100g should match inner per-100g.
+    const fillingIngredientsMap = new Map<string, FillingIngredient[]>([
+      ["inner", [
+        { id: "li-1", fillingId: "inner", ingredientId: "cream", amount: 50, unit: "g" },
+        { id: "li-2", fillingId: "inner", ingredientId: "sugar", amount: 50, unit: "g" },
+      ]],
+    ]);
+    const fillingComponentsMap = new Map<string, FillingComponent[]>([
+      ["host", [{ id: "fc-1", fillingId: "host", childFillingId: "inner", amount: 100, unit: "g" }]],
+    ]);
+    const ingredientMap = new Map([["cream", cream], ["sugar", sugar]]);
+
+    const result = calculateProductNutrition({
+      mould: testMould,
+      productFillings,
+      fillingIngredientsMap,
+      fillingComponentsMap,
+      ingredientMap,
+      shellIngredient: null,
+      shellPercentage: 0,
+    });
+
+    // 50/50 split → fat is 17.5g per 100g of host.
+    expect(result.per100g.fat).toBeCloseTo(17.5, 1);
+    // Sugars field of 100g/100g, halved → 50g.
+    expect(result.per100g.sugars).toBeCloseTo(50, 1);
+  });
+
+  it("keeps the legacy behaviour when fillingComponentsMap is omitted", () => {
+    // No components map → host has no own ingredients → no contribution.
+    const fillingIngredientsMap = new Map<string, FillingIngredient[]>([
+      ["inner", [{ id: "li-1", fillingId: "inner", ingredientId: "cream", amount: 100, unit: "g" }]],
+    ]);
+    const ingredientMap = new Map([["cream", cream]]);
+
+    const result = calculateProductNutrition({
+      mould: testMould,
+      productFillings,
+      fillingIngredientsMap,
+      // no fillingComponentsMap
+      ingredientMap,
+      shellIngredient: null,
+      shellPercentage: 0,
+    });
+
+    expect(result.per100g.fat ?? 0).toBe(0);
+    expect(result.ingredientsTotal).toBe(0);
   });
 });
