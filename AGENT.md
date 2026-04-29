@@ -12,6 +12,26 @@ A future **cloud file sync** path (File System Access API writing to iCloud Driv
 
 **Liability posture**: this is a tool built for a working chocolatier's own use, shared as OSS under MIT. It is not a certified, supported product. The README and first-run experience should make this clear. Keep the risk surface small: no hosting of other users' data, no uptime promises, prominent backup UX.
 
+## Out-of-scope subsystem: `/choccy-chat`
+
+The repo contains a small **side-project that is NOT part of Choc-collab the app** — a fan-run directory of chocolatiers around James Parsons' Friday Choccy Chat lives, hosted at `choc-collab.org/choccy-chat`. It shares the domain only because the maintainer of both is the same person.
+
+When working on Choc-collab features, **treat this subsystem as out-of-scope**. Don't import its code, don't reuse its types, don't extend its data model. The boundary is intentional.
+
+**Where it lives**:
+- `src/app/(public)/choccy-chat/` — public map + join form + self-removal page
+- `src/app/admin/choccy-chat/` — admin queue (Cloudflare Access gated)
+- `worker/` — Cloudflare Worker serving `/api/choccy-chat/*` (Turnstile-gated submissions, D1-backed approved-entries, Access-gated admin)
+- `src/data/chocolatiers.json` — single-entry static fallback for the public map
+
+**Why it's segregated from Choc-collab the app**:
+1. **Different data model** — D1 (server-side, custodial) vs. IndexedDB (local-first, user-owned). Mixing them would violate the local-first liability posture in this file.
+2. **Different licensing reality** — Choc-collab is genuinely fork-friendly; the Choccy Chat directory is personal infrastructure that nobody else would want to deploy.
+3. **PII surface area** — the Worker handles submitter emails. PRs to `worker/`, `src/app/(public)/choccy-chat/`, `src/app/admin/`, or `src/data/chocolatiers.json` need extra-careful review per [CONTRIBUTING.md](CONTRIBUTING.md). In particular, the Worker's public `/api/choccy-chat/friends` response must contain only the fields listed in `worker/src/types.ts:FriendPublic` — never `email`, `contact_name`, `notes`, `ip_hash`, or `removal_token`.
+4. **Deployment runbook** — operational steps for the directory live in [`worker/DEPLOY.md`](worker/DEPLOY.md), not in this Choc-collab agent guide.
+
+**If you are an agent working on Choc-collab features**: skip this entire subsystem. Touch it only when the user explicitly asks about Choccy Chat, the directory, the Worker, the admin UI, or the Cloudflare Access / D1 / Turnstile setup. When in doubt, ask.
+
 ## Architecture Constraints
 Keep these in mind for every new feature:
 

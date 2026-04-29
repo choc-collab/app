@@ -45,3 +45,6 @@ skills-lock.json
 # playwright artifacts
 playwright-report/
 test-results/
+
+# wrangler local cache (Cloudflare Worker dev state — do not commit)
+.wrangler/

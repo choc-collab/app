@@ -44,6 +44,7 @@ Choc-collab keeps everything a chocolatier needs in one place: products built fr
 - [Design system](#design-system)
 - [Contributing](#contributing)
 - [Third-party services](#third-party-services)
+- [About `/choccy-chat`](#about-choccy-chat)
 - [License](#license)
 
 ## Features
@@ -348,6 +349,16 @@ Community-contributed seed data (ingredient libraries, mould catalogues) is espe
 ## Third-party services
 
 Cross-device sync is available via [Dexie Cloud](https://dexie.org/cloud/), a third-party service with its own [terms](https://dexie.org/cloud/docs/terms). The app works fully offline without it.
+
+## About `/choccy-chat`
+
+The repo also contains a small side-project hosted on the same domain at [`choc-collab.org/choccy-chat`](https://choc-collab.org/choccy-chat) — **a fan-run directory of home and small-batch chocolatiers who hang out around James Parsons' weekly Choccy Chat lives on Instagram**. It is not affiliated with James or [SoSaSe Chocolat](https://www.sosasechocolat.com), and **it is not part of Choc-collab the app**. The two share a domain because the maintainer of both is the same person — nothing more.
+
+The directory's code lives under [`src/app/(public)/choccy-chat/`](src/app/(public)/choccy-chat), [`src/app/admin/choccy-chat/`](src/app/admin/choccy-chat), and [`worker/`](worker). Submissions are stored in a Cloudflare D1 database; admin endpoints are gated by Cloudflare Access. The submission form, public map, and admin queue are all separate from the Choc-collab app and do not share its IndexedDB.
+
+This directory subsystem **handles community PII** (submitter emails and contact names, kept private; workshop name, city, country, and chosen links, shown publicly). PRs touching `/choccy-chat`, `/admin`, or `worker/` are reviewed with extra care to make sure private columns never leak into the public `/api/choccy-chat/friends` response. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+If you fork Choc-collab to run your own workshop tool, you almost certainly do not want any of this — feel free to delete the three directories above and the related routes.
 
 ## License
 
