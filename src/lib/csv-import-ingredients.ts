@@ -97,6 +97,71 @@ export function mapIngredientRow(row: Record<string, string>): Omit<Ingredient, 
 }
 
 // ---------------------------------------------------------------------------
+// Export — ingredient → CSV row (inverse of mapIngredientRow)
+// ---------------------------------------------------------------------------
+
+function formatCSVField(val: unknown): string {
+  if (val === undefined || val === null) return "";
+  const s = typeof val === "boolean" ? (val ? "true" : "false") : String(val);
+  if (s === "") return "";
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+export function ingredientToCSVRow(i: Ingredient): string {
+  const allergenSet = new Set(i.allergens ?? []);
+  const values: unknown[] = [
+    i.name,
+    i.commercialName,
+    i.manufacturer,
+    i.brand,
+    i.vendor,
+    i.source,
+    i.category,
+    i.purchaseCost,
+    i.purchaseDate,
+    i.purchaseQty,
+    i.purchaseUnit,
+    i.gramsPerUnit,
+    i.notes,
+    i.cacaoFat,
+    i.sugar,
+    i.milkFat,
+    i.water,
+    i.solids,
+    i.otherFats,
+    i.alcohol,
+    i.shellCapable,
+    i.pricingIrrelevant,
+    ...ALLERGEN_COLUMNS.map((id) => allergenSet.has(id)),
+    ...NUTRITION_COLUMNS.map((key) => i.nutrition?.[key]),
+  ];
+  return values.map(formatCSVField).join(",");
+}
+
+export function buildIngredientsCSV(ingredients: readonly Ingredient[]): string {
+  const header = INGREDIENT_TEMPLATE_COLUMNS.join(",");
+  const rows = ingredients.map(ingredientToCSVRow);
+  return [header, ...rows].join("\n") + "\n";
+}
+
+export async function exportIngredientsCSV(): Promise<number> {
+  if (typeof document === "undefined") return 0;
+  const all = await db.ingredients.toArray();
+  const active = all.filter((i) => !i.archived);
+  const csv = buildIngredientsCSV(active);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const date = new Date().toISOString().slice(0, 10);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ingredients-${date}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  return active.length;
+}
+
+// ---------------------------------------------------------------------------
 // Validator
 // ---------------------------------------------------------------------------
 
