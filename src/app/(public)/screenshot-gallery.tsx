@@ -9,6 +9,14 @@ type Shot = {
 
 const SHOTS: Shot[] = [
   {
+    src: "/docs/screenshots/today-dashboard.png",
+    caption: "The Today dashboard — what needs attention, all on one screen.",
+  },
+  {
+    src: "/docs/screenshots/shop-landing.png",
+    caption: "Counter-side Shop — pre-packaged boxes ready to sell in one tap.",
+  },
+  {
     src: "/docs/screenshots/product-composition.png",
     caption: "Compose a product from shell, fillings, and mould.",
   },

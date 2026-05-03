@@ -172,7 +172,7 @@ const SECTIONS: Section[] = [
             <strong>What to watch out for:</strong> data is tied to this one
             browser on this one device. Clear your browser data and it&apos;s
             gone. No sync across iPad + laptop. <strong>Backup is essential</strong>
-            {" "}— see section 15.
+            {" "}— see section 16.
           </li>
         </ul>
         <h3>Hosted (with Dexie Cloud sync)</h3>
@@ -277,7 +277,8 @@ const SECTIONS: Section[] = [
         <p>
           The app populates a small sample workshop: a dozen ingredients, half a dozen fillings, a
           couple of moulds, a few products, and a finished batch in the Observatory so you can see the
-          charts actually charting.
+          charts actually charting. When you reopen the app, the <strong>Today dashboard</strong>{" "}
+          will have something to show — read on for what you&apos;re looking at.
         </p>
         <Shot label="Settings → Load demo data" src="/docs/screenshots/settings-demo.png" />
         <Callout kind="warn" title="Clearing demo data">
@@ -353,8 +354,84 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "ingredient",
+    id: "dashboard",
     num: "06",
+    title: "Your Today dashboard",
+    teaser: "What you'll land on every time you open the app — a single screen of the day's work.",
+    render: () => (
+      <>
+        <p className="sub">
+          Open the app and the <strong>Today</strong>{" "}screen is what greets you. It&apos;s the
+          new home of the app — designed so you don&apos;t have to click through five sections to
+          find what needs doing right now.
+        </p>
+        <h3>The four header tiles</h3>
+        <ul>
+          <li>
+            <strong>Shopping list</strong> — how many ingredients, packaging, and decoration
+            materials you&apos;ve flagged to reorder. Click through to mark them ordered.
+          </li>
+          <li>
+            <strong>In progress</strong> — your active and draft production batches, listed by
+            name. Click a batch name to open its checklist; click the small book icon to jump to
+            its scaled recipes. Hover on the name to peek at what&apos;s in the batch.
+          </li>
+          <li>
+            <strong>Experiments brewing</strong> — a placeholder for the upcoming <em>Lab</em>{" "}
+            feature (ganache formulation sandbox). Empty for now.
+          </li>
+          <li>
+            <strong>Week sales</strong> — revenue and box count over the last seven days, plus a
+            link to the Observatory&apos;s shop breakdown for the deeper view.
+          </li>
+        </ul>
+
+        <h3>To Make: pick what to produce next</h3>
+        <p>
+          Below the tiles, the <strong>To Make</strong> list shows products from any{" "}
+          <em>active collection</em>{" "}that are low or out of stock — with a yellow pill when below
+          your reorder point and a red pill when at zero. A blue Snowflake pill appears alongside
+          when you have frozen pieces in reserve, so you see both what&apos;s on the shelf and
+          what&apos;s waiting in the freezer.
+        </p>
+        <p>
+          Tick the rows you want to make and hit <strong>Production plan →</strong> at the bottom
+          — the wizard opens with those products pre-selected, so you skip the picker step.
+        </p>
+
+        <h3>Sell · Quick: one-tap sales</h3>
+        <p>
+          The <strong>Sell · Quick</strong>{" "}grid mirrors the Ready tab from the Shop. Each tile is
+          a group of identical pre-packaged boxes you&apos;ve filled in advance. Click{" "}
+          <strong>Sell</strong> on a tile with one box left, or pick a quantity and click{" "}
+          <strong>Sell N</strong> on a tile with several. A small <em>Sold · Undo</em> toast at
+          the bottom gives you a 5-second window to reverse a misclick.
+        </p>
+        <p>
+          Anything more involved — a custom box, a refund, a multi-pack — bounces you to the full
+          Shop screen via the <strong>Go to shop →</strong> link.
+        </p>
+
+        <h3>Universal search</h3>
+        <p>
+          The search field at the top of the dashboard searches everything by name: products,
+          fillings, ingredients, moulds, batches. Press <kbd>⌘K</kbd> (Mac) or{" "}
+          <kbd>Ctrl+K</kbd> (Windows / Linux) from anywhere on the page to focus it. Click any
+          result to jump straight to that item&apos;s detail page.
+        </p>
+
+        <Callout kind="tip" title="Returning to Today from anywhere">
+          The first item in the side navigation is <strong>Today</strong> with a home icon — it&apos;s
+          always visible, regardless of which section you&apos;re in. The top-of-nav logo also
+          links here.
+        </Callout>
+        <Shot label="Today dashboard with a populated workshop" src="/docs/screenshots/today-dashboard.png" />
+      </>
+    ),
+  },
+  {
+    id: "ingredient",
+    num: "07",
     title: "Add your first ingredient",
     teaser: "Ingredients are the atoms. Get these right and everything above them behaves.",
     render: () => (
@@ -406,7 +483,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "filling",
-    num: "07",
+    num: "08",
     title: "Build a filling",
     teaser: "A reusable recipe — ganache, caramel, praline, pâte de fruit.",
     render: () => (
@@ -480,7 +557,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "product",
-    num: "08",
+    num: "09",
     title: "Compose a product",
     teaser: "A shell, one or more fillings, a mould, and a few flags.",
     render: () => (
@@ -524,7 +601,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "production",
-    num: "09",
+    num: "10",
     title: "Plan a production run",
     teaser: "Pick products, pick moulds, let the app do the scaling.",
     render: () => (
@@ -570,7 +647,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "stock",
-    num: "10",
+    num: "11",
     title: "Stock, freezer, and leftovers",
     teaser: "What you have, what's frozen, what's expiring.",
     render: () => (
@@ -611,7 +688,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "collections",
-    num: "11",
+    num: "12",
     title: "Collections and pricing",
     teaser: "Curate seasonal sets; see every box's margin at a glance.",
     render: () => (
@@ -632,7 +709,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "shop",
-    num: "12",
+    num: "13",
     title: "The Shop — selling boxes (and giving them away)",
     teaser: "Fill a box from stock, log the sale, track give-aways at cost.",
     render: () => (
@@ -691,15 +768,16 @@ const SECTIONS: Section[] = [
         <h3>What the Shop does behind the scenes</h3>
         <ul>
           <li><strong>Pulls from stock.</strong> Filling a box reserves the pieces; selling it commits the deduction. Voiding a prepared box returns them to stock.</li>
-          <li><strong>Uses collection pricing.</strong> Retail price comes from the collection × packaging pair you set up in section 11. Change the price on the collection and future boxes pick it up; already-prepared boxes keep the price they were prepared at.</li>
-          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 13 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
+          <li><strong>Uses collection pricing.</strong> Retail price comes from the collection × packaging pair you set up in section 12. Change the price on the collection and future boxes pick it up; already-prepared boxes keep the price they were prepared at.</li>
+          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 14 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
         </ul>
+        <Shot label="Shop landing — today's revenue, KPIs, and ready-to-sell boxes" src="/docs/screenshots/shop-landing.png" />
       </>
     ),
   },
   {
     id: "observatory",
-    num: "13",
+    num: "14",
     title: "The Observatory — your numbers in one place",
     teaser: "Pricing health, production trends, product-cost breakdowns, and shop sales.",
     render: () => (
@@ -759,7 +837,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "allergens",
-    num: "14",
+    num: "15",
     title: "Allergens and nutrition",
     teaser: "Enter once at the ingredient level. The app does the rest.",
     render: () => (
@@ -787,7 +865,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "backup",
-    num: "15",
+    num: "16",
     title: "Backup, restore, and cloud sync",
     teaser: "Your data is yours. Treat it that way.",
     render: () => (
@@ -846,7 +924,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "dexie-cloud",
-    num: "16",
+    num: "17",
     title: "Setting up Dexie Cloud sync (step by step)",
     teaser: "The bit that lets your iPad and laptop see the same data. Twenty minutes, no code.",
     render: () => (
@@ -1184,7 +1262,7 @@ jobs:
   },
   {
     id: "shortcuts",
-    num: "17",
+    num: "18",
     title: "Keyboard shortcuts",
     teaser: "Small, but they add up.",
     render: () => (
@@ -1213,7 +1291,7 @@ jobs:
   },
   {
     id: "faq",
-    num: "18",
+    num: "19",
     title: "Troubleshooting and FAQ",
     teaser: "The things I've been asked most.",
     render: () => (
@@ -1463,7 +1541,7 @@ jobs:
             </li>
             <li>
               <strong>Backups are your responsibility.</strong> The app offers exports and
-              auto-snapshots (see section 15), but I can&apos;t recover data for you. If your
+              auto-snapshots (see section 16), but I can&apos;t recover data for you. If your
               iPad dies and you never exported, the data is gone. Treat a weekly backup like
               closing the till.
             </li>
@@ -1497,13 +1575,14 @@ jobs:
 
 const HUB_GROUPS = [
   { title: "Get set up", ids: ["welcome", "hosted-or-local", "install", "demo", "preferences"] },
+  { title: "Day to day", ids: ["dashboard"] },
   { title: "Build your pantry", ids: ["ingredient", "filling", "product"] },
   { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "observatory"] },
   { title: "Labels, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },
 ];
 
 const HUB_ACCENTS: Record<string, string> = {
-  welcome: "cocoa", "hosted-or-local": "mint", install: "blue", demo: "butter", preferences: "taupe",
+  welcome: "cocoa", "hosted-or-local": "mint", install: "blue", demo: "butter", dashboard: "lilac", preferences: "taupe",
   ingredient: "sage", filling: "peach", product: "cocoa",
   production: "terracotta", stock: "taupe", collections: "butter", shop: "peach", observatory: "sage",
   allergens: "mint", backup: "lilac", "dexie-cloud": "mint", shortcuts: "taupe", faq: "blue",
@@ -1514,6 +1593,7 @@ const HUB_ICONS: Record<string, ReactNode> = {
   "hosted-or-local": <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M15 8a2.5 2.5 0 0 1 1.8 4.3H8.5a2 2 0 0 1-.3-4A3 3 0 0 1 14 8h1Z"/></svg>,
   install:     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14"/></svg>,
   demo:        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M4 6h16v12H4zM4 10h16M8 14h4"/></svg>,
+  dashboard:   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
   preferences: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>,
   ingredient:  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M8 3v4M16 3v4M5 11h14M5 7h14a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a1 1 0 0 1 1-1z"/></svg>,
   filling:     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M6 2h12l-2 7H8zM8 9c-2 3-3 6-3 9a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3c0-3-1-6-3-9"/></svg>,

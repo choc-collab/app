@@ -84,6 +84,18 @@ test("capture all getting-started screenshots", async ({ page }) => {
   await openFirstCardUnder(page, "/collections", /\/collections\/[^/]+$/);
   await page.screenshot({ path: path.join(OUT, "collection-pricing.png") });
 
+  // ── 08 · Today dashboard — landing surface for daily ops ───────────────
+  await page.goto("/today");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(OUT, "today-dashboard.png") });
+
+  // ── 09 · Shop landing — Ready tab with prepared boxes ──────────────────
+  await page.goto("/shop");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(OUT, "shop-landing.png") });
+
   const files = await fs.readdir(OUT);
   console.log("Captured screenshots:", files.sort());
 });

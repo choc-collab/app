@@ -68,7 +68,7 @@ export default function TodayPage() {
           value={`${currency}${formatRevenue(signals.weekRevenue)}`}
           sub={`${signals.weekBoxesSold} ${signals.weekBoxesSold === 1 ? "box" : "boxes"}`}
           detail={lowStockDetail}
-          href="/shop"
+          href="/observatory/shop"
           cta="See breakdown"
           empty={signals.weekBoxesSold === 0}
         />

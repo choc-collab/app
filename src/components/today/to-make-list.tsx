@@ -267,7 +267,7 @@ function CtaBar({
   const labelKicker = disabled ? "Nothing selected" : `${selectedCount} selected`;
 
   return (
-    <div className={`mt-2 rounded-md border ${tone} flex items-center gap-3 px-3 py-2.5`}>
+    <div className={`mt-2 rounded-md border ${tone} flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 py-2.5`}>
       <div className="flex-1 min-w-0">
         <span className={`mono-label block ${disabled ? "" : "opacity-70"}`}>{labelKicker}</span>
         <span className="text-sm font-medium">{label}</span>
@@ -276,7 +276,7 @@ function CtaBar({
         type="button"
         onClick={onClick}
         disabled={disabled}
-        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${ctaTone} ${disabled ? "" : "hover:opacity-90"} transition-opacity`}
+        className={`self-start sm:self-auto shrink-0 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${ctaTone} ${disabled ? "" : "hover:opacity-90"} transition-opacity`}
       >
         <Plus className="w-3.5 h-3.5" />
         Production plan →

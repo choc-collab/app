@@ -12,11 +12,22 @@ export const metadata: Metadata = {
 type Highlight = {
   title: string;
   body: string;
-  accent: "cocoa" | "sage" | "butter" | "mint" | "blue" | "terracotta";
+  accent: "cocoa" | "sage" | "butter" | "mint" | "blue" | "terracotta" | "lilac" | "peach";
   icon: ReactNode;
 };
 
 const HIGHLIGHTS: Highlight[] = [
+  {
+    title: "A dashboard built for the workday",
+    body:
+      "Open the app and the Today screen surfaces what needs attention: shopping list, batches in progress, low-or-out-of-stock products, and one-tap sales for what's already on the counter. No clicking through five sections.",
+    accent: "lilac",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" />
+      </svg>
+    ),
+  },
   {
     title: "One pantry, infinite reuse",
     body:
@@ -47,6 +58,17 @@ const HIGHLIGHTS: Highlight[] = [
     icon: (
       <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7l9-4 9 4-9 4zM3 7v10l9 4M21 7v10l-9 4" />
+      </svg>
+    ),
+  },
+  {
+    title: "Counter-side Shop",
+    body:
+      "Build pre-packaged boxes ahead of the day, sell them in one tap from the dashboard or the Shop landing, and log give-aways at ingredient cost so reporting reflects what actually happened. Stock decrements as you fill and as you sell.",
+    accent: "peach",
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h2l1.5 11A2 2 0 0 0 8.5 17h8a2 2 0 0 0 2-1.6L20 7H6M9 21a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm9 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" />
       </svg>
     ),
   },
@@ -104,7 +126,7 @@ export default function LandingPage() {
             style={{ background: "var(--accent-terracotta-ink)" }}
           />
           <span>
-            <strong className="font-medium text-foreground">Latest release · v0.2</strong>
+            <strong className="font-medium text-foreground">Latest release · v0.4</strong>
             <span className="mx-1.5 text-border">·</span>
             What&apos;s new
           </span>

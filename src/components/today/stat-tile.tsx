@@ -43,7 +43,12 @@ export function StatTile({
     </div>
   );
 
-  if (href && !empty) {
+  // Empty tiles are still clickable — the destination usually has more
+  // content even when this dashboard tile shows zero (e.g. the Week sales
+  // tile is "0 boxes this week" but the Observatory shop page may have
+  // historical context). Visual dimming via `empty` is enough to signal
+  // that nothing's pressing.
+  if (href) {
     return (
       <Link href={href} className="block h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground rounded-lg">
         {inner}

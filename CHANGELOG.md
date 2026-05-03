@@ -4,6 +4,19 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
+## [0.5.0] — Unreleased
+
+### Added
+- **Today dashboard at `/today`** — a new in-app home that consolidates the daily-action signals into one screen. Four header tiles (Shopping list, In progress, Experiments brewing — placeholder for the Lab, Week sales) over two main sections: **To Make** (a checkbox list of low-or-out-of-stock products in any active collection that hands selected products straight into the production-plan wizard via session-storage seed) and **Sell · Quick** (a one-tap "Sell" or "Sell N" grid backed by the same prepared-sales data and stepper component as the `/shop` Ready tab, with an inline accent-coloured Undo toast). The In progress tile lists active and draft batches with the row name linking to `/production/[id]`, a small `BookOpen` icon link to scaled recipes, and a hover popover surfacing the batch's planned products and target-gram fillings. An audit-reminder footer surfaces when no product has been counted in 14 days.
+- **Universal search in the dashboard header** — substring search across Products, Fillings, Ingredients, Moulds, and Batches with grouped results, ⌘K / Ctrl+K to focus, Esc to clear and close, and click-through to each result's detail page. Replaces the previous Quick add menu.
+- **In-stock count pills on the To Make list** mirror the Stock view: warn-yellow border when below `lowStockThreshold`, alert-red when at zero (a state the dashboard intentionally surfaces — the Stock view filters those out). A blue Snowflake pill appears alongside when `frozenQty > 0`, with a `useProductFrozenMap()` hook parallel to `useProductStockMap()`.
+- **Inline-expanding side navigation** — top-level menu (Today, Workshop, Pantry, Lab, Observatory, Shop) is always rendered. When the user is in a section, that section's sub-items expand inline beneath its parent with a left-border indent — no mode-switch, no extra navigation step to reach a sibling section.
+
+### Changed
+- **`/app` redirects to `/today`** — the legacy `/app` URL bounces (302) to the new dashboard via both `public/_redirects` (Cloudflare) and `vercel.json`. Internal `Link href="/app"` references in the public landing pages and the side-nav have been updated to point at `/today` directly.
+- **`/today` carries the cocoa accent** so primary CTAs (Sell pills, Production-plan CTA, active tabs) inherit the same warm pastel as the `/shop` Ready tab they share data with.
+- **Stock-page shelf-life helpers extracted** — `sellBeforeDate` and `batchSellBy` moved from `src/app/(app)/stock/page.tsx` into `src/lib/freezer.ts` so the dashboard's expiring derivation and the Stock page share one source of truth.
+
 ## [0.4.0] — 2026-05-03
 
 ### Added

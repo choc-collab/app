@@ -1,17 +1,23 @@
 import { test, expect } from "./fixtures";
 
 test.describe("Navigation", () => {
-  test("app home loads and shows section cards", async ({ page }) => {
+  test("legacy /app URL redirects to the Today dashboard", async ({ page }) => {
     await page.goto("/app");
-    await expect(page.getByRole("link", { name: /The Pantry/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /The Workshop/i })).toBeVisible();
-    // The Lab card is currently disabled (Coming soon) — not a link
-    await expect(page.getByText(/The Lab/i)).toBeVisible();
+    await expect(page).toHaveURL(/\/today\/?$/);
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
   });
 
-  test("navigates to Pantry section", async ({ page }) => {
-    await page.goto("/app");
-    await page.getByRole("link", { name: /The Pantry/i }).click();
+  test("Today dashboard shows the tile row", async ({ page }) => {
+    await page.goto("/today");
+    await expect(page.getByText(/Shopping list/i)).toBeVisible();
+    await expect(page.getByText(/In progress/i).first()).toBeVisible();
+    await expect(page.getByText(/Experiments brewing/i)).toBeVisible();
+    await expect(page.getByText(/Week sales/i)).toBeVisible();
+  });
+
+  test("side nav navigates to Pantry", async ({ page }) => {
+    await page.goto("/today");
+    await page.getByRole("link", { name: "Pantry" }).first().click();
     await expect(page).toHaveURL("/pantry/");
   });
 
@@ -78,9 +84,9 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Stock" })).toBeVisible();
   });
 
-  test("side nav Home link returns to app home", async ({ page }) => {
+  test("side nav Home link returns to the Today dashboard", async ({ page }) => {
     await page.goto("/products");
-    await page.getByRole("link", { name: /Home/i }).click();
-    await expect(page).toHaveURL("/app/");
+    await page.getByRole("link", { name: /^Today$/ }).first().click();
+    await expect(page).toHaveURL("/today/");
   });
 });

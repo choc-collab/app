@@ -4,7 +4,7 @@ The UI is intentionally simple so contributors can focus on features, not pixel-
 
 ## Palette
 
-The interface chrome is **black on a warm off-white**; individual top-level sections are **tinted with a muted pastel accent** that identifies the section (Products = cocoa, Fillings = peach, Ingredients = sage, Moulds = powder blue, Packaging = lilac, Collections = butter, Decoration = mint, Workshop / Production = terracotta, Stock = taupe). Sections without an accent (Lab, Observatory, Settings, Shopping) stay monochrome.
+The interface chrome is **black on a warm off-white**; individual top-level sections are **tinted with a muted pastel accent** that identifies the section (Products = cocoa, Fillings = peach, Ingredients = sage, Moulds = powder blue, Packaging = lilac, Collections = butter, Decoration = mint, Workshop / Production = terracotta, Stock = taupe, **Today dashboard = cocoa**, Shop = cocoa, Shop give-aways = lilac). Sections without an accent (Lab, Observatory, Settings, Shopping) stay monochrome.
 
 All palette tokens are CSS variables defined in [`src/app/globals.css`](src/app/globals.css):
 
@@ -48,8 +48,18 @@ Inter variable, served via `next/font` and wired to `--font-sans`. Headings use 
 ## Side navigation
 
 - The nav sits on a subtle warm off-white surface (`--color-nav`) so it reads as a distinct column without a divider line — no `border-r` or `border-b`.
-- The logo doubles as the "home" link. Sections expose their sub-pages when the user is inside that section; at the root, the nav shows the top-level sections.
+- The logo doubles as the home link (→ `/today`). The top-level menu (Today, Workshop, Pantry, Lab, Observatory, Shop) is **always rendered**; when the user is inside a section, that section's sub-items inline-expand beneath its parent with a left-border accent — no mode-switch, no extra navigation step to reach a sibling section.
 - A small floating chevron button on the right edge toggles collapse between `w-44` (labeled) and `w-14` (icons-only). The choice is persisted in `localStorage` and applied pre-hydration via an inline script in `layout.tsx` to avoid a flash.
+
+## Today dashboard
+
+`/today` is the in-app home (legacy `/app` redirects). It surfaces actionable signals over a single screen:
+
+- A four-tile header — Shopping list, In progress, Experiments brewing (placeholder for the Lab feature), Week sales — uses the unified `StatTile` card shape with the `cocoa` accent inherited from the route. Empty tiles dim via opacity but stay clickable so the destination is always one tap away.
+- The **In progress** tile is a custom mini-board: up to 3 active/draft batches with the row name linking to `/production/[id]` and a small `BookOpen` icon link to its scaled-recipes view, plus a hover popover listing the planned products and target-gram fillings.
+- The **To Make** list scopes products to active collections only (matching the convention from `/products` and `/production/new`); each row carries an in-stock count pill (warn-yellow when below `lowStockThreshold`, alert-red at zero) and a blue Snowflake pill when frozen pieces exist.
+- The **Sell · Quick** grid mirrors `/shop`'s Ready tab: same `groupPreparedSales` data, same `SaleQuantityStepper` component, same `markSalesSold` path. A tile with `count === 1` shows a plain "Sell" button; `count > 1` shows the stepper plus a "Sell N" pill. An inline accent-coloured toast offers Undo for ~5 s after each sell.
+- A **universal search** in the header (⌘K / Ctrl+K) groups results by entity type across Products, Fillings, Ingredients, Moulds, and Batches.
 
 ## Dark mode
 
