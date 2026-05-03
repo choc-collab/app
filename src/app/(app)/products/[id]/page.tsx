@@ -1456,7 +1456,7 @@ function ProductCostTab({
   sym = "€",
 }: {
   productId: string;
-  product: { defaultMouldId?: string; coating?: string; name: string };
+  product: { defaultMouldId?: string; shellIngredientId?: string; shellPercentage?: number; coating?: string; name: string };
   productFillings: import("@/types").ProductFilling[];
   allMoulds: import("@/types").Mould[];
   sym?: string;
@@ -1478,7 +1478,8 @@ function ProductCostTab({
 
   const mould = allMoulds.find((m) => m.id === product.defaultMouldId);
   const hasMould = !!mould;
-  const hasCoating = !!product.coating;
+  const effectiveShellPct = product.shellPercentage ?? 37;
+  const needsShellChocolate = effectiveShellPct > 0 && !product.shellIngredientId;
 
   const ingredientsMap = new Map(allIngredients.map((i) => [i.id!, i]));
   const fillingsMap = new Map(allFillings.map((l) => [l.id!, l]));
@@ -1723,12 +1724,11 @@ function ProductCostTab({
           </p>
         </div>
       )}
-      {hasMould && !hasCoating && (
+      {hasMould && needsShellChocolate && (
         <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
           <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
           <p className="text-xs text-status-warn">
-            Shell and cap costs require a coating type. Set one above, then map it to a chocolate
-            ingredient in <strong>Settings → Coating Chocolates</strong>.
+            Shell cost is skipped because no <strong>shell chocolate</strong> is set. Pick one on the <strong>Product</strong> tab.
           </p>
         </div>
       )}
