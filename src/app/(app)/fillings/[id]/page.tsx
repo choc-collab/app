@@ -527,7 +527,7 @@ export default function FillingDetailPage() {
               when there are any rows; the add-and-remove controls only show
               while editing. Sits below the ingredient list because reads are
               additive — most fillings won't use nested components today. */}
-          <NestedFillingSection fillingId={fillingId} editing={editing} />
+          <NestedFillingSection fillingId={fillingId} editing={editing} totalGrams={totalGrams} />
         </div>
       )}
 
@@ -1134,9 +1134,11 @@ function FillingVersionHistoryTab({ versions, currentId }: { versions: import("@
 function NestedFillingSection({
   fillingId,
   editing,
+  totalGrams,
 }: {
   fillingId: string;
   editing: boolean;
+  totalGrams: number;
 }) {
   const components = useFillingComponents(fillingId);
   const allFillings = useFillings(/* includeArchived */ true);
@@ -1159,6 +1161,7 @@ function NestedFillingSection({
         components={components}
         fillingsById={fillingsById}
         editable={editing}
+        totalGrams={totalGrams}
       />
       {editing && (
         <AddFillingComponent
