@@ -49,17 +49,26 @@ export function consumeSeedFromTodayList(): string[] {
 export interface ToMakeRow {
   productId: string;
   name: string;
+  /** Available pieces — what's on the shelf, not in the freezer. Drives
+   *  the status classification. */
   pieces: number;
+  /** Frozen pieces, shown as a secondary indicator. Doesn't influence
+   *  status — frozen is "paused inventory" until defrosted. */
+  frozen: number;
   threshold: number | undefined;
-  /** "out" — zero pieces and a threshold is set (or stock has been zeroed
-   *  out post-production); "low" — non-zero but below threshold; "healthy" —
-   *  at or above threshold OR no threshold set. */
+  /** "out" — zero available pieces (regardless of threshold or frozen
+   *  reserves); "low" — non-zero but below threshold; "healthy" — at or
+   *  above threshold OR no threshold set with non-zero stock. */
   status: "out" | "low" | "healthy";
 }
 
 export interface BuildRowsInput {
   products: ReadonlyArray<{ id?: string; name: string; lowStockThreshold?: number; archived?: boolean }>;
   stockByProduct: ReadonlyMap<string, number>;
+  /** Optional — when provided, each row's `frozen` field is populated.
+   *  Frozen pieces never influence status; they're displayed alongside the
+   *  in-stock count as a "reserve" signal. */
+  frozenByProduct?: ReadonlyMap<string, number>;
 }
 
 /** Sort: most-urgent first. Within a status bucket, alphabetical by name. */
@@ -71,17 +80,20 @@ export function buildToMakeRows(input: BuildRowsInput): ToMakeRow[] {
     if (!p.id || p.archived) continue;
     const pieces = input.stockByProduct.get(p.id) ?? 0;
     const threshold = p.lowStockThreshold;
+    // Zero stock is always "out" — independent of whether a threshold has
+    // been configured. A threshold expresses "alert me when stock dips
+    // below N", but zero is a concrete problem you'd want to know about
+    // even if no threshold has been set yet.
     let status: ToMakeRow["status"];
-    if (threshold == null) {
-      status = "healthy"; // no threshold — never flagged
-    } else if (pieces <= 0) {
+    if (pieces <= 0) {
       status = "out";
-    } else if (pieces < threshold) {
+    } else if (threshold != null && pieces < threshold) {
       status = "low";
     } else {
       status = "healthy";
     }
-    rows.push({ productId: p.id, name: p.name, pieces, threshold, status });
+    const frozen = input.frozenByProduct?.get(p.id) ?? 0;
+    rows.push({ productId: p.id, name: p.name, pieces, frozen, threshold, status });
   }
   rows.sort((a, b) => {
     const s = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];

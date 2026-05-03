@@ -2,9 +2,9 @@ import Link from "next/link";
 
 /** A dashboard tile rendering a label, large number, optional sub-line and
  *  optional secondary detail. When `href` is provided the whole tile is a
- *  link; otherwise it renders as a plain div. The dark variant inverts the
- *  surface to signal "this is the primary thing to act on" — used for the
- *  Shopping tile per the wireframe. */
+ *  link; otherwise it renders as a plain div. All four header tiles share
+ *  one card style so the row reads as a cohesive whole — emphasis comes
+ *  from the value itself, not from inverting the surface. */
 export function StatTile({
   label,
   value,
@@ -12,7 +12,6 @@ export function StatTile({
   detail,
   href,
   cta,
-  dark,
   empty,
 }: {
   label: string;
@@ -21,34 +20,23 @@ export function StatTile({
   detail?: string;
   href?: string;
   cta?: string;
-  dark?: boolean;
   /** When true, render in a "nothing to do" muted style — no CTA, dimmed text. */
   empty?: boolean;
 }) {
-  const surface = dark
-    ? "bg-foreground text-background border-foreground"
-    : "bg-card text-foreground border-border";
-  const labelCls = dark ? "text-background/60" : "text-muted-foreground";
-  const subCls = dark ? "text-background/70" : "text-muted-foreground";
-  const detailCls = dark ? "text-background/60" : "text-muted-foreground";
-  const ctaCls = dark
-    ? "bg-background text-foreground"
-    : "border border-border text-foreground";
-
   const inner = (
-    <div className={`flex flex-col gap-1.5 rounded-lg border ${surface} p-4 transition-shadow ${href ? "hover:shadow-sm" : ""} ${empty ? "opacity-60" : ""}`}>
-      <span className={`mono-label ${labelCls}`}>{label}</span>
+    <div className={`h-full flex flex-col gap-1.5 rounded-lg border border-border bg-card p-4 transition-shadow ${href ? "hover:shadow-sm" : ""} ${empty ? "opacity-60" : ""}`}>
+      <span className="mono-label text-muted-foreground">{label}</span>
       <div className="flex items-baseline gap-2">
         <span className="text-3xl font-display font-medium tabular-nums tracking-tight">
           {value}
         </span>
-        {sub && <span className={`text-xs ${subCls}`}>{sub}</span>}
+        {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
       </div>
       {detail && (
-        <span className={`text-xs ${detailCls} line-clamp-1 font-mono`}>{detail}</span>
+        <span className="text-xs text-muted-foreground line-clamp-1 font-mono">{detail}</span>
       )}
       {cta && !empty && (
-        <span className={`mt-auto inline-flex self-start rounded-full px-3 py-1 text-xs ${ctaCls}`}>
+        <span className="mt-auto inline-flex self-start rounded-full border border-border px-3 py-1 text-xs text-foreground">
           {cta} →
         </span>
       )}
@@ -57,7 +45,7 @@ export function StatTile({
 
   if (href && !empty) {
     return (
-      <Link href={href} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground rounded-lg">
+      <Link href={href} className="block h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground rounded-lg">
         {inner}
       </Link>
     );

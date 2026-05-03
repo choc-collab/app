@@ -3110,6 +3110,27 @@ export function useTodaySignals(): TodaySignals {
   });
 }
 
+/** Frozen pieces per product (live), summed from `planProducts.frozenQty`
+ *  across all done plans. Excludes batches marked `stockStatus === "gone"`
+ *  for symmetry with `useProductStockMap`. Returned values are always > 0
+ *  — products with no frozen pieces are simply absent from the map. */
+export function useProductFrozenMap(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    if (donePlans.length === 0) return new Map<string, number>();
+    const planIds = donePlans.map((p) => p.id!);
+    const batches = await db.planProducts.where("planId").anyOf(planIds).toArray();
+    const m = new Map<string, number>();
+    for (const pb of batches) {
+      if (pb.stockStatus === "gone") continue;
+      const frozen = pb.frozenQty ?? 0;
+      if (frozen <= 0) continue;
+      m.set(pb.productId, (m.get(pb.productId) ?? 0) + frozen);
+    }
+    return m;
+  }, []) ?? new Map<string, number>();
+}
+
 /** Available stock per product (live), derived from completed production plans.
  *  Identical aggregation to `useProductStockTotals` but returns a plain
  *  productId → pieces map (no lastCountedAt metadata). Frozen pieces are

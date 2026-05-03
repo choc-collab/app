@@ -145,17 +145,35 @@ function NewPlanContent() {
     setInitialized(true);
   }, [sourcePlanProducts, sourcePlanFillings, fromPlanId, initialized]);
 
-  // Seed selectedIds from /today's "To make" list when present. The seeded
-  // ids come in via session-storage (single read, then cleared) so a refresh
-  // on this page starts empty. We only seed when not duplicating an existing
-  // plan — the dup flow above already populates selectedIds itself.
+  // Seed selectedIds + config from /today's "To make" list when present. The
+  // seeded ids come in via session-storage (single read, then cleared) so a
+  // refresh on this page starts empty. We only seed when not duplicating an
+  // existing plan — the dup flow above already populates selectedIds itself.
+  // Wait for products to load before consuming so we can pre-fill config with
+  // each product's default mould + batch qty (matching toggleProduct's seeding).
   const [seedConsumed, setSeedConsumed] = useState(false);
   useEffect(() => {
     if (seedConsumed || fromPlanId) return;
+    if (products.length === 0) return;
     const ids = consumeSeedFromTodayList();
-    if (ids.length > 0) setSelectedIds(new Set(ids));
     setSeedConsumed(true);
-  }, [seedConsumed, fromPlanId]);
+    if (ids.length === 0) return;
+    setSelectedIds(new Set(ids));
+    setConfig((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (next[id]) continue;
+        const product = products.find((p) => p.id === id);
+        if (!product) continue;
+        next[id] = {
+          mouldId: product.defaultMouldId ?? (moulds[0]?.id ?? ""),
+          quantity: product.defaultBatchQty ?? 1,
+          additionalMoulds: [],
+        };
+      }
+      return next;
+    });
+  }, [seedConsumed, fromPlanId, products, moulds]);
 
   const allIngredients = useIngredients();
   const selectedProducts = products.filter((r) => selectedIds.has(r.id!));
@@ -332,7 +350,10 @@ function NewPlanContent() {
   }
 
   function updateConfig(productId: string, field: "mouldId" | "quantity", value: string | number | "") {
-    setConfig((c) => ({ ...c, [productId]: { ...c[productId], [field]: value } }));
+    setConfig((c) => {
+      const cur = c[productId] ?? { mouldId: "", quantity: 1, additionalMoulds: [] };
+      return { ...c, [productId]: { ...cur, [field]: value } };
+    });
   }
 
   // ─── Alternative mould setup (rarely used disclosure) ──────────────────────

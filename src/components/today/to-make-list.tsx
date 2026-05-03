@@ -2,24 +2,57 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Plus } from "lucide-react";
-import { useProductsList, useProductStockMap } from "@/lib/hooks";
+import { Check, Plus, Snowflake } from "lucide-react";
+import { useProductsList, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts } from "@/lib/hooks";
 import { buildToMakeRows, writeSeedFromTodayList, type ToMakeRow } from "@/lib/todaySeed";
 
 type View = "low" | "all";
 
 /** Two-state list of products that need a fresh batch. The "Low stock"
  *  view shows out-of-stock + below-threshold products with reorder-point
- *  context; "All" shows healthy ones too with a quiet pill. Selected rows
- *  feed into the production-plan wizard via session-storage hand-off. */
+ *  context; "All" shows healthy ones too with a quiet pill. Both views are
+ *  scoped to products in any currently-active collection (same definition
+ *  as the production wizard) — a low-stock product in a discontinued
+ *  collection isn't actionable today. When no collections are active, we
+ *  fall through to all products so the dashboard is useful in early
+ *  setup before any collection has been defined.
+ *
+ *  Selected rows feed into the production-plan wizard via session-storage
+ *  hand-off. */
 export function ToMakeList() {
   const products = useProductsList();
   const stockByProduct = useProductStockMap();
+  const frozenByProduct = useProductFrozenMap();
+  const collections = useCollections();
+  const allCollectionProducts = useAllCollectionProducts();
   const router = useRouter();
 
+  // Active collections: startDate <= today, endDate unset or >= today.
+  // Mirrors the helpers in /production/new and /products so behaviour stays
+  // consistent across surfaces.
+  const today = new Date().toISOString().slice(0, 10);
+  const activeCollectionProductIds = useMemo(() => {
+    const activeIds = new Set(
+      collections
+        .filter((c) => c.startDate <= today && (!c.endDate || c.endDate >= today))
+        .map((c) => c.id!)
+    );
+    if (activeIds.size === 0) return null; // signal: no scoping
+    return new Set(
+      allCollectionProducts
+        .filter((cp) => activeIds.has(cp.collectionId))
+        .map((cp) => cp.productId)
+    );
+  }, [collections, allCollectionProducts, today]);
+
+  const scopedProducts = useMemo(() => {
+    if (!activeCollectionProductIds) return products;
+    return products.filter((p) => p.id && activeCollectionProductIds.has(p.id));
+  }, [products, activeCollectionProductIds]);
+
   const allRows = useMemo(
-    () => buildToMakeRows({ products, stockByProduct }),
-    [products, stockByProduct],
+    () => buildToMakeRows({ products: scopedProducts, stockByProduct, frozenByProduct }),
+    [scopedProducts, stockByProduct, frozenByProduct],
   );
   const lowRows = useMemo(
     () => allRows.filter((r) => r.status !== "healthy"),
@@ -77,17 +110,17 @@ export function ToMakeList() {
       <header className="flex items-end justify-between gap-3">
         <div>
           <span className="mono-label text-muted-foreground">To make</span>
-          <h2 className="text-lg font-display tracking-tight mt-1">Tick what to produce</h2>
+          <h2 className="text-lg font-display tracking-tight mt-1">Select what to produce</h2>
         </div>
         <div role="tablist" aria-label="View" className="inline-flex border border-border rounded-md overflow-hidden text-xs">
-          <ViewTab label="Low stock" active={view === "low"} onClick={() => setView("low")} count={lowRows.length} />
+          <ViewTab label="Low or out of stock" active={view === "low"} onClick={() => setView("low")} count={lowRows.length} />
           <ViewTab label="All" active={view === "all"} onClick={() => setView("all")} count={allRows.length} />
         </div>
       </header>
 
       {visible.length === 0 ? (
         <p className="text-sm text-muted-foreground py-6 text-center">
-          {view === "low" ? "All products at or above their reorder point." : "No products to show."}
+          {view === "low" ? "Nothing low or out of stock — every active-collection product is healthy." : "No products in any active collection."}
         </p>
       ) : (
         <>
@@ -134,7 +167,7 @@ function ViewTab({ label, active, onClick, count }: { label: string; active: boo
       onClick={onClick}
       className={`px-3 py-1.5 transition-colors ${
         active
-          ? "bg-foreground text-background"
+          ? "bg-accent text-accent-foreground"
           : "bg-card text-muted-foreground hover:text-foreground"
       }`}
     >
@@ -145,13 +178,17 @@ function ViewTab({ label, active, onClick, count }: { label: string; active: boo
 
 function Row({ row, checked, onToggle }: { row: ToMakeRow; checked: boolean; onToggle: () => void }) {
   const urgent = row.status === "out" || row.status === "low";
-  const stockText = `${row.pieces} ${row.pieces === 1 ? "pc" : "pcs"}`;
-  const subtext =
+
+  // Pill colour mirrors the stock view: neutral when healthy, warn-yellow
+  // when below threshold. Out-of-stock gets an alert-red variant — the
+  // stock view filters those out, but the dashboard surfaces them, so we
+  // need a stronger signal at zero.
+  const stockPillCls =
     row.status === "out"
-      ? row.threshold != null ? "out of stock" : "no stock — never produced"
-      : row.status === "low" && row.threshold != null
-      ? `below reorder point (${row.threshold})`
-      : null;
+      ? "border-status-alert-edge bg-status-alert-bg text-status-alert"
+      : row.status === "low"
+      ? "border-status-warn-edge bg-status-warn-bg text-status-warn"
+      : "border-border text-muted-foreground";
 
   return (
     <li>
@@ -159,9 +196,9 @@ function Row({ row, checked, onToggle }: { row: ToMakeRow; checked: boolean; onT
         type="button"
         onClick={onToggle}
         aria-pressed={checked}
-        className={`w-full flex items-stretch gap-3 px-3 py-2 rounded-md border text-left transition-colors ${
+        className={`w-full flex items-center gap-3 px-3 py-2 rounded-md border text-left transition-colors ${
           checked
-            ? "border-foreground bg-muted"
+            ? "border-accent bg-accent/30"
             : "border-border bg-card hover:bg-muted/40"
         }`}
       >
@@ -170,18 +207,23 @@ function Row({ row, checked, onToggle }: { row: ToMakeRow; checked: boolean; onT
           aria-hidden
           className={`w-1 self-stretch rounded-sm ${urgent ? "bg-foreground" : "bg-border"}`}
         />
-        <span className="flex-1 min-w-0">
-          <span className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-sm font-medium">{row.name}</span>
-            <span className="text-xs font-mono text-muted-foreground">· {stockText}</span>
-            {row.status === "healthy" && (
-              <span className="text-[10px] uppercase tracking-wider rounded-full border border-border px-1.5 py-px text-muted-foreground">
-                healthy
-              </span>
-            )}
+        <span className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium">{row.name}</span>
+          <span
+            className={`shrink-0 rounded-full border px-1.5 py-0 text-[10px] font-semibold tabular-nums inline-flex items-center gap-0.5 ${stockPillCls}`}
+            title={`${row.pieces} in stock`}
+          >
+            {row.pieces} in stock
           </span>
-          {subtext && (
-            <span className="block text-xs text-muted-foreground mt-0.5">{subtext}</span>
+          {row.frozen > 0 && (
+            <span
+              className="shrink-0 rounded-full border border-sky-200 bg-sky-50 text-sky-700 px-1.5 py-0 text-[10px] font-semibold inline-flex items-center gap-0.5"
+              title={`${row.frozen} frozen — not counted toward in-stock`}
+            >
+              <Snowflake className="w-2.5 h-2.5" aria-hidden />
+              {row.frozen}
+              <span className="sr-only"> frozen</span>
+            </span>
           )}
         </span>
       </button>
@@ -195,7 +237,7 @@ function CheckBox({ checked }: { checked: boolean }) {
       aria-hidden
       className={`w-4 h-4 shrink-0 rounded-sm border flex items-center justify-center mt-0.5 ${
         checked
-          ? "bg-foreground border-foreground text-background"
+          ? "bg-accent border-accent text-accent-foreground"
           : "border-foreground bg-card"
       }`}
     >
@@ -215,12 +257,12 @@ function CtaBar({
 }) {
   const tone = disabled
     ? "border-border bg-muted/40 text-muted-foreground"
-    : "border-foreground bg-foreground text-background";
+    : "border-accent bg-accent text-accent-foreground";
   const ctaTone = disabled
     ? "border-border text-muted-foreground"
-    : "bg-background text-foreground";
+    : "bg-card text-foreground";
   const label = disabled
-    ? "Tick rows above to plan production"
+    ? "Select rows above to plan production"
     : "Build production plan from selection";
   const labelKicker = disabled ? "Nothing selected" : `${selectedCount} selected`;
 
