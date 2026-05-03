@@ -47,7 +47,7 @@ export default function DecorationCategoryDetailPage() {
     if (isNew && categoryId) {
       try { await deleteDecorationCategory(categoryId); } catch { /* ignore */ }
     }
-  }, [isNew, categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, categoryId]);  
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   // Auto-save and strip ?new=1 once the category loads for a new record

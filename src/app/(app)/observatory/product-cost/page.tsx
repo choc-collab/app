@@ -4,11 +4,12 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { useProductsList, useMouldsList, useIngredients, useCurrencySymbol, useProductCategoryMap } from "@/lib/hooks";
+import { useProductsList, useMouldsList, useIngredients, useCurrencySymbol, useProductCategoryMap, useFillingCategoryMap } from "@/lib/hooks";
 import { deserializeBreakdown } from "@/lib/costCalculation";
 import { getProductFillingCategories, rankSimilarProducts } from "@/lib/productSimilarity";
 import { PageHeader } from "@/components/page-header";
-import type { Filling, ProductFilling, ProductCostSnapshot, Mould, Ingredient, BreakdownEntry } from "@/types";
+import { chipTextColor, tintBg, tintEdge, NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
+import type { Filling, FillingCategory, ProductFilling, ProductCostSnapshot, Mould, Ingredient, BreakdownEntry } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Category display helpers
@@ -27,15 +28,6 @@ function shortCat(cat: string): string {
   return CAT_LABEL[cat] ?? cat;
 }
 
-const CAT_BAR_COLOR: Record<string, string> = {
-  "Ganaches (Emulsions)": "bg-status-warn",
-  "Pralines & Giandujas (Nut-Based)": "bg-stone-500",
-  "Caramels & Syrups (Sugar-Based)": "bg-yellow-400",
-  "Fruit-Based (Pectins & Acids)": "bg-rose-500",
-  'Croustillants & Biscuits (The "Crunch" Filling)': "bg-orange-400",
-  "Shell & Cap": "bg-stone-400",
-};
-
 // Canonical display order: Shell anchored first, then filling categories
 const CATEGORY_ORDER = [
   "Shell & Cap",
@@ -46,30 +38,41 @@ const CATEGORY_ORDER = [
   'Croustillants & Biscuits (The "Crunch" Filling)',
 ];
 
-/** Returns an inline CSS color for the shell bar segment based on coating type */
+const SHELL_CATEGORY = "Shell & Cap";
+
+/** Returns an inline CSS color for the shell bar segment based on coating type.
+ *  Shell & Cap is not a configurable FillingCategory — it derives its colour
+ *  from the product's `coating` (Dark/Milk/White/Ruby) so the bar segment
+ *  visually matches the chocolate. Returns undefined when the coating doesn't
+ *  match a known type, in which case the caller falls back to a neutral grey. */
 function getShellColor(coatingName?: string): string | undefined {
   const n = (coatingName ?? "").toLowerCase();
   if (n.includes("dark") || n.includes("noir") || n.includes("bitter")) return "#3d1a0a";
   if (n.includes("milk") || n.includes("lait")) return "#8b5e3c";
   if (n.includes("white") || n.includes("blanc") || n.includes("blond")) return "#d4aa6a";
   if (n.includes("ruby")) return "#b04060";
-  return undefined; // fall back to Tailwind class
+  return undefined;
 }
 
-const CAT_CHIP_CLASS: Record<string, string> = {
-  "Ganaches (Emulsions)": "text-status-warn bg-status-warn-bg border-status-warn-edge",
-  "Pralines & Giandujas (Nut-Based)": "text-stone-600 bg-stone-100 border-stone-200",
-  "Caramels & Syrups (Sugar-Based)": "text-yellow-700 bg-yellow-50 border-yellow-200",
-  "Fruit-Based (Pectins & Acids)": "text-rose-600 bg-rose-50 border-rose-200",
-  'Croustillants & Biscuits (The "Crunch" Filling)': "text-orange-600 bg-orange-50 border-orange-200",
-};
-
-function catChipClass(cat: string): string {
-  return CAT_CHIP_CLASS[cat] ?? "text-muted-foreground bg-muted border-border";
+/** Resolve a category name to the user-configured hex from the live category
+ *  map. Shell & Cap is opaque to the FillingCategory table — callers that need
+ *  the per-coating shell colour pass `shellColor` themselves. Unknown / unset
+ *  categories fall back to a neutral grey so the bar always renders. */
+function resolveCategoryHex(
+  cat: string,
+  categoryMap: Map<string, FillingCategory>,
+  shellColor?: string,
+): string {
+  if (cat === SHELL_CATEGORY) return shellColor ?? "#78716c"; // tailwind stone-500
+  return categoryMap.get(cat)?.color ?? NEUTRAL_CATEGORY_HEX;
 }
 
-function catBarColor(cat: string): string {
-  return CAT_BAR_COLOR[cat] ?? "bg-stone-400";
+function categoryChipStyle(hex: string): React.CSSProperties {
+  return {
+    color: chipTextColor(hex),
+    backgroundColor: tintBg(hex),
+    borderColor: tintEdge(hex),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,26 +171,27 @@ function CategoryBar({
   breakdown,
   total,
   shellColor,
+  categoryMap,
   sym = "€",
 }: {
   breakdown: CategoryBreakdown[];
   total: number;
   shellColor?: string;
+  categoryMap: Map<string, FillingCategory>;
   sym?: string;
 }) {
   if (total === 0) return null;
   return (
     <div className="flex h-3 rounded overflow-hidden w-full gap-px">
       {breakdown.map(({ category, subtotal }) => {
-        const isShell = category === "Shell & Cap";
-        const overrideColor = isShell ? shellColor : undefined;
+        const hex = resolveCategoryHex(category, categoryMap, shellColor);
         return (
           <div
             key={category}
-            className={`${overrideColor ? "" : catBarColor(category)} transition-all`}
+            className="transition-all"
             style={{
               width: `${(subtotal / total) * 100}%`,
-              ...(overrideColor ? { backgroundColor: overrideColor } : {}),
+              backgroundColor: hex,
             }}
             title={`${shortCat(category)}: ${fmt(subtotal, sym)}`}
           />
@@ -207,6 +211,7 @@ export default function ProductCostPage() {
   const ingredients = useIngredients();
   const sym = useCurrencySymbol();
   const productCategoryMap = useProductCategoryMap();
+  const fillingCategoryMap = useFillingCategoryMap();
   const allFillings = useLiveQuery(() => db.fillings.toArray()) ?? [];
   const allProductFillings = useLiveQuery(() => db.productFillings.toArray()) ?? [];
   const allSnapshots = useLiveQuery(() => db.productCostSnapshots.toArray()) ?? [];
@@ -573,19 +578,26 @@ export default function ProductCostPage() {
             {/* Filling category chips */}
             <div className="flex flex-wrap gap-1.5 items-center">
               <span className="text-xs text-muted-foreground mr-1">Filling:</span>
-              {CATEGORY_ORDER.filter((c) => c !== "Shell & Cap").map((cat) => {
+              {CATEGORY_ORDER.filter((c) => c !== SHELL_CATEGORY).map((cat) => {
                 const active = fillingCatFilter.has(cat);
+                const hex = resolveCategoryHex(cat, fillingCategoryMap);
                 return (
                   <button
                     key={cat}
                     onClick={() => toggleFillingCat(cat)}
-                    className={`text-[11px] px-2 py-0.5 rounded-full border font-medium transition-colors ${
+                    className={`flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border font-medium transition-colors ${
                       active
-                        ? catChipClass(cat) + " ring-1 ring-current/40"
+                        ? "ring-1 ring-current/30"
                         : "text-muted-foreground bg-background border-border hover:bg-muted/60"
                     }`}
+                    style={active ? categoryChipStyle(hex) : undefined}
                     aria-pressed={active}
                   >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ backgroundColor: hex }}
+                      aria-hidden="true"
+                    />
                     {shortCat(cat)}
                   </button>
                 );
@@ -654,17 +666,21 @@ export default function ProductCostPage() {
                       </div>
                       {/* Category chips */}
                       <div className="flex flex-wrap gap-1 mb-1.5">
-                        {cats.map((cat) => (
-                          <span
-                            key={cat}
-                            className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${catChipClass(cat)}`}
-                          >
-                            {shortCat(cat)}
-                          </span>
-                        ))}
+                        {cats.map((cat) => {
+                          const hex = resolveCategoryHex(cat, fillingCategoryMap);
+                          return (
+                            <span
+                              key={cat}
+                              className="text-[10px] px-1.5 py-0.5 rounded border font-medium"
+                              style={categoryChipStyle(hex)}
+                            >
+                              {shortCat(cat)}
+                            </span>
+                          );
+                        })}
                       </div>
                       {/* Mini bar */}
-                      <CategoryBar breakdown={breakdown} total={snap.costPerProduct} shellColor={getShellColor(product.coating)} sym={sym} />
+                      <CategoryBar breakdown={breakdown} total={snap.costPerProduct} shellColor={getShellColor(product.coating)} categoryMap={fillingCategoryMap} sym={sym} />
                     </div>
 
                     {/* Cost/product */}
@@ -685,21 +701,31 @@ export default function ProductCostPage() {
 
         {/* Legend */}
         {productsWithCost.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-3">
-            {CATEGORY_ORDER.filter((cat) => cat in CAT_BAR_COLOR).map((cat) => (
+          <div className="mt-4 flex flex-wrap gap-3 items-center">
+            {CATEGORY_ORDER.map((cat) => (
               <span key={cat} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                {cat === "Shell & Cap" ? (
+                {cat === SHELL_CATEGORY ? (
                   <span
                     className="w-2.5 h-2.5 rounded-sm"
                     style={{ background: "linear-gradient(90deg, #3d1a0a 0%, #d4aa6a 100%)" }}
                     title="Colour varies by coating type"
                   />
                 ) : (
-                  <span className={`w-2.5 h-2.5 rounded-sm ${CAT_BAR_COLOR[cat]}`} />
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm"
+                    style={{ backgroundColor: resolveCategoryHex(cat, fillingCategoryMap) }}
+                  />
                 )}
                 {shortCat(cat)}
               </span>
             ))}
+            <Link
+              href="/fillings?tab=categories"
+              className="text-xs text-muted-foreground/70 hover:text-foreground underline underline-offset-2 ml-2"
+              title="Edit category colours"
+            >
+              Customise colours
+            </Link>
           </div>
         )}
       </div>
@@ -807,18 +833,17 @@ export default function ProductCostPage() {
 
         {/* Category bar */}
         <div className="mb-2">
-          <CategoryBar breakdown={focusCategoryBreakdown} total={focusSnapshot.costPerProduct} shellColor={getShellColor(focusProduct.coating)} sym={sym} />
+          <CategoryBar breakdown={focusCategoryBreakdown} total={focusSnapshot.costPerProduct} shellColor={getShellColor(focusProduct.coating)} categoryMap={fillingCategoryMap} sym={sym} />
         </div>
         {/* Bar legend with values */}
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           {focusCategoryBreakdown.map(({ category, subtotal }) => {
-            const isShell = category === "Shell & Cap";
-            const shellOverride = isShell ? getShellColor(focusProduct.coating) : undefined;
+            const hex = resolveCategoryHex(category, fillingCategoryMap, getShellColor(focusProduct.coating));
             return (
               <span key={category} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span
-                  className={`w-2 h-2 rounded-sm ${shellOverride ? "" : catBarColor(category)}`}
-                  style={shellOverride ? { backgroundColor: shellOverride } : undefined}
+                  className="w-2 h-2 rounded-sm"
+                  style={{ backgroundColor: hex }}
                 />
                 {shortCat(category)}
                 <span className="font-mono tabular-nums">{fmt(subtotal, sym)}</span>
@@ -833,14 +858,18 @@ export default function ProductCostPage() {
         {/* Category chips */}
         {focusCategories.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-border">
-            {[...new Set(focusCategories)].map((cat) => (
-              <span
-                key={cat}
-                className={`text-xs px-2 py-0.5 rounded-full border font-medium ${catChipClass(cat)}`}
-              >
-                {shortCat(cat)}
-              </span>
-            ))}
+            {[...new Set(focusCategories)].map((cat) => {
+              const hex = resolveCategoryHex(cat, fillingCategoryMap);
+              return (
+                <span
+                  key={cat}
+                  className="text-xs px-2 py-0.5 rounded-full border font-medium"
+                  style={categoryChipStyle(hex)}
+                >
+                  {shortCat(cat)}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
@@ -885,14 +914,18 @@ export default function ProductCostPage() {
                       )}
                     </div>
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {sharedCategories.map((cat) => (
-                        <span
-                          key={cat}
-                          className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${catChipClass(cat)}`}
-                        >
-                          {shortCat(cat)}
-                        </span>
-                      ))}
+                      {sharedCategories.map((cat) => {
+                        const hex = resolveCategoryHex(cat, fillingCategoryMap);
+                        return (
+                          <span
+                            key={cat}
+                            className="text-[10px] px-1.5 py-0.5 rounded border font-medium"
+                            style={categoryChipStyle(hex)}
+                          >
+                            {shortCat(cat)}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1086,6 +1119,7 @@ export default function ProductCostPage() {
                           breakdown={bd}
                           total={snap?.costPerProduct ?? 0}
                           shellColor={getShellColor(product?.coating)}
+                          categoryMap={fillingCategoryMap}
                           sym={sym}
                         />
                       </td>
@@ -1099,7 +1133,10 @@ export default function ProductCostPage() {
                     key={cat}
                     label={
                       <span className="flex items-center gap-1.5">
-                        <span className={`w-2 h-2 rounded-sm shrink-0 ${catBarColor(cat)}`} />
+                        <span
+                          className="w-2 h-2 rounded-sm shrink-0"
+                          style={{ backgroundColor: resolveCategoryHex(cat, fillingCategoryMap) }}
+                        />
                         {shortCat(cat)}
                       </span>
                     }

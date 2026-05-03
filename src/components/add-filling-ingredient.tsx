@@ -191,7 +191,7 @@ export function AddFillingIngredient({ fillingId, onAdded }: AddFillingIngredien
                     highlightedIndex === filtered.length ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
                   }`}
                 >
-                  + Create <span className="font-medium text-foreground">"{trimmedSearch}"</span> as new ingredient
+                  + Create <span className="font-medium text-foreground">&ldquo;{trimmedSearch}&rdquo;</span> as new ingredient
                 </button>
               </li>
             )}

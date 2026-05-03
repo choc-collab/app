@@ -439,6 +439,25 @@ function CategoriesTab() {
   const categories = useFillingCategories(f.showArchived);
   const usageCounts = useFillingCategoryUsageCounts();
 
+  // Build a map of hex → other non-archived category names sharing it, so we can
+  // surface a quiet "Shared with X" hint. We only flag collisions among active
+  // categories (archived rows aren't drawn on the product-cost page).
+  const colorCollisions = useMemo(() => {
+    const byColor = new Map<string, string[]>();
+    for (const c of categories) {
+      if (c.archived || !c.color) continue;
+      const key = c.color.toLowerCase();
+      const arr = byColor.get(key) ?? [];
+      arr.push(c.name);
+      byColor.set(key, arr);
+    }
+    const result = new Map<string, string[]>();
+    for (const [key, names] of byColor) {
+      if (names.length > 1) result.set(key, names);
+    }
+    return result;
+  }, [categories]);
+
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newShelfStable, setNewShelfStable] = useState(false);
@@ -543,12 +562,23 @@ function CategoriesTab() {
         <ul className="space-y-2">
           {filtered.map((c) => {
             const usage = usageCounts.get(c.name) ?? 0;
+            const sharedWith = !c.archived && c.color
+              ? (colorCollisions.get(c.color.toLowerCase()) ?? []).filter((n) => n !== c.name)
+              : [];
             return (
               <ListItemCard
                 key={c.id}
                 href={`/fillings/categories/${encodeURIComponent(c.id!)}`}
                 archived={c.archived}
               >
+                {/* Colour swatch — visually anchors the row to its bar segment on the
+                    product-cost page. Falls back to a hollow ring when no colour is set. */}
+                <span
+                  className="w-3 h-3 rounded-sm shrink-0 border border-border/60"
+                  style={c.color ? { backgroundColor: c.color } : { backgroundColor: "transparent" }}
+                  title={c.color ? `Colour ${c.color}` : "No colour set"}
+                  aria-hidden="true"
+                />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-sm truncate">{c.name}</span>
@@ -560,9 +590,20 @@ function CategoriesTab() {
                     {c.archived && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
                     )}
+                    {sharedWith.length > 0 && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
+                        title={`Shares its colour with: ${sharedWith.join(", ")}`}
+                      >
+                        Shared colour
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">
                     {usage === 0 ? "No fillings" : `${usage} filling${usage === 1 ? "" : "s"}`}
+                    {sharedWith.length > 0 && (
+                      <> · same colour as {sharedWith.slice(0, 2).join(", ")}{sharedWith.length > 2 ? ` +${sharedWith.length - 2}` : ""}</>
+                    )}
                   </div>
                 </div>
               </ListItemCard>

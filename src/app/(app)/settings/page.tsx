@@ -514,7 +514,7 @@ function LabelPrinterSection() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium">Label printing</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Shows a "Save labels" button on completed production batches. Generates one PNG
+              Shows a &ldquo;Save labels&rdquo; button on completed production batches. Generates one PNG
               traceability label per product type and opens the share sheet — save to Photos,
               AirDrop, or open in the Niimbot app to print.
             </p>
@@ -803,7 +803,7 @@ function PreferencesTab({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editing]);  
 
   // Active values — draft when editing, committed when reading
   const activeCurrency = editing ? draftCurrency : currency;

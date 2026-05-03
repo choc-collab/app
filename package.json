@@ -1,6 +1,6 @@
 {
   "name": "choc-collab",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A chocolatier's toolkit — manage products, fillings, ingredients, moulds, and production plans. Local-first, runs entirely in the browser.",
   "author": "Choc-collab contributors",
   "license": "MIT",
@@ -23,7 +23,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -52,13 +52,18 @@
     "react-dom": "^19.2.5",
     "tailwind-merge": "^3.5.0"
   },
+  "overrides": {
+    "postcss": "^8.5.13"
+  },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.1.4",
-    "postcss": "^8.5.10",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.4",
+    "postcss": "^8.5.13",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.4"

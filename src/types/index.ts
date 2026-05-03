@@ -322,19 +322,39 @@ export interface FillingCategory {
   /** When true, the production wizard prompts the user for a batch multiplier
    *  instead of scaling the recipe to fit the cavities. */
   shelfStable: boolean;
+  /** CSS hex (e.g. "#0072B2") used by the product-cost page to colour the
+   *  category bar segment, chip, and legend. Optional — falls back to a
+   *  neutral grey when unset. */
+  color?: string;
   archived?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
 /** Initial seed for the fillingCategories table. Names match FILLING_CATEGORIES;
- *  Pralines and Fruit-Based default to shelfStable=true to preserve prior behavior. */
-export const DEFAULT_FILLING_CATEGORIES: { name: string; shelfStable: boolean }[] = [
-  { name: "Ganaches (Emulsions)", shelfStable: false },
-  { name: "Pralines & Giandujas (Nut-Based)", shelfStable: true },
-  { name: "Caramels & Syrups (Sugar-Based)", shelfStable: false },
-  { name: "Fruit-Based (Pectins & Acids)", shelfStable: true },
-  { name: "Croustillants & Biscuits (The \"Crunch\" Filling)", shelfStable: false },
+ *  Pralines and Fruit-Based default to shelfStable=true to preserve prior behavior.
+ *  Colours are taken from the Okabe-Ito palette — eight hues designed to remain
+ *  distinguishable for all common forms of colour vision deficiency. */
+export const DEFAULT_FILLING_CATEGORIES: { name: string; shelfStable: boolean; color: string }[] = [
+  { name: "Ganaches (Emulsions)", shelfStable: false, color: "#0072B2" },             // blue
+  { name: "Pralines & Giandujas (Nut-Based)", shelfStable: true, color: "#E69F00" },  // orange
+  { name: "Caramels & Syrups (Sugar-Based)", shelfStable: false, color: "#F0E442" },  // yellow
+  { name: "Fruit-Based (Pectins & Acids)", shelfStable: true, color: "#CC79A7" },     // reddish purple
+  { name: "Croustillants & Biscuits (The \"Crunch\" Filling)", shelfStable: false, color: "#009E73" }, // bluish green
+];
+
+/** Okabe-Ito colour-blind-safe palette plus a neutral. Used both as defaults
+ *  for seeded categories and as quick-pick swatches in the colour editor.
+ *  Reference: https://jfly.uni-koeln.de/color/ */
+export const COLOR_BLIND_SAFE_PALETTE: { hex: string; name: string }[] = [
+  { hex: "#0072B2", name: "Blue" },
+  { hex: "#E69F00", name: "Orange" },
+  { hex: "#009E73", name: "Bluish green" },
+  { hex: "#F0E442", name: "Yellow" },
+  { hex: "#56B4E9", name: "Sky blue" },
+  { hex: "#D55E00", name: "Vermilion" },
+  { hex: "#CC79A7", name: "Reddish purple" },
+  { hex: "#525252", name: "Slate" },
 ];
 
 // Join table: which fillings belong to which product, and in what order

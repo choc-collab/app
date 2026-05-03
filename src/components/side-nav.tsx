@@ -285,6 +285,7 @@ function CloudOffIcon({ className }: { className?: string }) {
 function SyncStatusLink({ labelClass }: { labelClass: string }) {
   const currentUser = useObservable(db.cloud.currentUser);
   const isLoggedIn = currentUser?.isLoggedIn ?? false;
+  const [confirming, setConfirming] = useState(false);
 
   if (!isCloudConfigured) {
     return (
@@ -297,8 +298,6 @@ function SyncStatusLink({ labelClass }: { labelClass: string }) {
       </div>
     );
   }
-
-  const [confirming, setConfirming] = useState(false);
 
   if (!isLoggedIn) return null;
 

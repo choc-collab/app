@@ -4,6 +4,17 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
+## [0.4.0] — 2026-05-03
+
+### Added
+- **Configurable filling category colours** — each filling category now has its own colour, edited from a new picker on the category detail page with one-tap swatches from the colour-blind-safe Okabe-Ito palette. The colour drives the Product Cost breakdown bar, chips, and legend, the fill-distribution bar on the product detail page, and a swatch on each row of the Fillings → Categories list. Seeded category defaults are retuned to the new palette and backfilled for existing users. A quiet *Shared colour* hint appears when two active categories pick the same hue.
+
+### Changed
+- **Nested-filling rows are now editable in place** — on the filling edit page the Nested fillings section reads as just another row in the recipe: a percentage of the total mass on the left, an inline-editable amount in grams in the middle, and a free-text note on the right. Layout mirrors the ingredient row so the two lists scan as a single recipe. Previously the amount was set once via the add form and only removable, which forced a delete-and-re-add to tweak a portion. The remove control keeps its two-step confirm.
+
+### Fixed
+- **Shelf-stable filling leftovers were over-reported on the production plan page** — the batch total and leftover used the raw ingredient sum instead of the filling&apos;s *Measured cooked yield*, so caramels and similar reductions stamped phantom grams onto the stock page. Now uses `measuredYieldG` when set, falling back to the raw sum.
+
 ## [0.3.0] — 2026-04-27
 
 ### Added

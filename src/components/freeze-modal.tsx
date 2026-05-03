@@ -169,6 +169,7 @@ export function DefrostConfirmModal({
   }, [onCancel]);
 
   const sellBy = preservedShelfLifeDays != null
+    // eslint-disable-next-line react-hooks/purity -- "sell by" preview is a render-time snapshot
     ? new Date(Date.now() + preservedShelfLifeDays * 24 * 60 * 60 * 1000).toLocaleDateString("en-GB", {
         day: "numeric", month: "short", year: "numeric",
       })

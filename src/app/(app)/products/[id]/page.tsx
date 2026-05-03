@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap } from "@/lib/hooks";
+import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap, useFillingCategoryMap } from "@/lib/hooks";
 import { deriveShopColor, resolveShopColor } from "@/lib/shopColor";
 import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type Product, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
 import { colorToCSS } from "@/lib/colors";
+import { NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
 import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromFractions, fillFractionToGrams, gramsToFillFraction } from "@/lib/costCalculation";
 import { reachableIngredientIds } from "@/lib/fillingComponents";
 import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition } from "@/lib/nutrition";
@@ -29,6 +30,7 @@ export default function ProductDetailPage() {
   const product = useProduct(productId);
   const productFillings = useProductFillings(productId);
   const allFillings = useFillings();
+  const fillingCategoryMap = useFillingCategoryMap();
   const allMoulds = useMouldsList(true);
   const productCategories = useProductCategories();
   const productCategory = useProductCategory(product?.productCategoryId);
@@ -148,7 +150,7 @@ export default function ProductDetailPage() {
     if (isNew && product?.id) {
       await deleteProduct(product.id);
     }
-  }, [isNew, product?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, product?.id]);  
   const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   // Recommended shelf life: shortest filling shelf life among assigned fillings
@@ -868,10 +870,14 @@ export default function ProductDetailPage() {
                 </SortableContext>
               </DndContext>
               {productFillings.length > 1 && localFillMode !== "grams" && (
-                <FillBar productFillings={productFillings.map((bl) => ({
-                  ...bl,
-                  fillingName: allFillings.find((l) => l.id === bl.fillingId)?.name ?? "Filling",
-                }))} />
+                <FillBar productFillings={productFillings.map((bl) => {
+                  const filling = allFillings.find((l) => l.id === bl.fillingId);
+                  return {
+                    ...bl,
+                    fillingName: filling?.name ?? "Filling",
+                    categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
+                  };
+                })} />
               )}
             </>
           )}
@@ -1034,10 +1040,14 @@ export default function ProductDetailPage() {
                 })}
               </ul>
               {productFillings.length > 1 && (
-                <FillBar productFillings={productFillings.map((bl) => ({
-                  ...bl,
-                  fillingName: allFillings.find((l) => l.id === bl.fillingId)?.name ?? "Filling",
-                }))} />
+                <FillBar productFillings={productFillings.map((bl) => {
+                  const filling = allFillings.find((l) => l.id === bl.fillingId);
+                  return {
+                    ...bl,
+                    fillingName: filling?.name ?? "Filling",
+                    categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
+                  };
+                })} />
               )}
             </>
           )}
@@ -1296,7 +1306,7 @@ function BatchHistoryTab({ productId }: { productId: string }) {
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-10 text-center px-4">
-        This product hasn't been included in any production batch yet.
+        This product hasn&apos;t been included in any production batch yet.
       </p>
     );
   }
@@ -1446,7 +1456,7 @@ function ProductCostTab({
   sym = "€",
 }: {
   productId: string;
-  product: { defaultMouldId?: string; coating?: string; name: string };
+  product: { defaultMouldId?: string; shellIngredientId?: string; shellPercentage?: number; coating?: string; name: string };
   productFillings: import("@/types").ProductFilling[];
   allMoulds: import("@/types").Mould[];
   sym?: string;
@@ -1468,7 +1478,8 @@ function ProductCostTab({
 
   const mould = allMoulds.find((m) => m.id === product.defaultMouldId);
   const hasMould = !!mould;
-  const hasCoating = !!product.coating;
+  const effectiveShellPct = product.shellPercentage ?? 37;
+  const needsShellChocolate = effectiveShellPct > 0 && !product.shellIngredientId;
 
   const ingredientsMap = new Map(allIngredients.map((i) => [i.id!, i]));
   const fillingsMap = new Map(allFillings.map((l) => [l.id!, l]));
@@ -1713,12 +1724,11 @@ function ProductCostTab({
           </p>
         </div>
       )}
-      {hasMould && !hasCoating && (
+      {hasMould && needsShellChocolate && (
         <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
           <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
           <p className="text-xs text-status-warn">
-            Shell and cap costs require a coating type. Set one above, then map it to a chocolate
-            ingredient in <strong>Settings → Coating Chocolates</strong>.
+            Shell cost is skipped because no <strong>shell chocolate</strong> is set. Pick one on the <strong>Product</strong> tab.
           </p>
         </div>
       )}
@@ -2231,7 +2241,7 @@ function MaterialPicker({
                   highlightIdx === filtered.length ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
                 }`}
               >
-                + Create <span className="font-medium text-foreground ml-1">"{trimmed}"</span>
+                + Create <span className="font-medium text-foreground ml-1">&ldquo;{trimmed}&rdquo;</span>
                 <span className="ml-auto text-xs">Cocoa Butter</span>
               </button>
             </li>
@@ -2707,27 +2717,18 @@ function ProductFillingRow({
   );
 }
 
-// Distinct hues for up to 5 fillings — using Tailwind bg classes
-const SEGMENT_COLORS = [
-  "bg-primary",
-  "bg-status-warn-edge",
-  "bg-emerald-400",
-  "bg-violet-400",
-  "bg-rose-400",
-];
-
-function FillBar({ productFillings }: { productFillings: { id?: string; fillingId: string; fillPercentage: number; fillingName: string }[] }) {
+function FillBar({ productFillings }: { productFillings: { id?: string; fillingId: string; fillPercentage: number; fillingName: string; categoryColor: string }[] }) {
   const total = productFillings.reduce((s, bl) => s + (bl.fillPercentage ?? 0), 0);
   const isValid = total === 100;
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   // Calculate left offset (%) for the tooltip anchor
-  let offset = 0;
-  const offsets = productFillings.map((bl) => {
-    const mid = offset + (bl.fillPercentage ?? 0) / 2;
-    offset += bl.fillPercentage ?? 0;
-    return mid;
-  });
+  const offsets: number[] = [];
+  let runningOffset = 0;
+  for (const bl of productFillings) {
+    offsets.push(runningOffset + (bl.fillPercentage ?? 0) / 2);
+    runningOffset += bl.fillPercentage ?? 0;
+  }
 
   return (
     <div className="space-y-1.5">
@@ -2749,8 +2750,8 @@ function FillBar({ productFillings }: { productFillings: { id?: string; fillingI
             return (
               <div
                 key={bl.id}
-                className={`${SEGMENT_COLORS[i % SEGMENT_COLORS.length]} transition-all cursor-default`}
-                style={{ width: `${pct}%` }}
+                className="transition-all cursor-default"
+                style={{ width: `${pct}%`, backgroundColor: bl.categoryColor }}
                 onMouseEnter={() => setHoveredIdx(i)}
                 onMouseLeave={() => setHoveredIdx(null)}
                 onTouchStart={() => setHoveredIdx(i)}

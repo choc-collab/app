@@ -175,14 +175,19 @@ test.describe("Filling-in-filling — Phase 1 (foundation)", () => {
     // The form closes after save.
     await expect(page.getByTestId("add-filling-component-form")).toHaveCount(0);
 
-    // Row appears with the child name + amount.
+    // Row appears with the child name + amount. In edit mode the amount is
+    // an inline-editable input (matches `FillingIngredientRow`), so assert
+    // on the input value rather than row text.
     const row = page.getByTestId("nested-filling-row").first();
     await expect(row).toContainText("Caramel base");
-    await expect(row).toContainText("50g");
+    await expect(row.getByTestId("nested-filling-amount")).toHaveValue("50");
 
-    // Reload — the row is still there, sourced from IndexedDB.
+    // Reload — the row is still there, sourced from IndexedDB. View mode
+    // renders the static "{amount}{unit}" form, so we can match "50g" again.
     await page.goto(hostUrl);
-    await expect(page.getByTestId("nested-filling-row").first()).toContainText("Caramel base");
+    const reloadedRow = page.getByTestId("nested-filling-row").first();
+    await expect(reloadedRow).toContainText("Caramel base");
+    await expect(reloadedRow).toContainText("50g");
   });
 
   test("save rejects cycles (self-ref, 2-hop, 3-hop)", async ({ page }) => {

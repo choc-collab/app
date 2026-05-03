@@ -288,7 +288,7 @@ export function CSVImport<T>({ config, getExistingIndex, previewColumns, descrip
                   <span>
                     <span className="font-medium text-foreground">Remove {config.entityName}s not in this file</span>
                     <span className="text-muted-foreground">
-                      {" "}— only if they aren't referenced anywhere (fillings, shells, coating mappings). Referenced ones are kept. A safety snapshot is auto-downloaded first.
+                      {" "}— only if they aren&apos;t referenced anywhere (fillings, shells, coating mappings). Referenced ones are kept. A safety snapshot is auto-downloaded first.
                     </span>
                   </span>
                 </label>
@@ -371,7 +371,7 @@ export function CSVImport<T>({ config, getExistingIndex, previewColumns, descrip
             This will import <strong>{analysis.willInsert}</strong> new {config.entityName}
             {analysis.willInsert !== 1 ? "s" : ""}, update <strong>{analysis.willUpdateOrDup}</strong> existing,
             and delete up to <strong>{analysis.missingCount}</strong> {config.entityName}
-            {analysis.missingCount !== 1 ? "s" : ""} that aren't in this file. Referenced records are kept automatically.
+            {analysis.missingCount !== 1 ? "s" : ""} that aren&apos;t in this file. Referenced records are kept automatically.
           </p>
           <p className="text-xs text-muted-foreground">
             A safety snapshot of your current data will download before anything is changed.
@@ -420,7 +420,7 @@ export function CSVImport<T>({ config, getExistingIndex, previewColumns, descrip
                 </p>
               )}
               {importResult.removalsSkipped > 0 && (
-                <p>{importResult.removalsSkipped} kept because they're still referenced.</p>
+                <p>{importResult.removalsSkipped} kept because they&apos;re still referenced.</p>
               )}
               {importResult.skipped > 0 && (
                 <p>{importResult.skipped} skipped (validation errors).</p>

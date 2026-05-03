@@ -1475,6 +1475,7 @@ function BatchSizesPhase({
           // Compute remaining shelf life preview when a previous batch date and shelf life are set
           let remainingWeeksPreview: number | null = null;
           if (prevBatch?.madeAt && prevBatch.shelfLifeWeeks && prevBatch.shelfLifeWeeks > 0) {
+            // eslint-disable-next-line react-hooks/purity -- shelf-life preview is a render-time snapshot
             const ageMs = Date.now() - new Date(prevBatch.madeAt).getTime();
             const ageWeeks = ageMs / (7 * 24 * 60 * 60 * 1000);
             remainingWeeksPreview = Math.max(0, Math.round((prevBatch.shelfLifeWeeks - ageWeeks) * 10) / 10);

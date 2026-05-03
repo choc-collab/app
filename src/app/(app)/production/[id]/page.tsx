@@ -369,16 +369,21 @@ function PlanContent({
       const filling = fillingsMap.get(cl.fillingId);
       if (!filling) continue;
       const lis = fillingIngredientsMap.get(cl.fillingId) ?? [];
-      const baseWeight = lis.reduce((s, li) => s + li.amount, 0);
+      const rawTotal = lis.reduce((s, li) => s + li.amount, 0);
+      // Prefer the measured cooked yield when set — raw ingredients lose weight during
+      // cooking (e.g. caramels evaporate), so a recipe summing to 250g raw may only
+      // yield 200g cooked. Without this, shelf-stable leftovers are over-reported and
+      // the FillingStock row stamps the wrong amount on the stock page.
+      const baseYield = filling.measuredYieldG ?? rawTotal;
       const multiplier = fillingOverrides[cl.fillingId] ?? 1;
       // For shelf-stable fillings the multiplier governs batch size, so leftover ≈ base × multiplier − used.
       // For other categories the recipe is fill-scaled so there's no inherent leftover; show 0 and let the user enter the actual amount.
       const isShelfStable = shelfStableCategoryNames.has(filling.category);
       // Shelf-stable fillings are scaled by multiplier, so the batch total is
-      // baseWeight × multiplier. Non-shelf-stable fillings are fill-scaled, so
+      // baseYield × multiplier. Non-shelf-stable fillings are fill-scaled, so
       // the scaled recipe yields ≈ what was needed (cl.totalWeightG).
-      const totalMadeG = isShelfStable ? baseWeight * multiplier : cl.totalWeightG;
-      const estimatedLeftoverG = isShelfStable ? baseWeight * multiplier - cl.totalWeightG : 0;
+      const totalMadeG = isShelfStable ? baseYield * multiplier : cl.totalWeightG;
+      const estimatedLeftoverG = isShelfStable ? baseYield * multiplier - cl.totalWeightG : 0;
       entries.push({
         fillingId: cl.fillingId,
         fillingName: cl.fillingName,

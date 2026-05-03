@@ -43,7 +43,7 @@ export default function ShellDesignDetailPage() {
     if (isNew && designId) {
       try { await deleteShellDesign(designId); } catch { /* ignore */ }
     }
-  }, [isNew, designId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, designId]);  
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   useEffect(() => {

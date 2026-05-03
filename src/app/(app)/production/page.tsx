@@ -90,7 +90,10 @@ export default function ProductionPage() {
     });
   }, [plans]);
 
-  // Search predicate reused by the in-range filter and the out-of-range counter
+  // Search predicate reused by the in-range filter and the out-of-range counter.
+  // Returning a closure from useMemo trips React Compiler's preserve-memoization
+  // check — intentional here, the predicate is stable per-search and reused.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const searchMatches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return () => true;
@@ -109,6 +112,9 @@ export default function ProductionPage() {
 
   const rangeCutoff = useMemo(() => {
     if (view !== "history" || range === "all") return null;
+    // Snapshot Date.now() at memo time — cutoff doesn't drift while the page
+    // is open (good enough for "last 7d" filtering on a desktop session).
+    // eslint-disable-next-line react-hooks/purity
     return Date.now() - RANGE_DAYS[range] * 86_400_000;
   }, [view, range]);
 
@@ -370,6 +376,7 @@ function PlanRow({
     [planProducts, mouldMap]
   );
 
+  // eslint-disable-next-line react-hooks/purity -- "started N days ago" is a render-time snapshot
   const daysSinceCreated = Math.floor((Date.now() - new Date(plan.createdAt).getTime()) / 86_400_000);
   const ageLabel = plan.status === "done"
     ? null

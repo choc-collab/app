@@ -300,7 +300,7 @@ export default function ExperimentPage() {
   // Navigation guard — delete incomplete record if user leaves ?new=1 without saving
   const handleConfirmLeave = useCallback(async () => {
     if (isNew && id) await deleteExperiment(id);
-  }, [isNew, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, id]);  
   useNavigationGuard(isNew, isNew ? handleConfirmLeave : undefined);
 
   // Editing state

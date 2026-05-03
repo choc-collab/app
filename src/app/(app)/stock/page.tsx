@@ -179,6 +179,7 @@ function ProductStockTab() {
 
   const groups: Group[] = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // eslint-disable-next-line react-hooks/purity -- "expires in N days" is a render-time snapshot
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
 
@@ -733,6 +734,7 @@ function FillingStockTab() {
       g.entries.sort((a, b) => new Date(a.madeAt).getTime() - new Date(b.madeAt).getTime());
     }
 
+    // eslint-disable-next-line react-hooks/purity -- urgency sort uses a render-time snapshot
     const now = Date.now();
     const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
