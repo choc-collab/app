@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -10,6 +10,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   fillings: EntityTable<Filling, "id">;
   productFillings: EntityTable<ProductFilling, "id">;
   fillingIngredients: EntityTable<FillingIngredient, "id">;
+  fillingComponents: EntityTable<FillingComponent, "id">;
   moulds: EntityTable<Mould, "id">;
   productionPlans: EntityTable<ProductionPlan, "id">;
   planProducts: EntityTable<PlanProduct, "id">;
@@ -36,6 +37,8 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   fillingStock: EntityTable<FillingStock, "id">;
   fillingCategories: EntityTable<FillingCategory, "id">;
   ingredientCategories: EntityTable<IngredientCategory, "id">;
+  sales: EntityTable<Sale, "id">;
+  giveaways: EntityTable<GiveAwayRecord, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -369,6 +372,151 @@ db.version(7).stores({
   planFillings: "id, planId, fillingId",
 });
 
+// v8 — Shop counter sales.
+//
+// Adds the `sales` table for the Shop feature. Each row is one box sale,
+// either `prepared` (stock removed, not yet billed) or `sold` (counted in
+// revenue). Pricing is taken from CollectionPackaging at prep time and
+// snapshotted into the row.
+//
+// Purely additive — no existing rows touched, no upgrade hook required.
+db.version(8).stores({
+  sales: "id, status, preparedAt, soldAt, collectionId, packagingId",
+});
+
+// v9 — Shop visual `shopKind` on ProductCategory.
+//
+// Adds an optional `shopKind` field to ProductCategory ("moulded" / "enrobed" /
+// "bar" / "snack-bar") so the Shop can render bonbons with the right visual
+// shape per category. No new index — the field is render-time only.
+//
+// Migration: backfill `shopKind` on existing categories by case-insensitive
+// name match against the seeded defaults. Categories whose names don't match
+// a seeded kind are left as `undefined`; render-time fallback is "moulded".
+//
+// Purely additive at the schema level (no `.stores()` change), but we still
+// bump the version so the upgrade hook fires once per existing user.
+db.version(9).stores({}).upgrade(async (tx) => {
+  const categoriesTable = tx.table("productCategories");
+  const categories = await categoriesTable.toArray();
+  const kindByName = new Map<string, string>();
+  for (const seed of DEFAULT_PRODUCT_CATEGORIES) {
+    kindByName.set(seed.name.toLowerCase(), seed.shopKind);
+  }
+  for (const c of categories) {
+    if (!c?.id) continue;
+    if (c.shopKind) continue; // already set (e.g. via cloud sync from another device)
+    const kind = kindByName.get((c.name ?? "").toString().trim().toLowerCase());
+    if (kind) await categoriesTable.update(c.id, { shopKind: kind, updatedAt: new Date() });
+  }
+});
+
+// v10 — Give-aways table.
+//
+// Adds the `giveaways` table for the give-away log. Each row records one
+// non-sale outflow (sample, charity, friends/family, marketing, etc.) with a
+// shape ("box", "loose", "bar", "snack"), an optional from-stock decrement,
+// and a snapshotted ingredient cost. Indexed on `at` for the recent-activity
+// timeline, `reason` for filtering, and `fromStock` so monthly tallies can
+// split stocked vs off-stock outflows cheaply.
+//
+// Purely additive — no existing rows touched, no upgrade hook required.
+db.version(10).stores({
+  giveaways: "id, at, reason, fromStock",
+});
+
+// v11 — Packaging.productKind backfill.
+//
+// Adds an optional `productKind` field to Packaging ("bonbon" / "bar" /
+// "snack-bar"). The field is rendering- and filter-time only — no new index
+// needed. Existing rows are backfilled heuristically: capacity-1 packagings
+// become "bar" (single-bar wrappers — the demo's only existing capacity-1
+// format), everything else becomes "bonbon" (multi-cavity gift box). Users
+// can promote any of those to "snack-bar" via the packaging editor.
+db.version(11).stores({}).upgrade(async (tx) => {
+  const packagingTable = tx.table("packaging");
+  const rows = await packagingTable.toArray();
+  for (const p of rows) {
+    if (!p?.id) continue;
+    if (p.productKind) continue; // already set (e.g. via cloud sync)
+    const next = (p.capacity ?? 0) === 1 ? "bar" : "bonbon";
+    await packagingTable.update(p.id, { productKind: next, updatedAt: new Date() });
+  }
+});
+
+// v12 — fillingComponents table for the filling-in-filling feature.
+//
+// Purely additive: a new table that links a host filling to a child filling
+// used as one of its components. Existing ingredient-only readers (cost calc,
+// planner, backup, CSV) keep working untouched. No upgrade hook needed.
+db.version(12).stores({
+  fillingComponents: "id, fillingId, childFillingId, sortOrder",
+});
+
+// v13 — Convert ProductFilling.fillGrams (per-cavity grams against an unstated
+// reference mould) into ProductFilling.fillFraction (fraction of cavity volume,
+// mould-agnostic). The previous representation didn't rescale when production
+// switched moulds — the same 5g would be poured into a 10g and a 15g cavity,
+// changing the fill-to-shell ratio. Fractions preserve the recipe across
+// moulds: production multiplies `fillFraction × plannedCavityWeightG × density`.
+//
+// Migration rule: for each grams-mode product with a `defaultMouldId`, convert
+// each row's `fillGrams` to a fraction using the default mould's cavity weight
+// (the implicit reference at input time). Products in grams mode without a
+// default mould are reverted to percentage mode — there's no anchor against
+// which to interpret the absolute grams.
+//
+// `fillGrams` is dropped from every row in either case; the field no longer
+// exists in the type.
+db.version(13).stores({}).upgrade(async (tx) => {
+  const productsTable = tx.table("products");
+  const productFillingsTable = tx.table("productFillings");
+  const mouldsTable = tx.table("moulds");
+
+  const products = await productsTable.toArray();
+  const moulds = await mouldsTable.toArray();
+  const mouldById = new Map<string, { cavityWeightG: number }>();
+  for (const m of moulds) {
+    if (m?.id) mouldById.set(m.id, { cavityWeightG: m.cavityWeightG ?? 0 });
+  }
+
+  const DENSITY = 1.2; // g/ml — keep in sync with DENSITY_G_PER_ML in production.ts
+
+  for (const p of products) {
+    if (!p?.id) continue;
+    const isGramsMode = p.fillMode === "grams";
+    const refMould = p.defaultMouldId ? mouldById.get(p.defaultMouldId) : undefined;
+    const refCavityG = refMould?.cavityWeightG ?? 0;
+
+    const rows = await productFillingsTable.where("productId").equals(p.id).toArray();
+
+    if (isGramsMode && refCavityG > 0) {
+      // Convert each row's fillGrams to a fraction relative to the default mould.
+      for (const r of rows) {
+        if (!r?.id) continue;
+        const grams = (r as { fillGrams?: number }).fillGrams;
+        const fraction = grams != null ? grams / DENSITY / refCavityG : undefined;
+        await productFillingsTable.update(r.id, {
+          fillFraction: fraction,
+          fillGrams: undefined,
+        });
+      }
+    } else {
+      // Either not in grams mode, or grams mode without a default mould — drop
+      // any stale fillGrams. Revert orphaned grams-mode products to percentage.
+      for (const r of rows) {
+        if (!r?.id) continue;
+        if ((r as { fillGrams?: number }).fillGrams !== undefined) {
+          await productFillingsTable.update(r.id, { fillGrams: undefined });
+        }
+      }
+      if (isGramsMode && refCavityG <= 0) {
+        await productsTable.update(p.id, { fillMode: "percentage" });
+      }
+    }
+  }
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -400,7 +548,7 @@ export function newId(): string {
 // foreign-key references stay intact.
 const AUTO_ID_TABLES = [
   db.ingredients, db.products, db.productCategories, db.fillings, db.productFillings,
-  db.fillingIngredients, db.moulds, db.productionPlans, db.planProducts, db.planFillings,
+  db.fillingIngredients, db.fillingComponents, db.moulds, db.productionPlans, db.planProducts, db.planFillings,
   db.planStepStatus, db.productFillingHistory, db.ingredientPriceHistory,
   db.coatingChocolateMappings, db.productCostSnapshots, db.experiments,
   db.experimentIngredients, db.packaging, db.packagingOrders,
@@ -409,6 +557,8 @@ const AUTO_ID_TABLES = [
   db.decorationMaterials, db.decorationCategories, db.shellDesigns, db.fillingStock, db.userPreferences,
   db.fillingCategories,
   db.ingredientCategories,
+  db.sales,
+  db.giveaways,
 ];
 for (const table of AUTO_ID_TABLES) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

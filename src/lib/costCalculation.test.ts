@@ -4,7 +4,9 @@ import {
   calculateCapWeightG,
   calculateFillingWeightPerCavityG,
   calculateProductCost,
-  deriveShellPercentageFromGrams,
+  deriveShellPercentageFromFractions,
+  fillFractionToGrams,
+  gramsToFillFraction,
   resolveCurrentCoatingCostPerGram,
   resolveCoatingCostAtDate,
   serializeBreakdown,
@@ -396,29 +398,45 @@ describe("serializeBreakdown / deserializeBreakdown", () => {
   });
 });
 
-// --- deriveShellPercentageFromGrams ---
+// --- deriveShellPercentageFromFractions ---
 
-describe("deriveShellPercentageFromGrams", () => {
+describe("deriveShellPercentageFromFractions", () => {
   it("returns 100 when there are no fillings", () => {
-    expect(deriveShellPercentageFromGrams(10, 0)).toBe(100);
+    expect(deriveShellPercentageFromFractions(0)).toBe(100);
   });
 
-  it("returns 0 when fillings fill the entire cavity", () => {
-    // 10g cavity, 12g filling (density 1.2) → 12/1.2 = 10ml → fills entire cavity
-    expect(deriveShellPercentageFromGrams(10, 12, 1.2)).toBe(0);
+  it("returns 0 when fillings fill the entire cavity volume", () => {
+    expect(deriveShellPercentageFromFractions(1)).toBe(0);
   });
 
-  it("returns 0 when fillings exceed the cavity", () => {
-    expect(deriveShellPercentageFromGrams(10, 20, 1.2)).toBe(0);
+  it("returns 0 when fillings exceed the cavity volume", () => {
+    expect(deriveShellPercentageFromFractions(1.5)).toBe(0);
   });
 
   it("computes correct percentage for partial fill", () => {
-    // 10g cavity, 6g filling (density 1.2) → 6/1.2 = 5ml volume → 50% of cavity for fill → 50% shell
-    expect(deriveShellPercentageFromGrams(10, 6, 1.2)).toBeCloseTo(50);
+    // half the cavity is filled → 50% shell
+    expect(deriveShellPercentageFromFractions(0.5)).toBeCloseTo(50);
+  });
+});
+
+// --- fillFractionToGrams / gramsToFillFraction round-trip ---
+
+describe("fill fraction conversion", () => {
+  it("converts grams to fraction and back", () => {
+    // 10g cavity (≈10ml), 6g filling at density 1.2 → 5ml → 50% of cavity
+    const fraction = gramsToFillFraction(6, 10);
+    expect(fraction).toBeCloseTo(0.5);
+    expect(fillFractionToGrams(fraction, 10)).toBeCloseTo(6);
+  });
+
+  it("rescales grams when the cavity weight changes", () => {
+    // The same recipe (50% of cavity) should yield more grams in a larger cavity
+    const fraction = gramsToFillFraction(6, 10); // 0.5 against 10g cavity
+    expect(fillFractionToGrams(fraction, 15)).toBeCloseTo(9); // 50% of 15g cavity = 9g
   });
 
   it("returns 0 for zero cavity weight", () => {
-    expect(deriveShellPercentageFromGrams(0, 5)).toBe(0);
+    expect(gramsToFillFraction(5, 0)).toBe(0);
   });
 });
 
@@ -433,11 +451,12 @@ describe("calculateProductCost (grams mode)", () => {
   const fillingsMap = new Map([["10", filling1]]);
   const ingredientCostMap = new Map<string, number | null>([["100", 0.02], ["101", 0.01]]);
 
-  it("uses fillGrams directly instead of computing from fillPercentage", () => {
+  it("scales fillFraction to grams using the supplied mould's cavity weight", () => {
+    // 0.5 fraction × 10g cavity × 1.2 density = 6g of filling per cavity
     const productFilling: ProductFilling = {
       id: "1", productId: "1", fillingId: "10", sortOrder: 0,
       fillPercentage: 100, // Would give a different result in percentage mode
-      fillGrams: 5,        // 5g per cavity in grams mode
+      fillFraction: 0.5,
     };
 
     const result = calculateProductCost({
@@ -452,18 +471,43 @@ describe("calculateProductCost (grams mode)", () => {
       fillMode: "grams",
     });
 
-    // The filling entries should use 5g total, proportioned 60:40
+    // The filling entries should use 6g total, proportioned 60:40
     const fillingEntries = result.breakdown.filter((e) => e.kind === "filling_ingredient");
     expect(fillingEntries).toHaveLength(2);
     const totalFillingGrams = fillingEntries.reduce((s, e) => s + e.grams, 0);
-    expect(totalFillingGrams).toBeCloseTo(5, 1);
+    expect(totalFillingGrams).toBeCloseTo(6, 1);
   });
 
-  it("falls back to percentage mode when fillGrams is not set", () => {
+  it("rescales fill grams when costing against a larger mould", () => {
+    // Same fraction (0.5), but a 15g cavity → 0.5 × 15 × 1.2 = 9g of filling
     const productFilling: ProductFilling = {
       id: "1", productId: "1", fillingId: "10", sortOrder: 0,
       fillPercentage: 100,
-      // no fillGrams — should fall back to percentage calculation
+      fillFraction: 0.5,
+    };
+    const biggerMould: Mould = { ...mockMould, cavityWeightG: 15 };
+
+    const result = calculateProductCost({
+      mould: biggerMould,
+      productFillings: [productFilling],
+      fillingIngredientsMap,
+      fillingsMap,
+      ingredientCostMap,
+      shellChocolateCostPerGram: 0.018,
+      fillMode: "grams",
+    });
+
+    const totalFillingGrams = result.breakdown
+      .filter((e) => e.kind === "filling_ingredient")
+      .reduce((s, e) => s + e.grams, 0);
+    expect(totalFillingGrams).toBeCloseTo(9, 1);
+  });
+
+  it("falls back to percentage mode when fillFraction is not set", () => {
+    const productFilling: ProductFilling = {
+      id: "1", productId: "1", fillingId: "10", sortOrder: 0,
+      fillPercentage: 100,
+      // no fillFraction — should fall back to percentage calculation
     };
 
     const gramsResult = calculateProductCost({
@@ -486,7 +530,111 @@ describe("calculateProductCost (grams mode)", () => {
       fillMode: "percentage",
     });
 
-    // Should produce the same result since fillGrams is undefined
+    // Should produce the same result since fillFraction is undefined
     expect(gramsResult.costPerProduct).toBeCloseTo(pctResult.costPerProduct);
+  });
+});
+
+// --- Nested-filling cost recalc (Phase 2 contract) ---
+//
+// These tests pin the recalc behaviour: editing a nested filling's
+// ingredients (or its amount) flows through to the host's cost. We compare
+// two calls to `calculateProductCost` — one with the original nested data,
+// one with edited nested data — and assert the per-product cost changes
+// proportionally.
+describe("calculateProductCost — nested fillings", () => {
+  // Reuse mockMould (cavity 10g, 20 cavities) at default 37% shell.
+  const outerFilling: Filling = { id: "outer", name: "Outer", category: "", source: "", description: "", allergens: [], instructions: "" };
+  const innerFilling: Filling = { id: "inner", name: "Inner", category: "", source: "", description: "", allergens: [], instructions: "" };
+  const productFilling: ProductFilling = { id: "pf-1", productId: "p-1", fillingId: "outer", sortOrder: 0, fillPercentage: 100 };
+  const fillingsMap = new Map<string, Filling>([
+    ["outer", outerFilling],
+    ["inner", innerFilling],
+  ]);
+  const ingredientCostMap = new Map<string, number | null>([
+    ["sugar", 0.001], // €0.001/g
+    ["butter", 0.01], // €0.01/g
+  ]);
+
+  function buildMaps(innerSugarG: number) {
+    // Inner filling: `innerSugarG` of sugar + 100g butter → fillingTotal varies.
+    // Outer filling: 100g of inner (one nested component, no own ingredients).
+    const fillingIngredientsMap = new Map([
+      ["inner", [
+        { id: "li-1", fillingId: "inner", ingredientId: "sugar", amount: innerSugarG, unit: "g", sortOrder: 0 },
+        { id: "li-2", fillingId: "inner", ingredientId: "butter", amount: 100, unit: "g", sortOrder: 1 },
+      ] as FillingIngredient[]],
+    ]);
+    const fillingComponentsMap = new Map([
+      ["outer", [
+        { id: "fc-1", fillingId: "outer", childFillingId: "inner", amount: 100, unit: "g", sortOrder: 0 },
+      ]],
+    ]);
+    return { fillingIngredientsMap, fillingComponentsMap };
+  }
+
+  it("flows nested ingredient prices into the host product's cost", () => {
+    const { fillingIngredientsMap, fillingComponentsMap } = buildMaps(50);
+    const result = calculateProductCost({
+      mould: mockMould,
+      productFillings: [productFilling],
+      fillingIngredientsMap,
+      fillingsMap,
+      ingredientCostMap,
+      shellChocolateCostPerGram: 0,
+      shellPercentage: 0,
+      fillingComponentsMap,
+    });
+
+    // Both leaf ingredients should appear in the breakdown — proves the
+    // flattener walked through the nested filling.
+    const ingredientIds = result.breakdown
+      .filter((e) => e.kind === "filling_ingredient")
+      .map((e) => e.ingredientId);
+    expect(ingredientIds).toContain("sugar");
+    expect(ingredientIds).toContain("butter");
+  });
+
+  it("recalculates when the nested filling's ingredient amount changes", () => {
+    // Same total ingredients, but with twice as much sugar — cost goes up.
+    const before = buildMaps(50);
+    const after = buildMaps(150); // 3× sugar, butter unchanged
+
+    const common = {
+      mould: mockMould,
+      productFillings: [productFilling],
+      fillingsMap,
+      ingredientCostMap,
+      shellChocolateCostPerGram: 0,
+      shellPercentage: 0,
+    };
+
+    const r1 = calculateProductCost({ ...common, ...before });
+    const r2 = calculateProductCost({ ...common, ...after });
+
+    // Both runs should produce a positive cost (mould has fillable volume).
+    expect(r1.costPerProduct).toBeGreaterThan(0);
+    expect(r2.costPerProduct).toBeGreaterThan(0);
+
+    // Flipping more of the filling toward the cheap ingredient (sugar at €0.001/g
+    // vs butter at €0.01/g) lowers the per-g cost — so r2 < r1.
+    expect(r2.costPerProduct).toBeLessThan(r1.costPerProduct);
+  });
+
+  it("falls back to ingredient-only walk when fillingComponentsMap is omitted", () => {
+    // With no components map, the host has no own ingredients → 0 cost.
+    const { fillingIngredientsMap } = buildMaps(50);
+    const result = calculateProductCost({
+      mould: mockMould,
+      productFillings: [productFilling],
+      fillingIngredientsMap,
+      fillingsMap,
+      ingredientCostMap,
+      shellChocolateCostPerGram: 0,
+      shellPercentage: 0,
+      // no fillingComponentsMap
+    });
+    const fillingEntries = result.breakdown.filter((e) => e.kind === "filling_ingredient");
+    expect(fillingEntries).toHaveLength(0);
   });
 });

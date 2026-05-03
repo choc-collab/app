@@ -16,6 +16,14 @@ import {
   categoryAllowsZeroShell,
   categoryAllowsFullShell,
 } from "@/lib/productCategories";
+import type { ShopKind } from "@/types";
+
+const SHOP_KIND_OPTIONS: ReadonlyArray<{ value: ShopKind; label: string; description: string }> = [
+  { value: "moulded",   label: "Moulded",   description: "Round glossy disc — polycarb-mould bonbons." },
+  { value: "enrobed",   label: "Enrobed",   description: "Square slab with matte finish — slab cut + dipped." },
+  { value: "snack-bar", label: "Snack bar", description: "Larger moulded format — single-piece snack." },
+  { value: "bar",       label: "Bar",       description: "Long horizontal segment — chocolate bar." },
+];
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore } from "lucide-react";
@@ -40,6 +48,7 @@ export default function ProductCategoryDetailPage() {
   const [minStr, setMinStr] = useState("");
   const [maxStr, setMaxStr] = useState("");
   const [defaultStr, setDefaultStr] = useState("");
+  const [shopKind, setShopKind] = useState<ShopKind | "">("");
   const [errors, setErrors] = useState<string[]>([]);
 
   // Navigation guard — delete incomplete record if user leaves ?new=1 without saving
@@ -47,7 +56,8 @@ export default function ProductCategoryDetailPage() {
   const formDirty = editing && category != null && (
     minStr !== String(category.shellPercentMin) ||
     maxStr !== String(category.shellPercentMax) ||
-    defaultStr !== String(category.defaultShellPercent)
+    defaultStr !== String(category.defaultShellPercent) ||
+    shopKind !== (category.shopKind ?? "")
   );
   const isDirty = (isNew && !savedOnce) || formDirty;
   const handleConfirmLeave = useCallback(async () => {
@@ -71,6 +81,7 @@ export default function ProductCategoryDetailPage() {
     setMinStr(String(c.shellPercentMin));
     setMaxStr(String(c.shellPercentMax));
     setDefaultStr(String(c.defaultShellPercent));
+    setShopKind(c.shopKind ?? "");
     setErrors([]);
   }
 
@@ -113,6 +124,7 @@ export default function ProductCategoryDetailPage() {
       shellPercentMin: parsed.shellPercentMin,
       shellPercentMax: parsed.shellPercentMax,
       defaultShellPercent: parsed.defaultShellPercent,
+      shopKind: shopKind === "" ? undefined : shopKind,
       archived: category.archived,
     });
     setSavedOnce(true);
@@ -177,6 +189,7 @@ export default function ProductCategoryDetailPage() {
                   shellPercentMin: category.shellPercentMin,
                   shellPercentMax: category.shellPercentMax,
                   defaultShellPercent: category.defaultShellPercent,
+                  shopKind: category.shopKind,
                   archived: category.archived,
                 });
               }}
@@ -202,6 +215,25 @@ export default function ProductCategoryDetailPage() {
         {editing ? (
           /* ── Edit form ── */
           <form onSubmit={handleSave} className="space-y-3">
+            <div>
+              <label className="label" htmlFor="cat-shop-kind">Shop appearance</label>
+              <select
+                id="cat-shop-kind"
+                value={shopKind}
+                onChange={(e) => setShopKind(e.target.value as ShopKind | "")}
+                className="input"
+                aria-label="Shop appearance"
+              >
+                <option value="">Default (round disc)</option>
+                {SHOP_KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {SHOP_KIND_OPTIONS.find((o) => o.value === shopKind)?.description
+                  ?? "Controls how products in this category render in the Shop (palette tiles, cavities, summary chips)."}
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label" htmlFor="cat-shell-min">Shell % min</label>
@@ -268,6 +300,13 @@ export default function ProductCategoryDetailPage() {
           /* ── Read-only view ── */
           <>
             <div className="rounded-lg border border-border bg-card divide-y divide-border">
+              <div className="flex justify-between items-center px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Shop appearance</span>
+                <span>
+                  {SHOP_KIND_OPTIONS.find((o) => o.value === category.shopKind)?.label
+                    ?? "Default (round disc)"}
+                </span>
+              </div>
               <div className="flex justify-between items-center px-3 py-2 text-sm">
                 <span className="text-muted-foreground">Shell % range</span>
                 <span className="font-mono">{formatCategoryRange(category)}</span>

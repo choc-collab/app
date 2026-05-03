@@ -50,6 +50,10 @@ async function addIngredientToFilling(page: import("@playwright/test").Page, ing
   await page.locator("form").getByRole("spinbutton").fill("100");
   // Click the "Add" submit button inside the ingredient form
   await page.locator("form").getByRole("button", { name: "Add" }).click();
+  // After save, the AddFillingIngredient form closes — wait until the
+  // "Search ingredient…" placeholder is gone so the saveFillingIngredient
+  // Dexie write has actually committed before the next step runs.
+  await expect(page.getByPlaceholder("Search ingredient…")).toHaveCount(0);
 }
 
 /**

@@ -12,6 +12,26 @@ A future **cloud file sync** path (File System Access API writing to iCloud Driv
 
 **Liability posture**: this is a tool built for a working chocolatier's own use, shared as OSS under MIT. It is not a certified, supported product. The README and first-run experience should make this clear. Keep the risk surface small: no hosting of other users' data, no uptime promises, prominent backup UX.
 
+## Out-of-scope subsystem: `/choccy-chat`
+
+The repo contains a small **side-project that is NOT part of Choc-collab the app** — a fan-run directory of chocolatiers around James Parsons' Friday Choccy Chat lives, hosted at `choc-collab.org/choccy-chat`. It shares the domain only because the maintainer of both is the same person.
+
+When working on Choc-collab features, **treat this subsystem as out-of-scope**. Don't import its code, don't reuse its types, don't extend its data model. The boundary is intentional.
+
+**Where it lives**:
+- `src/app/(public)/choccy-chat/` — public map + join form + self-removal page
+- `src/app/admin/choccy-chat/` — admin queue (Cloudflare Access gated)
+- `worker/` — Cloudflare Worker serving `/api/choccy-chat/*` (Turnstile-gated submissions, D1-backed approved-entries, Access-gated admin)
+- `src/data/chocolatiers.json` — single-entry static fallback for the public map
+
+**Why it's segregated from Choc-collab the app**:
+1. **Different data model** — D1 (server-side, custodial) vs. IndexedDB (local-first, user-owned). Mixing them would violate the local-first liability posture in this file.
+2. **Different licensing reality** — Choc-collab is genuinely fork-friendly; the Choccy Chat directory is personal infrastructure that nobody else would want to deploy.
+3. **PII surface area** — the Worker handles submitter emails. PRs to `worker/`, `src/app/(public)/choccy-chat/`, `src/app/admin/`, or `src/data/chocolatiers.json` need extra-careful review per [CONTRIBUTING.md](CONTRIBUTING.md). In particular, the Worker's public `/api/choccy-chat/friends` response must contain only the fields listed in `worker/src/types.ts:FriendPublic` — never `email`, `contact_name`, `notes`, `ip_hash`, or `removal_token`.
+4. **Deployment runbook** — operational steps for the directory live in [`worker/DEPLOY.md`](worker/DEPLOY.md), not in this Choc-collab agent guide.
+
+**If you are an agent working on Choc-collab features**: skip this entire subsystem. Touch it only when the user explicitly asks about Choccy Chat, the directory, the Worker, the admin UI, or the Cloudflare Access / D1 / Turnstile setup. When in doubt, ask.
+
 ## Architecture Constraints
 Keep these in mind for every new feature:
 
@@ -55,7 +75,21 @@ Dexie Cloud generates entity IDs containing a `|` pipe character (e.g. `ing0Ppjy
 
 3. **When you add a new `[id]` route, also add the rewrite rule in both hosts' configs.** `public/_redirects` for Cloudflare (nested routes before parents — see the comment in that file) and `vercel.json` for Vercel. Each route needs **two** Cloudflare patterns: `/fillings/*/` (trailing slash, `*` glob — catches `/fillings/xyz/`) and `/fillings/:id` (no trailing slash, named placeholder — catches `/fillings/xyz`). A single `/fillings/*` is a trap: the `*` glob matches empty, so it swallows the list URL `/fillings/` into the detail placeholder.
 
+4. **Every new `[id]` route directory must include a sibling `layout.tsx` that exports `generateStaticParams()`.** `output: "export"` refuses to build a dynamic route without it, so omitting the layout fails the production build with `Page "…/[id]" is missing "generateStaticParams()"`. Follow the one-line convention used by every other dynamic route in the app:
+   ```tsx
+   // src/app/(app)/<segment>/[id]/layout.tsx
+   export async function generateStaticParams() {
+     return [{ id: "_spa" }];
+   }
+
+   export default function Layout({ children }: { children: React.ReactNode }) {
+     return children;
+   }
+   ```
+
 Never pass a raw route segment directly to a DB lookup or hook.
+
+**Always run `npm run build` before committing any change that adds or modifies a route, page, or `public/_redirects`.** `next dev` does not produce a static export, so route-level failures (missing `generateStaticParams()`, rewrite regressions, route-tree mismatches) only surface at build time. A clean `npm run build` is a precondition for the commit, not a release-time step.
 
 ---
 

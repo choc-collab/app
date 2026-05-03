@@ -57,7 +57,10 @@
     { "source": "/pantry/decoration/:id/", "destination": "/pantry/decoration/_spa/" },
     { "source": "/products/:id/:path*", "destination": "/products/_spa/:path*" },
     { "source": "/products/:id", "destination": "/products/_spa/" },
-    { "source": "/products/:id/", "destination": "/products/_spa/" }
+    { "source": "/products/:id/", "destination": "/products/_spa/" },
+    { "source": "/shop/new/:id/:path*", "destination": "/shop/new/_spa/:path*" },
+    { "source": "/shop/new/:id", "destination": "/shop/new/_spa/" },
+    { "source": "/shop/new/:id/", "destination": "/shop/new/_spa/" }
   ],
   "headers": [
     {
@@ -65,7 +68,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.dexie.cloud wss://*.dexie.cloud https://cloudflareinsights.com; worker-src 'self'; frame-ancestors 'none'"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.basemaps.cartocdn.com; connect-src 'self' https://*.dexie.cloud wss://*.dexie.cloud https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; worker-src 'self'; frame-ancestors 'none'; form-action 'self'"
         },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "X-Frame-Options", "value": "DENY" },

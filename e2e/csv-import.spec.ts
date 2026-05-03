@@ -24,7 +24,7 @@ test.describe("CSV Import — Ingredients", () => {
     await page.goto("/settings");
     await page.getByRole("button", { name: "Import" }).click();
 
-    await expect(page.getByText("Import Data")).toBeVisible();
+    await expect(page.getByText("Import & Export Data")).toBeVisible();
     await expect(page.getByText("Download CSV template")).toBeVisible();
     await expect(page.getByRole("button", { name: "Choose CSV file…" })).toBeVisible();
   });

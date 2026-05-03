@@ -206,3 +206,69 @@
     border-radius: inherit;
   }
 }
+
+/* ─── Leaflet (chocolatier directory) overrides ────────────────────────
+   The default Leaflet popup is a generic white tooltip. We theme it to
+   match the cocoa accent system used by the rest of the marketing site.
+   Scoped to .choc-popup so other Leaflet usages (if any) stay default.
+   ──────────────────────────────────────────────────────────────────── */
+.leaflet-container.leaflet-container {
+  font-family: var(--font-sans);
+}
+.choc-popup .leaflet-popup-content-wrapper {
+  border: 1px solid var(--accent-cocoa-ink);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+  padding: 2px;
+}
+.choc-popup .leaflet-popup-content {
+  margin: 12px 14px;
+  font-family: var(--font-sans);
+}
+.choc-popup .leaflet-popup-tip {
+  background: var(--color-card);
+  border: 1px solid var(--accent-cocoa-ink);
+  border-top: none;
+  border-left: none;
+}
+.choc-popup__loc {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-cocoa-ink);
+  margin-bottom: 4px;
+}
+.choc-popup__name {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+.choc-popup__blurb {
+  font-size: 0.78rem;
+  color: var(--color-muted-foreground);
+  margin: 0 0 8px 0;
+  line-height: 1.45;
+}
+.choc-popup__links {
+  font-size: 0.78rem;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.choc-popup__links a {
+  color: var(--color-foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.choc-popup__links a:hover {
+  opacity: 0.75;
+}
+/* Pin focus ring — keep our dashed signature on Leaflet circle markers */
+.leaflet-interactive[role="button"]:focus-visible {
+  outline: 2px dashed var(--color-foreground);
+  outline-offset: 2px;
+}
