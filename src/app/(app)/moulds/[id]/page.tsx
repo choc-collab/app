@@ -66,8 +66,13 @@ export default function MouldDetailPage() {
     setPhoto(m.photo);
   }
 
-  // Sync form state when mould loads
+  // Sync form state once when the mould first loads. Done in render (rather
+  // than in an effect) so the form fields below render with populated values
+  // on the same paint — moving to useEffect would briefly show empty fields.
+  // The ref is the standard guard against re-syncing on subsequent renders.
+  // eslint-disable-next-line react-hooks/refs
   if (mould && (!editing || isNew) && !formSyncedRef.current && mould.name) {
+     
     formSyncedRef.current = true;
     syncForm(mould);
   }

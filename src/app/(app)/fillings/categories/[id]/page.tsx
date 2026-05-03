@@ -57,7 +57,7 @@ export default function FillingCategoryDetailPage() {
     if (isNew && categoryId) {
       try { await deleteFillingCategory(categoryId); } catch { /* ignore — silently keep if in use */ }
     }
-  }, [isNew, categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, categoryId]);  
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   // Strip ?new=1 once the category loads

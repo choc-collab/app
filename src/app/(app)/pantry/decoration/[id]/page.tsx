@@ -67,7 +67,7 @@ export default function DecorationMaterialPage() {
   const isDirty = (isNew && !savedOnce) || formDirty;
   const handleConfirmLeave = useCallback(async () => {
     if (isNew && materialId) await deleteDecorationMaterial(materialId);
-  }, [isNew, materialId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, materialId]);  
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   // Escape key handling

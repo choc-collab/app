@@ -24,7 +24,7 @@ import {
 import { corsHeaders, json } from "./lib";
 import type { Env } from "./types";
 
-export default {
+const worker = {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -63,3 +63,5 @@ export default {
     }
   },
 };
+
+export default worker;

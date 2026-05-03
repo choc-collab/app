@@ -11,6 +11,8 @@ export const test = base.extend({
     await page.addInitScript(() => {
       localStorage.setItem("chocolatier-seeded", "true");
     });
+    // `use` is Playwright's fixture-yield callback, not React's `use()` hook.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     await use(page);
   },
 });

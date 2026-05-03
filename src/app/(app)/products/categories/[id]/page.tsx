@@ -64,7 +64,7 @@ export default function ProductCategoryDetailPage() {
     if (isNew && categoryId) {
       try { await deleteProductCategory(categoryId); } catch { /* in-use guard may prevent delete — fine, leave it */ }
     }
-  }, [isNew, categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, categoryId]);  
   useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   useEffect(() => {

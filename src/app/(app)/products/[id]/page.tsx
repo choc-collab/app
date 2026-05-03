@@ -150,7 +150,7 @@ export default function ProductDetailPage() {
     if (isNew && product?.id) {
       await deleteProduct(product.id);
     }
-  }, [isNew, product?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, product?.id]);  
   const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
 
   // Recommended shelf life: shortest filling shelf life among assigned fillings
@@ -1306,7 +1306,7 @@ function BatchHistoryTab({ productId }: { productId: string }) {
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-10 text-center px-4">
-        This product hasn't been included in any production batch yet.
+        This product hasn&apos;t been included in any production batch yet.
       </p>
     );
   }
@@ -2241,7 +2241,7 @@ function MaterialPicker({
                   highlightIdx === filtered.length ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
                 }`}
               >
-                + Create <span className="font-medium text-foreground ml-1">"{trimmed}"</span>
+                + Create <span className="font-medium text-foreground ml-1">&ldquo;{trimmed}&rdquo;</span>
                 <span className="ml-auto text-xs">Cocoa Butter</span>
               </button>
             </li>
@@ -2723,12 +2723,12 @@ function FillBar({ productFillings }: { productFillings: { id?: string; fillingI
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   // Calculate left offset (%) for the tooltip anchor
-  let offset = 0;
-  const offsets = productFillings.map((bl) => {
-    const mid = offset + (bl.fillPercentage ?? 0) / 2;
-    offset += bl.fillPercentage ?? 0;
-    return mid;
-  });
+  const offsets: number[] = [];
+  let runningOffset = 0;
+  for (const bl of productFillings) {
+    offsets.push(runningOffset + (bl.fillPercentage ?? 0) / 2);
+    runningOffset += bl.fillPercentage ?? 0;
+  }
 
   return (
     <div className="space-y-1.5">

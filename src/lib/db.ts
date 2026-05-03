@@ -582,7 +582,7 @@ const AUTO_ID_TABLES = [
   db.giveaways,
 ];
 for (const table of AUTO_ID_TABLES) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   (table as unknown as { hook: (event: "creating", fn: (primKey: unknown, obj: any) => unknown) => void }).hook(
     "creating",
     function (primKey, obj) {
