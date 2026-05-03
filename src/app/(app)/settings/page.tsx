@@ -12,7 +12,7 @@ import { getStorageStatus, requestPersistentStorage, formatBytes, type StorageSt
 import { readLastSnapshotMetadata, dismissLastSnapshotMetadata, type LastSnapshotMetadata } from "@/lib/upgrade-snapshot";
 import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive } from "lucide-react";
 import { CSVImport } from "@/components/csv-import";
-import { makeIngredientImportConfig, getExistingIngredientIndex } from "@/lib/csv-import-ingredients";
+import { makeIngredientImportConfig, getExistingIngredientIndex, exportIngredientsCSV } from "@/lib/csv-import-ingredients";
 import type { Ingredient } from "@/types";
 
 type ImportState = "idle" | "confirm" | "importing" | "done" | "error";
@@ -43,6 +43,7 @@ export default function SettingsPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importState, setImportState] = useState<ImportState>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [importResult, setImportResult] = useState<import("@/lib/backup").BackupImportResult | null>(null);
   const [exporting, setExporting] = useState(false);
 
   async function handleExport() {
@@ -67,7 +68,8 @@ export default function SettingsPage() {
     if (!selectedFile) return;
     setImportState("importing");
     try {
-      await importBackup(selectedFile);
+      const result = await importBackup(selectedFile);
+      setImportResult(result);
       setImportState("done");
       setSelectedFile(null);
     } catch (err) {
@@ -80,6 +82,7 @@ export default function SettingsPage() {
     setSelectedFile(null);
     setImportState("idle");
     setErrorMessage("");
+    setImportResult(null);
   }
 
   return (
@@ -87,34 +90,34 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Backup, restore, and preferences" />
 
       {/* Tab strip */}
-      <div className="flex border-b border-border px-4 mb-6">
+      <div className="flex border-b border-border px-4 mb-6 overflow-x-auto">
         <button
           onClick={() => switchTab("backup")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "backup" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "backup" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Backup & Restore
         </button>
         <button
           onClick={() => switchTab("import")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "import" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "import" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
-          Import
+          Import/Export
         </button>
         <button
           onClick={() => switchTab("market")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "market" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "market" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Target Market
         </button>
         <button
           onClick={() => switchTab("printing")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "printing" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "printing" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Printing
         </button>
         <button
           onClick={() => switchTab("demo")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "demo" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "demo" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
           Demo Mode
         </button>
@@ -127,6 +130,7 @@ export default function SettingsPage() {
             exporting={exporting}
             importState={importState}
             errorMessage={errorMessage}
+            importResult={importResult}
             selectedFile={selectedFile}
             onExport={handleExport}
             onFileSelected={handleFileSelected}
@@ -292,6 +296,7 @@ function BackupTab({
   exporting,
   importState,
   errorMessage,
+  importResult,
   selectedFile,
   onExport,
   onFileSelected,
@@ -302,6 +307,7 @@ function BackupTab({
   exporting: boolean;
   importState: ImportState;
   errorMessage: string;
+  importResult: import("@/lib/backup").BackupImportResult | null;
   selectedFile: File | null;
   onExport: () => void;
   onFileSelected: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -416,11 +422,40 @@ function BackupTab({
           ) : importState === "importing" ? (
             <div className="py-2 text-center text-sm text-muted-foreground">Importing…</div>
           ) : importState === "done" ? (
-            <div className="flex items-center gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
-              <CheckCircle className="w-4 h-4 text-status-ok shrink-0" />
-              <p className="text-xs text-status-ok">
-                Restore complete. Reload the page to see your data.
-              </p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
+                <CheckCircle className="w-4 h-4 text-status-ok shrink-0" />
+                <p className="text-xs text-status-ok">
+                  Restore complete. Reload the page to see your data.
+                </p>
+              </div>
+              {/* Surface any nested-filling validation issues the importer
+                  recovered from. The restore itself succeeded — these are
+                  rows that were dropped because their refs didn't resolve
+                  (or would have closed a cycle). */}
+              {importResult && (importResult.droppedFillingComponentRefs.length > 0 || importResult.droppedFillingComponentCycles.length > 0) && (
+                <div
+                  className="rounded-md border border-warning/40 bg-warning-muted/40 px-3 py-2 text-xs space-y-1"
+                  data-testid="import-result-warnings"
+                  role="status"
+                >
+                  {importResult.droppedFillingComponentRefs.length > 0 && (
+                    <p>
+                      Dropped {importResult.droppedFillingComponentRefs.length} nested-filling row
+                      {importResult.droppedFillingComponentRefs.length === 1 ? "" : "s"}
+                      {" "}with unknown filling IDs:
+                      {" "}<span className="font-mono">{importResult.droppedFillingComponentRefs.join(", ")}</span>
+                    </p>
+                  )}
+                  {importResult.droppedFillingComponentCycles.length > 0 && (
+                    <p>
+                      Dropped {importResult.droppedFillingComponentCycles.length} nested-filling row
+                      {importResult.droppedFillingComponentCycles.length === 1 ? "" : "s"}
+                      {" "}that would have closed a cycle.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ) : null}
         </div>
@@ -575,7 +610,7 @@ function DemoDataSection() {
               Adds 3 products (Milk Chocolate Ganache, Salted Caramel, Hazelnut Praline)
               with full ingredient data, a cost history showing the switch from{" "}
               <strong>Callebaut → Felchlin</strong> premium couverture in February 2026,
-              5 production batches (including one in progress today), and in-stock products
+              6 production batches (including one in progress today), and in-stock products
               ready to explore in the Stock tab.
               Existing data is not affected.
             </p>
@@ -976,19 +1011,94 @@ function ImportTab() {
   return (
     <div className="space-y-6">
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-primary">Import Data</h2>
+        <h2 className="text-sm font-semibold text-primary">Import &amp; Export Data</h2>
         <p className="text-xs text-muted-foreground">
-          Bulk-import records from a CSV file. Download the template, fill it in using a
-          spreadsheet, then upload it here. Duplicates are detected by name + manufacturer
-          — if both match an existing record, the row is skipped. Import only adds new
-          records; it never updates or replaces existing data.
+          Bulk-import records from a CSV file, or export your existing data to edit it in a
+          spreadsheet and re-import. Duplicates are detected by name + manufacturer — if both
+          match an existing record, the row is skipped unless you opt in to updating existing
+          records.
         </p>
       </section>
 
-      {/* Ingredients */}
+      {/* Ingredients — Export */}
+      <section className="rounded-lg border border-border bg-card p-4">
+        <IngredientCSVExportSection />
+      </section>
+
+      {/* Ingredients — Import */}
       <section className="rounded-lg border border-border bg-card p-4">
         <IngredientCSVImportSection />
       </section>
+    </div>
+  );
+}
+
+function IngredientCSVExportSection() {
+  const [exporting, setExporting] = useState(false);
+  const [result, setResult] = useState<{ count: number } | null>(null);
+  const [error, setError] = useState("");
+
+  async function handleExport() {
+    setExporting(true);
+    setError("");
+    try {
+      const count = await exportIngredientsCSV();
+      setResult({ count });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3">
+        <FileSpreadsheet className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">Export ingredients to CSV</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Download all active (non-archived) ingredients as a CSV you can edit in a
+            spreadsheet and re-import here.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
+        <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
+        <p className="text-xs text-status-warn">
+          Only the latest purchase price is exported — not the full price history. Re-importing
+          this file won&rsquo;t restore historical pricing entries. Use Backup &amp; Restore if
+          you need a complete archive.
+        </p>
+      </div>
+
+      <button
+        onClick={handleExport}
+        disabled={exporting}
+        className="w-full rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium disabled:opacity-50"
+      >
+        <span className="inline-flex items-center justify-center gap-2">
+          <Download className="w-4 h-4" />
+          {exporting ? "Exporting…" : "Export ingredients CSV"}
+        </span>
+      </button>
+
+      {result && (
+        <div className="flex items-start gap-2 rounded-md bg-status-ok-bg border border-status-ok-edge px-3 py-2">
+          <CheckCircle className="w-4 h-4 text-status-ok shrink-0 mt-0.5" />
+          <p className="text-xs text-status-ok">
+            Exported <strong>{result.count}</strong> ingredient{result.count === 1 ? "" : "s"}.
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+          <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+          <p className="text-xs text-destructive">{error}</p>
+        </div>
+      )}
     </div>
   );
 }

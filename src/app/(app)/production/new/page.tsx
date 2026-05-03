@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
-import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, saveFillingStock, toggleStep, useFillings, usePlanProducts, usePlanFillings, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames } from "@/lib/hooks";
+import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, saveFillingStock, toggleStep, useFillings, usePlanProducts, usePlanFillings, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames, useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling } from "@/lib/hooks";
 import { AlertTriangle, ArrowLeft, Beaker, Check, ChevronDown, History, Package, PackageX, Plus, ShoppingCart, Sprout, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -154,6 +154,10 @@ function NewPlanContent() {
     return Array.from(ids);
   }, [productFillingsMap]);
   const fillingIngredientsMap = useFillingIngredientsForFillings(allSelectedFillingIds);
+  // Full filling-component table — needed to detect shelf-stable fillings
+  // nested inside a product's host filling, so the batch-sizes phase
+  // surfaces them too.
+  const allFillingComponentsByFilling = useAllFillingComponentsByFilling();
 
   // --- Stock awareness: load all product fillings + ingredients for the select phase ---
   const allProductIds = useMemo(() => products.map((r) => r.id!).filter(Boolean), [products]);
@@ -248,14 +252,26 @@ function NewPlanContent() {
   }, [products, productStockAlerts, ingredientIssuesByProduct, activeCollectionProductIds, hasActiveCollections, filterToActiveCollection]);
 
   const hasShelfStableFillings = useMemo(() => {
+    // Direct check first — fast path for the common case.
+    const fillingById = new Map(allFillings.map((f) => [f.id!, f]));
+    const seen = new Set<string>();
+    function hasShelfStableInTree(id: string): boolean {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      const filling = fillingById.get(id);
+      if (filling && shelfStableCategoryNames.has(filling.category)) return true;
+      for (const c of allFillingComponentsByFilling.get(id) ?? []) {
+        if (hasShelfStableInTree(c.childFillingId)) return true;
+      }
+      return false;
+    }
     for (const productId of selectedProductIds) {
       for (const bl of productFillingsMap.get(productId) ?? []) {
-        const filling = allFillings.find((l) => l.id === bl.fillingId);
-        if (filling && shelfStableCategoryNames.has(filling.category)) return true;
+        if (hasShelfStableInTree(bl.fillingId)) return true;
       }
     }
     return false;
-  }, [productFillingsMap, selectedProductIds, allFillings, shelfStableCategoryNames]);
+  }, [productFillingsMap, selectedProductIds, allFillings, shelfStableCategoryNames, allFillingComponentsByFilling]);
 
   const mouldWarnings = useMemo(() => {
     // Aggregate physical-mould usage across primary + additional moulds for every
@@ -1193,6 +1209,10 @@ function BatchSizesPhase({
   const productFillingsMap = useProductFillingsForProducts(selectedProductIds);
   const allFillingStockItems = useFillingStockItems();
   const shelfStableCategoryNames = useShelfStableCategoryNames();
+  // Full-table reads so we can walk the filling-component graph from any
+  // host filling on a product and find shelf-stable children at any depth.
+  const allFillingComponentsByFilling = useAllFillingComponentsByFilling();
+  const allFillingIngredientsByFilling = useAllFillingIngredientsByFilling();
 
   // Build a map of stock per filling split into available (non-frozen) and
   // frozen totals. Both are usable in the wizard — frozen stock is opt-in via
@@ -1221,65 +1241,147 @@ function BatchSizesPhase({
     return map;
   }, [allFillingStockItems]);
 
-  // Collect unique shelf-stable filling IDs across all selected products
-  const shelfStableFillingIds = useMemo(() => {
-    const seen = new Set<string>();
-    const ids: string[] = [];
+  /**
+   * Total grams of each filling needed across this plan, including nested
+   * fillings that show up as components of a host. Walks the productFillings
+   * → fillingComponents graph from each selected product, scaling by mould +
+   * cavities + fill percentage, then propagating each level's needed grams
+   * down through nested components by recipe fraction.
+   *
+   * Example: product P uses host A (recipe = 200g cream + 100g caramel base
+   * → 300g total) at 100% fill. Mould delivers 60g of fill per cavity × 20
+   * cavities × 1 quantity = 1200g of A needed. Caramel base nested in A is
+   * 100/300 of A's recipe → 400g of caramel base needed.
+   */
+  const neededGramsByFillingId = useMemo(() => {
+    const mouldsById = new Map(moulds.map((m) => [m.id!, m]));
+    const needed: Record<string, number> = {};
+
+    function recipeTotalGrams(fillingId: string): number {
+      let total = 0;
+      for (const li of allFillingIngredientsByFilling.get(fillingId) ?? []) total += li.amount;
+      for (const c of allFillingComponentsByFilling.get(fillingId) ?? []) total += c.amount;
+      return total;
+    }
+
+    function attribute(fillingId: string, gramsNeeded: number, seen: ReadonlySet<string>) {
+      if (gramsNeeded <= 0) return;
+      if (seen.has(fillingId)) return;
+      needed[fillingId] = (needed[fillingId] ?? 0) + gramsNeeded;
+
+      const recipeTotal = recipeTotalGrams(fillingId);
+      if (recipeTotal <= 0) return;
+      const next = new Set(seen);
+      next.add(fillingId);
+      for (const c of allFillingComponentsByFilling.get(fillingId) ?? []) {
+        const childGrams = (c.amount / recipeTotal) * gramsNeeded;
+        attribute(c.childFillingId, childGrams, next);
+      }
+    }
+
     for (const productId of selectedProductIds) {
+      const cfg = config[productId];
+      if (!cfg || !cfg.mouldId) continue;
+      const mould = mouldsById.get(cfg.mouldId as string);
+      if (!mould) continue;
+      const cavityWeight = mould.cavityWeightG ?? 0;
+      if (cavityWeight <= 0) continue;
+      const fillWeightG = cavityWeight * mould.numberOfCavities * cfg.quantity * FILL_FACTOR * DENSITY_G_PER_ML;
       for (const bl of productFillingsMap.get(productId) ?? []) {
-        const filling = allFillings.find((l) => l.id === bl.fillingId);
-        if (filling && shelfStableCategoryNames.has(filling.category) && !seen.has(bl.fillingId)) {
-          seen.add(bl.fillingId);
-          ids.push(bl.fillingId);
-        }
+        const fillPct = (bl.fillPercentage ?? 100) / 100;
+        attribute(bl.fillingId, fillWeightG * fillPct, new Set<string>());
+      }
+    }
+
+    return needed;
+  }, [productFillingsMap, selectedProductIds, config, moulds, allFillingIngredientsByFilling, allFillingComponentsByFilling]);
+
+  // Filter to shelf-stable fillings — only these can be made ahead in a
+  // larger batch, so only these get a multiplier control. Everything else
+  // is sized exactly to the recipe via the production calc.
+  const shelfStableFillingIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const fillingId of Object.keys(neededGramsByFillingId)) {
+      const filling = allFillings.find((l) => l.id === fillingId);
+      if (filling && shelfStableCategoryNames.has(filling.category)) {
+        ids.push(fillingId);
       }
     }
     return ids;
-  }, [productFillingsMap, selectedProductIds, allFillings, shelfStableCategoryNames]);
-
-  const fillingIngredientsMap = useFillingIngredientsForFillings(shelfStableFillingIds);
+  }, [neededGramsByFillingId, allFillings, shelfStableCategoryNames]);
 
   const fillingBaseTotals = useMemo(() => {
     const map: Record<string, { total: number; unit: string }> = {};
     for (const fillingId of shelfStableFillingIds) {
-      const lis = fillingIngredientsMap.get(fillingId) ?? [];
-      const total = lis.reduce((s, li) => s + li.amount, 0);
-      const unit = lis[0]?.unit ?? "g";
+      const lis = allFillingIngredientsByFilling.get(fillingId) ?? [];
+      const components = allFillingComponentsByFilling.get(fillingId) ?? [];
+      // Recipe total includes nested components — same definition the host
+      // detail page uses. The base is what one "1× batch" produces.
+      const total = lis.reduce((s, li) => s + li.amount, 0)
+        + components.reduce((s, c) => s + c.amount, 0);
+      const unit = lis[0]?.unit ?? components[0]?.unit ?? "g";
       map[fillingId] = { total, unit };
     }
     return map;
-  }, [fillingIngredientsMap, shelfStableFillingIds]);
+  }, [allFillingIngredientsByFilling, allFillingComponentsByFilling, shelfStableFillingIds]);
 
   const minMultiplierMap = useMemo(() => {
-    const mouldsById = new Map(moulds.map((m) => [m.id!, m]));
     const result: Record<string, number> = {};
-
     for (const fillingId of shelfStableFillingIds) {
       const base = fillingBaseTotals[fillingId];
       if (!base || base.total <= 0) continue;
-
-      let neededG = 0;
-      for (const productId of selectedProductIds) {
-        const cfg = config[productId];
-        if (!cfg || !cfg.mouldId) continue;
-        const mould = mouldsById.get(cfg.mouldId as string);
-        if (!mould) continue;
-        const cavityWeight = mould.cavityWeightG ?? 0;
-        if (cavityWeight <= 0) continue;
-        const fillWeightG = cavityWeight * mould.numberOfCavities * cfg.quantity * FILL_FACTOR * DENSITY_G_PER_ML;
-        for (const bl of productFillingsMap.get(productId) ?? []) {
-          if (bl.fillingId !== fillingId) continue;
-          const fillPct = (bl.fillPercentage ?? 100) / 100;
-          neededG += fillWeightG * fillPct;
-        }
-      }
-
+      const neededG = neededGramsByFillingId[fillingId] ?? 0;
       if (neededG <= 0) continue;
       const rawMin = neededG / base.total;
       result[fillingId] = Math.ceil(rawMin * 10) / 10;
     }
     return result;
-  }, [productFillingsMap, shelfStableFillingIds, fillingBaseTotals, selectedProductIds, config, moulds]);
+  }, [shelfStableFillingIds, fillingBaseTotals, neededGramsByFillingId]);
+
+  /**
+   * For each shelf-stable filling, the set of *direct host filling names*
+   * that nest it within this plan's product fillings. Used to surface a
+   * "Nested inside …" subtitle on rows for fillings the user didn't pick
+   * directly — keeps the surprise factor low when an unfamiliar filling
+   * shows up in the batch-sizes phase.
+   *
+   * Direct product fillings (the ones the user added on the product) get an
+   * empty set, since they're self-explanatory.
+   */
+  const nestedHostsByFillingId = useMemo(() => {
+    const directProductFillingIds = new Set<string>();
+    for (const productId of selectedProductIds) {
+      for (const bl of productFillingsMap.get(productId) ?? []) {
+        directProductFillingIds.add(bl.fillingId);
+      }
+    }
+    const map: Record<string, string[]> = {};
+    // Walk every plan-relevant host's component edges; for each child that's
+    // shelf-stable (in our `shelfStableFillingIds` list) and not a direct
+    // product filling, record the host's name.
+    const reachable = new Set<string>();
+    function collect(id: string) {
+      if (reachable.has(id)) return;
+      reachable.add(id);
+      for (const c of allFillingComponentsByFilling.get(id) ?? []) collect(c.childFillingId);
+    }
+    for (const id of directProductFillingIds) collect(id);
+
+    for (const hostId of reachable) {
+      const components = allFillingComponentsByFilling.get(hostId) ?? [];
+      if (components.length === 0) continue;
+      const hostName = allFillings.find((f) => f.id === hostId)?.name;
+      if (!hostName) continue;
+      for (const c of components) {
+        if (!shelfStableFillingIds.includes(c.childFillingId)) continue;
+        if (directProductFillingIds.has(c.childFillingId)) continue;
+        const arr = map[c.childFillingId] ?? [];
+        if (!arr.includes(hostName)) arr.push(hostName);
+        map[c.childFillingId] = arr;
+      }
+    }
+    return map;
+  }, [selectedProductIds, productFillingsMap, allFillingComponentsByFilling, allFillings, shelfStableFillingIds]);
 
   // Auto-set the multiplier per filling based on mode:
   //   • Make fresh (no previous batch): bump to min needed to cover all products.
@@ -1316,21 +1418,12 @@ function BatchSizesPhase({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(minMultiplierMap), JSON.stringify(fillingPreviousBatches), JSON.stringify([...fillingStockMap.entries()])]);
 
-  // Auto-select "Use stock" for fillings that have stock available
-  useEffect(() => {
-    for (const fillingId of shelfStableFillingIds) {
-      const stock = fillingStockMap.get(fillingId);
-      if (stock && stock.totalG > 0 && !fillingPreviousBatches[fillingId]) {
-        const filling = allFillings.find((l) => l.id === fillingId);
-        onUpdatePreviousBatch(fillingId, {
-          madeAt: stock.oldestMadeAt.slice(0, 10),
-          ...(filling?.shelfLifeWeeks ? { shelfLifeWeeks: filling.shelfLifeWeeks } : {}),
-          fillingName: filling?.name ?? "",
-        });
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify([...fillingStockMap.entries()])]);
+  // Default mode is "Make fresh" — even when stock is available we don't
+  // silently flip to "Use stock" on the user's behalf. The stock banner +
+  // segmented toggle (rendered below) make both options visible and the
+  // user picks. Auto-deciding this used to mask the question entirely,
+  // which led to surprises when the chocolatier expected to make a fresh
+  // batch but the planner quietly subtracted from existing stock.
 
   const [inputStrings, setInputStrings] = useState<Record<string, string>>({});
 
@@ -1414,7 +1507,17 @@ function BatchSizesPhase({
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-muted-foreground">{filling.category}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {filling.category}
+                    {(nestedHostsByFillingId[fillingId]?.length ?? 0) > 0 && (
+                      <>
+                        {" · "}
+                        <span title="This filling appears as a nested component of one of the host fillings on this plan">
+                          nested in {nestedHostsByFillingId[fillingId]!.join(", ")}
+                        </span>
+                      </>
+                    )}
+                  </p>
                 </div>
                 {/* Toggle: Make fresh / Use stock — show whenever any stock exists
                     (available OR frozen). Frozen-only stock requires opting in via

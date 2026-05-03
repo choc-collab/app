@@ -9,7 +9,7 @@ import {
   freezeFillingStock, defrostFillingStock,
 } from "@/lib/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake } from "lucide-react";
+import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote } from "lucide-react";
 import type { PlanProduct, ProductionPlan, Product, Mould, FillingStock } from "@/types";
 import { reconcileStockCount } from "@/lib/stockCount";
 import { remainingShelfLifeDays, defrostedSellBy, WEEK_MS } from "@/lib/freezer";
@@ -531,8 +531,6 @@ function ProductStockTab() {
                           )}
                         </div>
                         <p className={`text-xs mt-0.5 ${sellByCls}`}>{sellByText}</p>
-                        {plan.notes && <p className="text-xs text-muted-foreground mt-0.5 truncate">Batch: {plan.notes}</p>}
-                        {pb.notes && <p className="text-xs text-muted-foreground mt-0.5 truncate">Note: {pb.notes}</p>}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                         <button
@@ -584,6 +582,26 @@ function ProductStockTab() {
                           Defrost
                         </button>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Notes — batch-level (from production plan) and item-level (per bonbon batch).
+                      Mirrors the styling of the product Batches/History tab so notes look the
+                      same wherever they appear. */}
+                  {(plan.notes || pb.notes) && (
+                    <div className="px-3 pb-2 space-y-1 border-t border-border pt-2">
+                      {plan.notes && (
+                        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                          <StickyNote className="w-3 h-3 shrink-0 mt-px text-muted-foreground/60" />
+                          <span><span className="font-medium text-foreground">Batch:</span> {plan.notes}</span>
+                        </p>
+                      )}
+                      {pb.notes && (
+                        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                          <StickyNote className="w-3 h-3 shrink-0 mt-px text-muted-foreground/60" />
+                          <span><span className="font-medium text-foreground">Product:</span> {pb.notes}</span>
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -658,19 +676,24 @@ function FillingStockTab() {
   const [addDate, setAddDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [showFilters, setShowFilters] = useState(false);
   const [filterFreezer, setFilterFreezer] = useState<"all" | "available" | "frozen">("all");
+  const [filterHasNotes, setFilterHasNotes] = useState(false);
   const [freezingId, setFreezingId] = useState<string | null>(null);
   const [defrostingId, setDefrostingId] = useState<string | null>(null);
 
   const fillingsMap = useMemo(() => new Map(allFillings.map((l) => [l.id!, l])), [allFillings]);
   const plansMap = useMemo(() => new Map(allPlans.map((p) => [p.id!, p])), [allPlans]);
 
-  // Group stock entries by filling
+  const activeFilterCount = (filterFreezer !== "all" ? 1 : 0) + (filterHasNotes ? 1 : 0);
+
+  // Group stock entries by filling. `planNotes` is lifted from the originating
+  // production plan so the stock view can show batch-level notes alongside the
+  // entry's own notes — same surface as the products tab.
   type FillingGroup = {
     fillingId: string;
     fillingName: string;
     category: string;
     shelfLifeWeeks?: number;
-    entries: (FillingStock & { planName?: string })[];
+    entries: (FillingStock & { planName?: string; planNotes?: string })[];
     totalG: number;
     frozenG: number;
   };
@@ -685,6 +708,8 @@ function FillingStockTab() {
       if (q && !fillingName.toLowerCase().includes(q)) continue;
       if (filterFreezer === "frozen" && !item.frozen) continue;
       if (filterFreezer === "available" && item.frozen) continue;
+      const plan = item.planId ? plansMap.get(item.planId) : undefined;
+      if (filterHasNotes && !item.notes && !plan?.notes) continue;
 
       if (!map.has(item.fillingId)) {
         map.set(item.fillingId, {
@@ -698,8 +723,7 @@ function FillingStockTab() {
         });
       }
       const g = map.get(item.fillingId)!;
-      const plan = item.planId ? plansMap.get(item.planId) : undefined;
-      g.entries.push({ ...item, planName: plan?.name });
+      g.entries.push({ ...item, planName: plan?.name, planNotes: plan?.notes });
       if (item.frozen) g.frozenG += item.remainingG;
       else g.totalG += item.remainingG;
     }
@@ -734,7 +758,7 @@ function FillingStockTab() {
       // Neither has shelf life: oldest production date first
       return aOldest - bOldest;
     });
-  }, [fillingStockItems, fillingsMap, plansMap, search, filterFreezer]);
+  }, [fillingStockItems, fillingsMap, plansMap, search, filterFreezer, filterHasNotes]);
 
   async function handleDiscard(id: string) {
     await discardFillingStock(id);
@@ -791,9 +815,9 @@ function FillingStockTab() {
           aria-label="Filters"
         >
           <SlidersHorizontal className="w-5 h-5" />
-          {filterFreezer !== "all" && (
+          {activeFilterCount > 0 && (
             <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-              1
+              {activeFilterCount}
             </span>
           )}
         </button>
@@ -832,6 +856,24 @@ function FillingStockTab() {
               })}
             </div>
           </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1.5">Notes</p>
+            <button
+              onClick={() => setFilterHasNotes((v) => !v)}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors inline-flex items-center gap-1 ${filterHasNotes ? "bg-accent text-accent-foreground" : "border border-border text-muted-foreground"}`}
+            >
+              <StickyNote className="w-3 h-3" />
+              Has notes
+            </button>
+          </div>
+          {activeFilterCount > 0 && (
+            <button
+              onClick={() => { setFilterFreezer("all"); setFilterHasNotes(false); }}
+              className="text-xs text-muted-foreground flex items-center gap-1"
+            >
+              <X className="w-3 h-3" /> Clear filters
+            </button>
+          )}
         </div>
       )}
 
@@ -976,66 +1018,84 @@ function FillingStockTab() {
               return (
                 <div
                   key={entry.id}
-                  className={`px-3 py-2.5 flex items-start justify-between gap-2 ${!isLast ? "border-b border-border" : ""} ${entry.frozen ? "bg-sky-50/40" : ""}`}
+                  className={!isLast ? "border-b border-border" : ""}
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {entry.frozen && <Snowflake className="w-3 h-3 text-sky-600" />}
-                      <span className="text-sm font-medium tabular-nums">{Math.round(entry.remainingG)}g</span>
-                      {entry.frozen && (
-                        <span className="text-[10px] font-semibold text-sky-700 uppercase tracking-wide">
-                          In freezer
-                        </span>
+                  <div className={`px-3 py-2.5 flex items-start justify-between gap-2 ${entry.frozen ? "bg-sky-50/40" : ""}`}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {entry.frozen && <Snowflake className="w-3 h-3 text-sky-600" />}
+                        <span className="text-sm font-medium tabular-nums">{Math.round(entry.remainingG)}g</span>
+                        {entry.frozen && (
+                          <span className="text-[10px] font-semibold text-sky-700 uppercase tracking-wide">
+                            In freezer
+                          </span>
+                        )}
+                        <span className="text-[10px] text-muted-foreground">· Made {madeDate}</span>
+                        {freshness && (
+                          <span className={`text-[10px] font-medium ${freshness.cls}`}>· {freshness.text}</span>
+                        )}
+                      </div>
+                      {entry.planName && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">From: {entry.planName}</p>
                       )}
-                      <span className="text-[10px] text-muted-foreground">· Made {madeDate}</span>
-                      {freshness && (
-                        <span className={`text-[10px] font-medium ${freshness.cls}`}>· {freshness.text}</span>
+                      {entry.frozen && entry.preservedShelfLifeDays != null && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          {entry.preservedShelfLifeDays} days shelf life on defrost
+                        </p>
                       )}
                     </div>
-                    {entry.planName && (
-                      <p className="text-[10px] text-muted-foreground mt-0.5">From: {entry.planName}</p>
-                    )}
-                    {entry.frozen && entry.preservedShelfLifeDays != null && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {entry.preservedShelfLifeDays} days shelf life on defrost
-                      </p>
-                    )}
-                    {entry.notes && (
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{entry.notes}</p>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                      {entry.frozen ? (
+                        <button
+                          onClick={() => setDefrostingId(entry.id!)}
+                          className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-100 transition-colors"
+                        >
+                          Defrost
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => setFreezingId(entry.id!)}
+                            className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:border-sky-500 hover:bg-sky-50 transition-colors inline-flex items-center gap-0.5"
+                            title="Move to freezer"
+                          >
+                            <Snowflake className="w-3 h-3" /> Freeze
+                          </button>
+                          <button
+                            onClick={() => { setAdjustingId(entry.id!); setAdjustInput(String(Math.round(entry.remainingG))); }}
+                            className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
+                          >
+                            Adjust
+                          </button>
+                          <button
+                            onClick={() => setConfirmDiscard(entry.id!)}
+                            className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-status-alert hover:text-status-alert transition-colors"
+                          >
+                            Discard
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
-                    {entry.frozen ? (
-                      <button
-                        onClick={() => setDefrostingId(entry.id!)}
-                        className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-100 transition-colors"
-                      >
-                        Defrost
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => setFreezingId(entry.id!)}
-                          className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:border-sky-500 hover:bg-sky-50 transition-colors inline-flex items-center gap-0.5"
-                          title="Move to freezer"
-                        >
-                          <Snowflake className="w-3 h-3" /> Freeze
-                        </button>
-                        <button
-                          onClick={() => { setAdjustingId(entry.id!); setAdjustInput(String(Math.round(entry.remainingG))); }}
-                          className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
-                        >
-                          Adjust
-                        </button>
-                        <button
-                          onClick={() => setConfirmDiscard(entry.id!)}
-                          className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-status-alert hover:text-status-alert transition-colors"
-                        >
-                          Discard
-                        </button>
-                      </>
-                    )}
-                  </div>
+
+                  {/* Notes — batch-level (from the production plan) and entry-level
+                      (the leftover stock row itself). Matches the product Batches/History tab. */}
+                  {(entry.planNotes || entry.notes) && (
+                    <div className="px-3 pb-2 space-y-1 border-t border-border pt-2">
+                      {entry.planNotes && (
+                        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                          <StickyNote className="w-3 h-3 shrink-0 mt-px text-muted-foreground/60" />
+                          <span><span className="font-medium text-foreground">Batch:</span> {entry.planNotes}</span>
+                        </p>
+                      )}
+                      {entry.notes && (
+                        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                          <StickyNote className="w-3 h-3 shrink-0 mt-px text-muted-foreground/60" />
+                          <span><span className="font-medium text-foreground">Filling:</span> {entry.notes}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

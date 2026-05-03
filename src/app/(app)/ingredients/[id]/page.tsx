@@ -49,6 +49,13 @@ export default function IngredientDetailPage() {
   const effectiveCategory = editing ? draftCategory : (ingredient?.category ?? "");
   const showShellTab = effectiveCategory === "Chocolate";
 
+  // Seed draftCategory from the saved value while not editing, so entering edit mode
+  // doesn't briefly flip showShellTab off (which would kick the Shell tab back to Details
+  // before the form's own effect reports the category).
+  useEffect(() => {
+    if (!editing) setDraftCategory(ingredient?.category ?? "");
+  }, [editing, ingredient?.category]);
+
   // If the user switches away from Chocolate while sitting on the shell tab, step back to details.
   useEffect(() => {
     if (!showShellTab && activeTab === "shell") setActiveTab("details");

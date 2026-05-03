@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { mapIngredientRow, validateIngredientRow, INGREDIENT_TEMPLATE_COLUMNS } from "./csv-import-ingredients";
+import {
+  mapIngredientRow,
+  validateIngredientRow,
+  ingredientToCSVRow,
+  buildIngredientsCSV,
+  INGREDIENT_TEMPLATE_COLUMNS,
+} from "./csv-import-ingredients";
+import { parseCSV } from "./csv";
+import type { Ingredient } from "@/types";
 
 // ---------------------------------------------------------------------------
 // mapIngredientRow
@@ -221,6 +229,108 @@ describe("validateIngredientRow", () => {
 // ---------------------------------------------------------------------------
 // Template columns
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Export: ingredientToCSVRow + buildIngredientsCSV
+// ---------------------------------------------------------------------------
+
+function makeIngredient(overrides: Partial<Ingredient> = {}): Ingredient {
+  return {
+    name: "Test",
+    manufacturer: "",
+    source: "",
+    cost: 0,
+    notes: "",
+    cacaoFat: 0,
+    sugar: 0,
+    milkFat: 0,
+    water: 0,
+    solids: 0,
+    otherFats: 0,
+    allergens: [],
+    ...overrides,
+  };
+}
+
+describe("ingredientToCSVRow", () => {
+  it("round-trips through mapIngredientRow", () => {
+    const original = makeIngredient({
+      name: "Guanaja",
+      commercialName: "Guanaja 70%",
+      manufacturer: "Valrhona",
+      brand: "Valrhona",
+      vendor: "Keylink",
+      category: "Chocolate",
+      purchaseCost: 42.5,
+      purchaseDate: "2025-03-01",
+      purchaseQty: 3,
+      purchaseUnit: "kg",
+      gramsPerUnit: 1000,
+      notes: "house default",
+      cacaoFat: 42,
+      sugar: 28,
+      milkFat: 0,
+      water: 1,
+      solids: 15,
+      otherFats: 14,
+      allergens: ["milk", "soybeans"],
+      shellCapable: true,
+      pricingIrrelevant: false,
+      nutrition: { energyKcal: 580, fat: 42, sugars: 28 },
+    });
+    const csv = buildIngredientsCSV([original]);
+    const parsed = parseCSV(csv);
+    expect(parsed).toHaveLength(1);
+    const roundTripped = mapIngredientRow(parsed[0]);
+
+    expect(roundTripped.name).toBe("Guanaja");
+    expect(roundTripped.commercialName).toBe("Guanaja 70%");
+    expect(roundTripped.manufacturer).toBe("Valrhona");
+    expect(roundTripped.purchaseCost).toBe(42.5);
+    expect(roundTripped.purchaseDate).toBe("2025-03-01");
+    expect(roundTripped.gramsPerUnit).toBe(1000);
+    expect(roundTripped.cacaoFat).toBe(42);
+    expect(roundTripped.allergens.sort()).toEqual(["milk", "soybeans"]);
+    expect(roundTripped.shellCapable).toBe(true);
+    expect(roundTripped.pricingIrrelevant).toBe(false);
+    expect(roundTripped.nutrition).toEqual({ energyKcal: 580, fat: 42, sugars: 28 });
+  });
+
+  it("escapes fields containing commas, quotes, and newlines", () => {
+    const ing = makeIngredient({
+      name: 'Name, with "quotes"',
+      notes: "line1\nline2",
+    });
+    const row = ingredientToCSVRow(ing);
+    // Quoted, with internal quotes doubled
+    expect(row).toContain('"Name, with ""quotes"""');
+    expect(row).toContain('"line1\nline2"');
+  });
+
+  it("emits empty strings for undefined optional fields", () => {
+    const ing = makeIngredient({ name: "Sugar" });
+    const csv = buildIngredientsCSV([ing]);
+    const parsed = parseCSV(csv);
+    expect(parsed[0].purchaseCost).toBe("");
+    expect(parsed[0].purchaseDate).toBe("");
+    expect(parsed[0].gramsPerUnit).toBe("");
+    expect(parsed[0].commercialName).toBe("");
+  });
+
+  it("writes allergen booleans as 'true'/'false'", () => {
+    const ing = makeIngredient({ name: "Milk Choc", allergens: ["milk"] });
+    const csv = buildIngredientsCSV([ing]);
+    const parsed = parseCSV(csv);
+    expect(parsed[0].allergen_milk).toBe("true");
+    expect(parsed[0].allergen_gluten).toBe("false");
+  });
+
+  it("buildIngredientsCSV header matches INGREDIENT_TEMPLATE_COLUMNS", () => {
+    const csv = buildIngredientsCSV([]);
+    const header = csv.trim().split("\n")[0];
+    expect(header).toBe(INGREDIENT_TEMPLATE_COLUMNS.join(","));
+  });
+});
 
 describe("INGREDIENT_TEMPLATE_COLUMNS", () => {
   it("includes all allergen columns", () => {
