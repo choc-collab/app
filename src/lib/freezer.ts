@@ -10,6 +10,8 @@
  *   - Once defrosted, sell-by = defrostedAt + preservedShelfLifeDays.
  */
 
+import type { PlanProduct } from "@/types";
+
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const WEEK_MS = 7 * DAY_MS;
 
@@ -37,6 +39,35 @@ export function defrostedSellBy(
 ): Date | null {
   if (!defrostedAtMs || preservedShelfLifeDays == null) return null;
   return new Date(defrostedAtMs + preservedShelfLifeDays * DAY_MS);
+}
+
+/** Sell-by date derived from a batch's completion date and the product's
+ *  shelf life (in weeks, stored as a string on Product). Returns null when
+ *  either input is missing. */
+export function sellBeforeDate(
+  completedAt: Date | undefined,
+  shelfLifeWeeks: string | undefined,
+): Date | null {
+  if (!completedAt || !shelfLifeWeeks) return null;
+  const weeks = parseFloat(shelfLifeWeeks);
+  if (!Number.isFinite(weeks) || weeks <= 0) return null;
+  const d = new Date(completedAt);
+  d.setDate(d.getDate() + Math.round((weeks - 1) * 7));
+  return d;
+}
+
+/** Sell-by date for a batch row, falling through to the defrosted sell-by
+ *  when the batch has been thawed (`defrostedAt` + `preservedShelfLifeDays`).
+ *  Returns null when neither path can produce a date. */
+export function batchSellBy(
+  pb: PlanProduct,
+  completedAt: Date | undefined,
+  shelfLifeWeeks: string | undefined,
+): Date | null {
+  if (pb.defrostedAt && pb.preservedShelfLifeDays != null) {
+    return defrostedSellBy(pb.defrostedAt, pb.preservedShelfLifeDays);
+  }
+  return sellBeforeDate(completedAt, shelfLifeWeeks);
 }
 
 /** Clamp a requested freeze quantity to what is actually available to freeze. */

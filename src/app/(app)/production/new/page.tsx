@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Product, Mould, PlanProduct, PlanFilling, PlanProductAdditionalMould, FillingPreviousBatch, Filling } from "@/types";
 import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, getTotalCavities } from "@/lib/production";
+import { consumeSeedFromTodayList } from "@/lib/todaySeed";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 
@@ -143,6 +144,18 @@ function NewPlanContent() {
     setPhase("configure");
     setInitialized(true);
   }, [sourcePlanProducts, sourcePlanFillings, fromPlanId, initialized]);
+
+  // Seed selectedIds from /today's "To make" list when present. The seeded
+  // ids come in via session-storage (single read, then cleared) so a refresh
+  // on this page starts empty. We only seed when not duplicating an existing
+  // plan — the dup flow above already populates selectedIds itself.
+  const [seedConsumed, setSeedConsumed] = useState(false);
+  useEffect(() => {
+    if (seedConsumed || fromPlanId) return;
+    const ids = consumeSeedFromTodayList();
+    if (ids.length > 0) setSelectedIds(new Set(ids));
+    setSeedConsumed(true);
+  }, [seedConsumed, fromPlanId]);
 
   const allIngredients = useIngredients();
   const selectedProducts = products.filter((r) => selectedIds.has(r.id!));

@@ -5,6 +5,7 @@ import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COAT
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
 import { computeShopKpis, EMPTY_SHOP_KPIS, type ShopKpis } from "@/lib/shopKpis";
+import { computeTodaySignals, type TodaySignals, type TodayProductInfo } from "@/lib/todaySignals";
 import {
   computeCommitStockDeltas,
   computeRestoreStockDeltas,
@@ -3074,6 +3075,39 @@ export function useRecentSoldSales(limit = 10): Sale[] {
 export function useShopKpis(): ShopKpis {
   const sales = useAllSales();
   return computeShopKpis(sales, new Date()) ?? EMPTY_SHOP_KPIS;
+}
+
+/** Aggregated signals for the /today dashboard — in-progress batches,
+ *  expiring stock, low-stock products, and a 7-day shop-revenue window.
+ *  Backed by the same live queries used elsewhere; derivation lives in
+ *  `lib/todaySignals.ts`. */
+export function useTodaySignals(): TodaySignals {
+  const planProducts = useAllPlanProducts();
+  const plans = useProductionPlans();
+  const products = useProductsList();
+  const pendingShoppingCount = usePendingShoppingCount();
+  const sales = useAllSales();
+
+  const productMap = new Map<string, TodayProductInfo>();
+  for (const p of products) {
+    if (p.id) {
+      productMap.set(p.id, {
+        id: p.id,
+        name: p.name,
+        lowStockThreshold: p.lowStockThreshold,
+        shelfLifeWeeks: p.shelfLifeWeeks,
+      });
+    }
+  }
+
+  return computeTodaySignals({
+    now: new Date(),
+    planProducts,
+    plans,
+    products: productMap,
+    pendingShoppingCount,
+    sales,
+  });
 }
 
 /** Available stock per product (live), derived from completed production plans.

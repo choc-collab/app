@@ -1,3 +1,8 @@
+# Legacy redirect: the in-app home moved from /app to /today.
+# Kept as 302 (not 301) so we can change our minds without browsers caching it.
+/app                   /today  302
+/app/                  /today  302
+
 # /lab and /calculator are not yet publicly available — bounce to home.
 # More specific rules first (Cloudflare processes top-to-bottom, first match wins).
 /lab/*                 /  302

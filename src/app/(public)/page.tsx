@@ -129,7 +129,7 @@ export default function LandingPage() {
 
       <section className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-20">
         <Link
-          href="/app"
+          href="/today"
           className="group flex flex-col justify-between bg-card border border-border rounded-lg p-6 min-h-[220px] transition-shadow hover:shadow-md hover:border-primary/30 focus-visible:outline-2 focus-visible:outline-dashed focus-visible:outline-offset-2"
         >
           <div>

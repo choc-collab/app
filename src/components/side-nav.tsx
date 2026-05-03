@@ -183,7 +183,7 @@ export function SideNav() {
       style={{ backgroundColor: "var(--color-nav)" }}
     >
       <Link
-        href="/app"
+        href="/today"
         title="Home"
         className="flex items-center gap-2 px-2 py-3 shrink-0 rounded-lg hover:bg-muted/60 transition-colors"
       >
@@ -208,7 +208,7 @@ export function SideNav() {
           <>
             {/* Home — always available so testers can return to the main menu */}
             <Link
-              href="/app"
+              href="/today"
               title="Main menu"
               className="flex items-center gap-3 px-2 py-2.5 rounded-lg transition-colors text-muted-foreground hover:text-foreground hover:bg-muted"
             >

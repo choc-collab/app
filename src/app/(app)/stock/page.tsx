@@ -12,30 +12,8 @@ import { PageHeader } from "@/components/page-header";
 import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote } from "lucide-react";
 import type { PlanProduct, ProductionPlan, Product, Mould, FillingStock } from "@/types";
 import { reconcileStockCount } from "@/lib/stockCount";
-import { remainingShelfLifeDays, defrostedSellBy, WEEK_MS } from "@/lib/freezer";
+import { remainingShelfLifeDays, batchSellBy, WEEK_MS } from "@/lib/freezer";
 import { FreezeModal, DefrostConfirmModal } from "@/components/freeze-modal";
-
-function sellBeforeDate(completedAt: Date | undefined, shelfLifeWeeks: string | undefined): Date | null {
-  if (!completedAt || !shelfLifeWeeks) return null;
-  const weeks = parseFloat(shelfLifeWeeks);
-  if (isNaN(weeks) || weeks <= 0) return null;
-  const d = new Date(completedAt);
-  d.setDate(d.getDate() + Math.round((weeks - 1) * 7));
-  return d;
-}
-
-/** Batch sell-by — falls through to the defrosted sell-by if the batch has been
- *  thawed (uses `defrostedAt` + `preservedShelfLifeDays`). */
-function batchSellBy(
-  pb: PlanProduct,
-  completedAt: Date | undefined,
-  shelfLifeWeeks: string | undefined,
-): Date | null {
-  if (pb.defrostedAt && pb.preservedShelfLifeDays != null) {
-    return defrostedSellBy(pb.defrostedAt, pb.preservedShelfLifeDays);
-  }
-  return sellBeforeDate(completedAt, shelfLifeWeeks);
-}
 
 function sellByInfo(sellBefore: Date | null): { text: string; cls: string } {
   if (!sellBefore) return { text: "No shelf life set", cls: "text-muted-foreground" };
