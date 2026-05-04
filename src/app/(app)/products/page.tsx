@@ -3,9 +3,9 @@
 import { useState, useMemo, useCallback, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { useProductsList, saveProduct, useProductCategories, useProductCategoryUsageCounts, saveProductCategory, useCoatings, useProductProductionMap, useCollections, useAllCollectionProducts, useProductFillingsForProducts, useFillings, useMarketRegion } from "@/lib/hooks";
+import { useProductsList, saveProduct, useProductCategories, useProductCategoryUsageCounts, saveProductCategory, useCoatings, useProductProductionMap, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts, useProductFillingsForProducts, useFillings, useMarketRegion } from "@/lib/hooks";
 import { Plus, Search, ChevronRight, ChevronDown, SlidersHorizontal, X } from "lucide-react";
-import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard } from "@/components/pantry";
+import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, ProductStockPills, SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { formatCategoryRange } from "@/lib/productCategories";
 import Link from "next/link";
@@ -76,20 +76,22 @@ function ProductsTab() {
   const [f, setF] = usePersistedFilters("products", {
     search: "",
     showFilters: false,
-    showArchived: false,
+    collectionState: "all" as "all" | "current" | "archived",
+    stockState: "all" as "all" | "in-stock" | "frozen" | "low-out",
     filterTags: [] as string[],
     filterCoating: "",
     filterCategoryId: "",
     filterMinStars: 0,
     filterCollectionId: "",
-    filterActiveCollections: false,
     filterIncludeAllergens: [] as string[],
     filterExcludeAllergens: [] as string[],
     filterFillingCount: "",
     filterShelfLife: [] as ShelfLifeBucket[],
   });
-  const products = useProductsList(f.showArchived);
+  const products = useProductsList(f.collectionState === "archived");
   const productionMap = useProductProductionMap();
+  const stockMap = useProductStockMap();
+  const frozenMap = useProductFrozenMap();
   const productCategories = useProductCategories(true /* include archived for grouping legacy products */);
   const coatings = useCoatings();
   const collections = useCollections();
@@ -216,9 +218,7 @@ function ProductsTab() {
     (f.filterCoating ? 1 : 0) +
     (f.filterCategoryId ? 1 : 0) +
     (f.filterMinStars > 0 ? 1 : 0) +
-    (f.showArchived ? 1 : 0) +
     (f.filterCollectionId ? 1 : 0) +
-    (f.filterActiveCollections ? 1 : 0) +
     (filterIncludeAllergensSet.size > 0 ? 1 : 0) +
     (filterExcludeAllergensSet.size > 0 ? 1 : 0) +
     (f.filterFillingCount ? 1 : 0) +
@@ -231,6 +231,30 @@ function ProductsTab() {
     setF("filterShelfLife", Array.from(next));
   }, [filterShelfLifeSet, setF]);
 
+  // Bucket each product by stock state. Mirrors the pill logic in
+  // ProductStockPills so the filter and the visible chip agree.
+  type StockBucket = "in-stock" | "frozen" | "low-out" | "none";
+  const stockBucketByProduct = useMemo(() => {
+    const m = new Map<string, StockBucket>();
+    for (const p of products) {
+      if (!p.id) continue;
+      const pieces = stockMap.get(p.id) ?? 0;
+      const frozen = frozenMap.get(p.id) ?? 0;
+      const produced = productionMap.has(p.id);
+      const threshold = p.lowStockThreshold;
+      let bucket: StockBucket;
+      if (pieces <= 0 && frozen <= 0 && !produced) bucket = "none";
+      else if (pieces <= 0 && produced) bucket = "low-out";
+      else if (pieces > 0 && threshold != null && pieces < threshold) bucket = "low-out";
+      else if (pieces > 0) bucket = "in-stock";
+      else bucket = "none";
+      m.set(p.id, bucket);
+    }
+    return m;
+  }, [products, stockMap, frozenMap, productionMap]);
+
+  const productHasFrozen = useCallback((id: string) => (frozenMap.get(id) ?? 0) > 0, [frozenMap]);
+
   const filtered = useMemo(() => {
     return products.filter((r) => {
       if (f.search && !r.name.toLowerCase().includes(f.search.toLowerCase())) return false;
@@ -241,8 +265,17 @@ function ProductsTab() {
         const rTags = new Set(r.tags ?? []);
         for (const t of filterTagsSet) if (!rTags.has(t)) return false;
       }
-      if (f.filterActiveCollections && !activeCollectionProductIds.has(r.id!)) return false;
+      if (f.collectionState === "current" && !activeCollectionProductIds.has(r.id!)) return false;
+      if (f.collectionState === "archived" && !r.archived) return false;
       if (selectedCollectionProductIds && !selectedCollectionProductIds.has(r.id!)) return false;
+      if (f.stockState !== "all") {
+        const bucket = stockBucketByProduct.get(r.id!) ?? "none";
+        if (f.stockState === "frozen") {
+          if (!productHasFrozen(r.id!)) return false;
+        } else if (bucket !== f.stockState) {
+          return false;
+        }
+      }
       if (filterIncludeAllergensSet.size > 0) {
         const rAllergens = productAllergenMap.get(r.id!) ?? new Set();
         let hasAny = false;
@@ -264,7 +297,25 @@ function ProductsTab() {
       }
       return true;
     });
-  }, [products, f.search, f.filterCoating, f.filterCategoryId, f.filterMinStars, filterTagsSet, f.filterActiveCollections, activeCollectionProductIds, selectedCollectionProductIds, filterExcludeAllergensSet, productAllergenMap, f.filterFillingCount, productFillingsMap, filterShelfLifeSet]);
+  }, [products, f.search, f.filterCoating, f.filterCategoryId, f.filterMinStars, filterTagsSet, f.collectionState, f.stockState, activeCollectionProductIds, selectedCollectionProductIds, filterIncludeAllergensSet, filterExcludeAllergensSet, productAllergenMap, f.filterFillingCount, productFillingsMap, filterShelfLifeSet, stockBucketByProduct, productHasFrozen]);
+
+  // Per-bucket counts for the stock-state segmented tab badges. Computed
+  // against the collection-state-scoped product list (same set used to
+  // render rows) so the badge reflects "if you switched to this tab,
+  // you'd see X products".
+  const stockCounts = useMemo(() => {
+    let inStock = 0, frozen = 0, lowOut = 0;
+    for (const p of products) {
+      if (!p.id) continue;
+      if (f.collectionState === "current" && !activeCollectionProductIds.has(p.id)) continue;
+      if (f.collectionState === "archived" && !p.archived) continue;
+      const bucket = stockBucketByProduct.get(p.id) ?? "none";
+      if (bucket === "in-stock") inStock += 1;
+      else if (bucket === "low-out") lowOut += 1;
+      if ((frozenMap.get(p.id) ?? 0) > 0) frozen += 1;
+    }
+    return { inStock, frozen, lowOut };
+  }, [products, f.collectionState, activeCollectionProductIds, stockBucketByProduct, frozenMap]);
 
   // Group by productCategoryId; uncategorised goes last — single O(N) pass
   const grouped = useMemo(() => {
@@ -313,9 +364,36 @@ function ProductsTab() {
     router.push(`/products/${encodeURIComponent(String(id))}?new=1`);
   }
 
+  const collectionStateOptions: SegmentedTabOption<"all" | "current" | "archived">[] = [
+    { id: "all", label: "All" },
+    { id: "current", label: "Current", count: activeCollectionIds.size },
+    { id: "archived", label: "Archived" },
+  ];
+
+  const stockStateOptions: SegmentedTabOption<"all" | "in-stock" | "frozen" | "low-out">[] = [
+    { id: "low-out", label: "Low / out", count: stockCounts.lowOut },
+    { id: "in-stock", label: "In stock", count: stockCounts.inStock },
+    { id: "frozen", label: "Frozen", count: stockCounts.frozen },
+    { id: "all", label: "All" },
+  ];
+
   return (
     <div>
       <div className="px-4 space-y-3 pb-6">
+        <div className="flex flex-wrap gap-2">
+          <SegmentedTabs
+            ariaLabel="Product collection state"
+            value={f.collectionState}
+            onChange={(v) => setF("collectionState", v)}
+            options={collectionStateOptions}
+          />
+          <SegmentedTabs
+            ariaLabel="Stock state"
+            value={f.stockState}
+            onChange={(v) => setF("stockState", v)}
+            options={stockStateOptions}
+          />
+        </div>
         <div className="flex gap-2">
           <div className="flex-1 relative min-w-0">
             <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -436,30 +514,16 @@ function ProductsTab() {
             {collections.length > 0 && (
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Collection</p>
-                <div className="flex flex-col gap-1.5">
-                  <select
-                    value={f.filterCollectionId}
-                    onChange={(e) => { setF("filterCollectionId", e.target.value); if (e.target.value) setF("filterActiveCollections", false); }}
-                    className="input text-sm py-1"
-                  >
-                    <option value="">All collections</option>
-                    {collections.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={f.filterActiveCollections}
-                      onChange={(e) => { setF("filterActiveCollections", e.target.checked); if (e.target.checked) setF("filterCollectionId", ""); }}
-                      className="rounded border-border"
-                    />
-                    Active collections only
-                    {activeCollectionIds.size > 0 && (
-                      <span className="text-muted-foreground">({activeCollectionIds.size} active)</span>
-                    )}
-                  </label>
-                </div>
+                <select
+                  value={f.filterCollectionId}
+                  onChange={(e) => setF("filterCollectionId", e.target.value)}
+                  className="input text-sm py-1"
+                >
+                  <option value="">All collections</option>
+                  {collections.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
               </div>
             )}
             {/* Contains allergen */}
@@ -511,14 +575,9 @@ function ProductsTab() {
                 ))}
               </div>
             </div>
-            {/* Archived */}
-            <ArchiveFilterChip
-              value={f.showArchived}
-              onChange={(v) => setF("showArchived", v)}
-            />
             {activeFilterCount > 0 && (
               <button
-                onClick={() => { setF("filterTags", []); setF("filterCoating", ""); setF("filterCategoryId", ""); setF("filterMinStars", 0); setF("showArchived", false); setF("filterCollectionId", ""); setF("filterActiveCollections", false); setF("filterIncludeAllergens", []); setF("filterExcludeAllergens", []); setF("filterFillingCount", ""); setF("filterShelfLife", []); }}
+                onClick={() => { setF("filterTags", []); setF("filterCoating", ""); setF("filterCategoryId", ""); setF("filterMinStars", 0); setF("filterCollectionId", ""); setF("filterIncludeAllergens", []); setF("filterExcludeAllergens", []); setF("filterFillingCount", ""); setF("filterShelfLife", []); }}
                 className="text-xs text-muted-foreground flex items-center gap-1"
               >
                 <X className="w-3 h-3" /> Clear all filters
@@ -589,7 +648,7 @@ function ProductsTab() {
                         const pid = product.id ?? '';
                         const fillingNames = productFillingNamesMap.get(pid) ?? [];
                         const allergens = Array.from(productAllergenMap.get(pid) ?? []);
-                        return <ProductRow key={product.id} product={product} productionInfo={productionMap.get(pid)} fillingNames={fillingNames} allergens={allergens} />;
+                        return <ProductRow key={product.id} product={product} hasBeenProduced={productionMap.has(pid)} pieces={stockMap.get(pid) ?? 0} frozen={frozenMap.get(pid) ?? 0} fillingNames={fillingNames} allergens={allergens} />;
                       })}
                     </ul>
                   )}
@@ -603,18 +662,7 @@ function ProductsTab() {
   );
 }
 
-function formatRelativeDate(date: Date): string {
-  const d = new Date(date);
-  const now = new Date();
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
-  if (diffDays === 0) return "today";
-  if (diffDays === 1) return "yesterday";
-  if (diffDays < 30) return `${diffDays}d ago`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
-  return `${Math.floor(diffDays / 365)}y ago`;
-}
-
-function ProductRow({ product, productionInfo, fillingNames, allergens }: { product: ProductSummary; productionInfo?: { lastProducedAt: Date; inStock: boolean }; fillingNames?: string[]; allergens?: string[] }) {
+function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, allergens }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; allergens?: string[] }) {
   // Row 2: "Milk · filling1 · filling2" — coating capitalised, prefixed if present
   const subtitleParts = [
     product.coating ? product.coating.charAt(0).toUpperCase() + product.coating.slice(1) : null,
@@ -634,14 +682,21 @@ function ProductRow({ product, productionInfo, fillingNames, allergens }: { prod
           {product.name.charAt(0)}
         </div>
         <div className="min-w-0 flex-1">
-          {/* Row 1: name + stars */}
-          <div className="flex items-center gap-2">
+          {/* Row 1: name + stock pills + stars */}
+          <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-medium text-sm truncate min-w-0">
               {product.name}
               {product.archived && (
                 <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>
               )}
             </h3>
+            {(hasBeenProduced || pieces > 0 || frozen > 0) && (
+              <ProductStockPills
+                pieces={pieces}
+                frozen={frozen}
+                threshold={product.lowStockThreshold}
+              />
+            )}
             {product.popularity && (
               <div className="flex gap-0.5 shrink-0 ml-auto">
                 {[1, 2, 3, 4, 5].map((star) => (
@@ -669,19 +724,6 @@ function ProductRow({ product, productionInfo, fillingNames, allergens }: { prod
                   {allergenLabel(a)}
                 </span>
               ))}
-            </div>
-          )}
-          {/* Row 4: production info */}
-          {productionInfo && (
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[10px] text-muted-foreground">
-                {formatRelativeDate(productionInfo.lastProducedAt)}
-              </span>
-              {productionInfo.inStock ? (
-                <span className="text-[10px] font-medium text-success bg-success-muted px-1.5 py-0.5 rounded-full">in stock</span>
-              ) : (
-                <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">out of stock</span>
-              )}
             </div>
           )}
         </div>

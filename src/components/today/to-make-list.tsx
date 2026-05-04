@@ -5,17 +5,24 @@ import { useRouter } from "next/navigation";
 import { Check, Plus, Snowflake } from "lucide-react";
 import { useProductsList, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts } from "@/lib/hooks";
 import { buildToMakeRows, writeSeedFromTodayList, type ToMakeRow } from "@/lib/todaySeed";
+import { SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
 
-type View = "low" | "all";
+type StockView = "all" | "in-stock" | "frozen" | "low-out";
 
-/** Two-state list of products that need a fresh batch. The "Low stock"
- *  view shows out-of-stock + below-threshold products with reorder-point
- *  context; "All" shows healthy ones too with a quiet pill. Both views are
- *  scoped to products in any currently-active collection (same definition
- *  as the production wizard) — a low-stock product in a discontinued
- *  collection isn't actionable today. When no collections are active, we
- *  fall through to all products so the dashboard is useful in early
- *  setup before any collection has been defined.
+/** Stock-state filtered list of products that need a fresh batch.
+ *
+ *  All four lenses are scoped to products in any currently-active collection
+ *  — a low-stock product in a discontinued collection isn't actionable today.
+ *  When no collections are active, we fall through to all products so the
+ *  dashboard remains useful in early setup before any collection is defined.
+ *
+ *   · "low-out"  — out-of-stock + below-threshold (default).
+ *   · "in-stock" — healthy stock (>= threshold, or > 0 with no threshold).
+ *   · "frozen"   — products with any frozen pieces.
+ *   · "all"      — every scoped product regardless of stock state.
+ *
+ *  Active collection definition: startDate <= today AND (endDate unset OR
+ *  endDate >= today) — mirrors /products and /production/new.
  *
  *  Selected rows feed into the production-plan wizard via session-storage
  *  hand-off. */
@@ -27,9 +34,6 @@ export function ToMakeList() {
   const allCollectionProducts = useAllCollectionProducts();
   const router = useRouter();
 
-  // Active collections: startDate <= today, endDate unset or >= today.
-  // Mirrors the helpers in /production/new and /products so behaviour stays
-  // consistent across surfaces.
   const today = new Date().toISOString().slice(0, 10);
   const activeCollectionProductIds = useMemo(() => {
     const activeIds = new Set(
@@ -50,19 +54,30 @@ export function ToMakeList() {
     return products.filter((p) => p.id && activeCollectionProductIds.has(p.id));
   }, [products, activeCollectionProductIds]);
 
-  const allRows = useMemo(
+  const scopedRows = useMemo(
     () => buildToMakeRows({ products: scopedProducts, stockByProduct, frozenByProduct }),
     [scopedProducts, stockByProduct, frozenByProduct],
   );
-  const lowRows = useMemo(
-    () => allRows.filter((r) => r.status !== "healthy"),
-    [allRows],
-  );
 
-  const [view, setView] = useState<View>("low");
+  const counts = useMemo(() => {
+    let inStock = 0, frozen = 0, lowOut = 0;
+    for (const r of scopedRows) {
+      if (r.status === "healthy") inStock += 1;
+      else lowOut += 1;
+      if (r.frozen > 0) frozen += 1;
+    }
+    return { inStock, frozen, lowOut };
+  }, [scopedRows]);
+
+  const [view, setView] = useState<StockView>("low-out");
   const [selected, setSelected] = useState<Set<string>>(new Set<string>());
 
-  const visible = view === "low" ? lowRows : allRows;
+  const visible = useMemo(() => {
+    if (view === "all") return scopedRows;
+    if (view === "in-stock") return scopedRows.filter((r) => r.status === "healthy");
+    if (view === "frozen") return scopedRows.filter((r) => r.frozen > 0);
+    return scopedRows.filter((r) => r.status !== "healthy");
+  }, [view, scopedRows]);
   const allVisibleSelected = visible.length > 0 && visible.every((r) => selected.has(r.productId));
   const selectedCount = selected.size;
 
@@ -93,35 +108,55 @@ export function ToMakeList() {
     router.push("/production/new?mode=full");
   }
 
-  if (allRows.length === 0) {
+  if (scopedRows.length === 0) {
     return (
       <section className="rounded-lg border border-border bg-card p-4 flex flex-col gap-2">
         <span className="mono-label text-muted-foreground">To make</span>
-        <h2 className="text-lg font-display tracking-tight">No products yet</h2>
+        <h2 className="text-lg font-display tracking-tight">
+          {products.length === 0 ? "No products yet" : "No active-collection products"}
+        </h2>
         <p className="text-sm text-muted-foreground">
-          Add products in the Pantry to start tracking what to make.
+          {products.length === 0
+            ? "Add products in the Pantry to start tracking what to make."
+            : "Add products to an active collection to populate this view."}
         </p>
       </section>
     );
   }
 
+  const viewOptions: SegmentedTabOption<StockView>[] = [
+    { id: "low-out", label: "Low / out", count: counts.lowOut },
+    { id: "in-stock", label: "In stock", count: counts.inStock },
+    { id: "frozen", label: "Frozen", count: counts.frozen },
+    { id: "all", label: "All", count: scopedRows.length },
+  ];
+
+  const emptyCopy =
+    view === "low-out"
+      ? "Nothing low or out of stock — every product is healthy."
+      : view === "in-stock"
+      ? "Nothing healthy in stock right now."
+      : view === "frozen"
+      ? "Nothing in the freezer for this scope."
+      : "No products in any active collection.";
+
   return (
     <section className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
-      <header className="flex items-end justify-between gap-3">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <span className="mono-label text-muted-foreground">To make</span>
           <h2 className="text-lg font-display tracking-tight mt-1">Select what to produce</h2>
         </div>
-        <div role="tablist" aria-label="View" className="inline-flex border border-border rounded-md overflow-hidden text-xs">
-          <ViewTab label="Low or out of stock" active={view === "low"} onClick={() => setView("low")} count={lowRows.length} />
-          <ViewTab label="All" active={view === "all"} onClick={() => setView("all")} count={allRows.length} />
-        </div>
+        <SegmentedTabs
+          ariaLabel="View"
+          value={view}
+          onChange={setView}
+          options={viewOptions}
+        />
       </header>
 
       {visible.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-6 text-center">
-          {view === "low" ? "Nothing low or out of stock — every active-collection product is healthy." : "No products in any active collection."}
-        </p>
+        <p className="text-sm text-muted-foreground py-6 text-center">{emptyCopy}</p>
       ) : (
         <>
           <div className="flex items-center gap-3 px-2 py-1.5 border-b border-dashed border-border text-xs text-muted-foreground">
@@ -155,24 +190,6 @@ export function ToMakeList() {
         onClick={startProductionPlan}
       />
     </section>
-  );
-}
-
-function ViewTab({ label, active, onClick, count }: { label: string; active: boolean; onClick: () => void; count: number }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`px-3 py-1.5 transition-colors ${
-        active
-          ? "bg-accent text-accent-foreground"
-          : "bg-card text-muted-foreground hover:text-foreground"
-      }`}
-    >
-      {label} <span className="font-mono opacity-70">· {count}</span>
-    </button>
   );
 }
 

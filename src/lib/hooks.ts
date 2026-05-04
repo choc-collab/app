@@ -2850,6 +2850,25 @@ export function useFillingStockItems() {
   return useLiveQuery(() => db.fillingStock.toArray().then((items) => items.filter((s) => s.remainingG > 0)), [], []);
 }
 
+/** Aggregated stock totals per filling (live), summed from `fillingStock`
+ *  entries with remainingG > 0. Returns a map of fillingId →
+ *  { availableG, frozenG }. Fillings with neither available nor frozen stock
+ *  are absent from the map. */
+export function useFillingStockMap(): Map<string, { availableG: number; frozenG: number }> {
+  return useLiveQuery(async () => {
+    const items = await db.fillingStock.toArray();
+    const m = new Map<string, { availableG: number; frozenG: number }>();
+    for (const it of items) {
+      if (it.remainingG <= 0) continue;
+      const cur = m.get(it.fillingId) ?? { availableG: 0, frozenG: 0 };
+      if (it.frozen) cur.frozenG += it.remainingG;
+      else cur.availableG += it.remainingG;
+      m.set(it.fillingId, cur);
+    }
+    return m;
+  }, []) ?? new Map<string, { availableG: number; frozenG: number }>();
+}
+
 /** All filling stock entries for a specific filling with remaining > 0 */
 export function useFillingStockForFilling(fillingId: string | undefined) {
   return useLiveQuery(

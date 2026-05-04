@@ -11,11 +11,12 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard } from "@/components/pantry";
+import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, FillingStockPills, SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
 import { CategoryPicker } from "@/components/category-picker";
 import {
   useFillings, saveFilling, useAllFillingStatuses,
   useFillingCategories, useFillingCategoryUsageCounts, saveFillingCategory,
+  useFillingStockMap,
 } from "@/lib/hooks";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
 import type { Filling } from "@/types";
@@ -90,6 +91,7 @@ function FillingsTab() {
   const [f, setF] = usePersistedFilters("fillings", {
     search: "",
     showFilters: false,
+    stockState: "all" as "all" | "in-stock" | "frozen",
     filterStatus: "",
     filterCategories: [] as string[],
     filterAllergens: [] as string[],
@@ -98,6 +100,7 @@ function FillingsTab() {
     showArchived: false,
   });
   const fillings = useFillings(f.showArchived);
+  const fillingStockMap = useFillingStockMap();
   const allCategories = useFillingCategories();
   const existingStatuses = useAllFillingStatuses();
   const statusOptions = useMemo(() => {
@@ -176,9 +179,29 @@ function FillingsTab() {
       if (filterExcludeAllergensSet.size > 0 && (l.allergens ?? []).some((a) => filterExcludeAllergensSet.has(a))) return false;
       if (filterShelfLifeSet.size > 0 && !filterShelfLifeSet.has(shelfLifeBucket(l.shelfLifeWeeks))) return false;
       if (!f.showArchived && l.archived) return false;
+      if (f.stockState !== "all") {
+        const totals = fillingStockMap.get(l.id ?? "");
+        if (f.stockState === "in-stock" && !(totals && totals.availableG > 0)) return false;
+        if (f.stockState === "frozen" && !(totals && totals.frozenG > 0)) return false;
+      }
       return true;
     });
-  }, [fillings, f.search, searchLower, f.filterStatus, filterCategoriesSet, filterAllergensSet, filterExcludeAllergensSet, filterShelfLifeSet, f.showArchived]);
+  }, [fillings, f.search, searchLower, f.filterStatus, filterCategoriesSet, filterAllergensSet, filterExcludeAllergensSet, filterShelfLifeSet, f.showArchived, f.stockState, fillingStockMap]);
+
+  // Per-bucket counts for the stock-state segmented tab badges. Computed
+  // against the full (non-archived) fillings list so badges reflect "if you
+  // switched to this tab, you'd see X items".
+  const stockCounts = useMemo(() => {
+    let inStock = 0, frozen = 0;
+    for (const l of fillings) {
+      if (l.archived) continue;
+      const totals = fillingStockMap.get(l.id ?? "");
+      if (!totals) continue;
+      if (totals.availableG > 0) inStock += 1;
+      if (totals.frozenG > 0) frozen += 1;
+    }
+    return { inStock, frozen };
+  }, [fillings, fillingStockMap]);
 
   // Group fillings by category, ordered by the live categories list (then any unknown labels by name)
   const grouped = useMemo(() => {
@@ -239,8 +262,20 @@ function FillingsTab() {
     router.push(`/fillings/${encodeURIComponent(String(id))}?new=1`);
   }
 
+  const stockStateOptions: SegmentedTabOption<"all" | "in-stock" | "frozen">[] = [
+    { id: "all", label: "All" },
+    { id: "in-stock", label: "In stock", count: stockCounts.inStock },
+    { id: "frozen", label: "Frozen", count: stockCounts.frozen },
+  ];
+
   return (
     <div className="px-4 space-y-3 pb-6">
+      <SegmentedTabs
+        ariaLabel="Stock state"
+        value={f.stockState}
+        onChange={(v) => setF("stockState", v)}
+        options={stockStateOptions}
+      />
       <ListToolbar
         search={f.search}
         onSearchChange={(v) => setF("search", v)}
@@ -383,14 +418,26 @@ function FillingsTab() {
                           className="flex items-center gap-3 p-3 min-w-0"
                         >
                           <div className="min-w-0 flex-1">
-                            <h3 className="font-medium text-sm truncate">
-                              {filling.name}
-                              {filling.archived && <span className="ml-1.5 text-[10px] text-muted-foreground font-normal">(archived)</span>}
-                            </h3>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-medium text-sm truncate min-w-0">
+                                {filling.name}
+                                {filling.archived && <span className="ml-1.5 text-[10px] text-muted-foreground font-normal">(archived)</span>}
+                              </h3>
+                              {(() => {
+                                const totals = fillingStockMap.get(filling.id ?? "");
+                                if (!totals) return null;
+                                return (
+                                  <FillingStockPills
+                                    availableG={totals.availableG}
+                                    frozenG={totals.frozenG}
+                                  />
+                                );
+                              })()}
+                            </div>
                             {filling.description && (
                               <p className="text-xs text-muted-foreground truncate mt-0.5">{filling.description}</p>
                             )}
-                            <div className="flex flex-wrap gap-1 mt-1">
+                            <div className="flex flex-wrap items-center gap-1 mt-1">
                               {filling.status && (
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                                   filling.status === "confirmed" ? "bg-success-muted text-success" :
