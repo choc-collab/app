@@ -20,6 +20,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { InlineNameEditor } from "@/components/inline-name-editor";
+import { DuplicatedToast } from "@/components/duplicated-toast";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { useSpaId } from "@/lib/use-spa-id";
@@ -40,6 +41,7 @@ export default function ProductDetailPage() {
 
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
+  const [isDuplicate] = useState(() => searchParams.get("duplicate") === "1");
 
   const market = useMarketRegion();
   const defaultFillMode = useDefaultFillMode();
@@ -350,6 +352,12 @@ export default function ProductDetailPage() {
           <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
         </button>
       </div>
+
+      {isDuplicate && (
+        <div className="px-4 pb-3">
+          <DuplicatedToast active={isDuplicate} />
+        </div>
+      )}
 
       {/* Photo + Name */}
       <div className="px-4 pb-4">
@@ -1112,7 +1120,7 @@ export default function ProductDetailPage() {
                   setDuplicatingProduct(true);
                   try {
                     const newId = await duplicateProduct(productId, { duplicateFillings });
-                    router.push(`/products/${encodeURIComponent(newId)}?new=1`);
+                    router.push(`/products/${encodeURIComponent(newId)}?new=1&duplicate=1`);
                   } finally {
                     setDuplicatingProduct(false);
                   }
