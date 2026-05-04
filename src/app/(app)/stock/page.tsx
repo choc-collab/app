@@ -9,11 +9,39 @@ import {
   freezeFillingStock, defrostFillingStock,
 } from "@/lib/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote } from "lucide-react";
+import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote, ArrowUpDown } from "lucide-react";
 import type { PlanProduct, ProductionPlan, Product, Mould, FillingStock } from "@/types";
 import { reconcileStockCount } from "@/lib/stockCount";
 import { remainingShelfLifeDays, batchSellBy, WEEK_MS } from "@/lib/freezer";
 import { FreezeModal, DefrostConfirmModal } from "@/components/freeze-modal";
+import { SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
+
+type StockSort = "alpha" | "production" | "amount";
+
+const SORT_LABELS: Record<StockSort, string> = {
+  alpha: "A → Z",
+  production: "Oldest first",
+  amount: "Lowest first",
+};
+
+function SortDropdown({ value, onChange }: { value: StockSort; onChange: (v: StockSort) => void }) {
+  return (
+    <label className="relative inline-flex items-center">
+      <span className="sr-only">Sort by</span>
+      <ArrowUpDown aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as StockSort)}
+        className="appearance-none rounded-lg border border-border bg-background pl-7 pr-2 py-2 text-xs font-medium tabular-nums"
+        aria-label="Sort by"
+      >
+        <option value="alpha">{SORT_LABELS.alpha}</option>
+        <option value="production">{SORT_LABELS.production}</option>
+        <option value="amount">{SORT_LABELS.amount}</option>
+      </select>
+    </label>
+  );
+}
 
 function sellByInfo(sellBefore: Date | null): { text: string; cls: string } {
   if (!sellBefore) return { text: "No shelf life set", cls: "text-muted-foreground" };
@@ -116,13 +144,13 @@ function ProductStockTab() {
     goneBatchLabels: string[];
   } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [filterLowOnly, setFilterLowOnly] = useState(false);
+  const [stockState, setStockState] = useState<"all" | "in-stock" | "frozen" | "low">("all");
   const [filterSellBy, setFilterSellBy] = useState("");
   const [filterHasNotes, setFilterHasNotes] = useState(false);
-  const [filterFreezer, setFilterFreezer] = useState<"all" | "available" | "frozen">("all");
+  const [sortBy, setSortBy] = useState<StockSort>("production");
   const [freezingPbId, setFreezingPbId] = useState<string | null>(null);
   const [defrostingPbId, setDefrostingPbId] = useState<string | null>(null);
-  const activeFilterCount = (filterLowOnly ? 1 : 0) + (filterSellBy ? 1 : 0) + (filterHasNotes ? 1 : 0) + (filterFreezer !== "all" ? 1 : 0);
+  const activeFilterCount = (filterSellBy ? 1 : 0) + (filterHasNotes ? 1 : 0);
 
   const planMap = useMemo(() => new Map(allPlans.map((p) => [p.id!, p])), [allPlans]);
   const productMap = useMemo(() => new Map(products.map((r) => [r.id!, r])), [products]);
@@ -179,8 +207,12 @@ function ProductStockTab() {
         if (filterSellBy === "7d" && diff >= 7 * DAY) return false;
         if (filterSellBy === "30d" && diff >= 30 * DAY) return false;
       }
-      if (filterFreezer === "frozen" && frozenCount <= 0) return false;
-      if (filterFreezer === "available" && (productCount ?? 0) <= 0) return false;
+      // "in-stock", "frozen" and "low" filters apply at the group level after
+      // aggregation (low requires summing across batches against threshold);
+      // here we keep batch-level pre-filtering for "frozen" / "in-stock" so a
+      // group only contains the relevant batches.
+      if (stockState === "frozen" && frozenCount <= 0) return false;
+      if (stockState === "in-stock" && (productCount ?? 0) <= 0) return false;
       return true;
     });
 
@@ -210,16 +242,29 @@ function ProductStockTab() {
     }
 
     const groupsOut = Array.from(map.values());
-    const filteredGroups = filterLowOnly ? groupsOut.filter((g) => g.isLow) : groupsOut;
+    const filteredGroups = stockState === "low" ? groupsOut.filter((g) => g.isLow) : groupsOut;
 
     return filteredGroups.sort((a, b) => {
-      // Low-stock groups float to the top so users see what needs producing first
-      if (a.isLow !== b.isLow) return a.isLow ? -1 : 1;
-      const aT = a.earliestSellBefore?.getTime() ?? Infinity;
-      const bT = b.earliestSellBefore?.getTime() ?? Infinity;
+      if (sortBy === "alpha") {
+        return (a.product?.name ?? "").localeCompare(b.product?.name ?? "", undefined, { sensitivity: "base" });
+      }
+      if (sortBy === "amount") {
+        return a.totalProducts - b.totalProducts;
+      }
+      // production: oldest production first — closest in spirit to the
+      // earlier urgency-based default. Use the earliest batch's plan
+      // completion date per group, falling back to earliest sell-by.
+      const aT = a.batches.reduce<number>((acc, b) => {
+        const t = b.plan.completedAt ? new Date(b.plan.completedAt).getTime() : Infinity;
+        return Math.min(acc, t);
+      }, Infinity);
+      const bT = b.batches.reduce<number>((acc, x) => {
+        const t = x.plan.completedAt ? new Date(x.plan.completedAt).getTime() : Infinity;
+        return Math.min(acc, t);
+      }, Infinity);
       return aT - bT;
     });
-  }, [inStockRows, search, filterLowOnly, filterSellBy, filterHasNotes, filterFreezer]);
+  }, [inStockRows, search, stockState, filterSellBy, filterHasNotes, sortBy]);
 
   async function handleSetStatus(pbId: string, status: "low" | "gone" | undefined) {
     await setPlanProductStockStatus(pbId, status);
@@ -262,8 +307,60 @@ function ProductStockTab() {
 
   const isEmpty = inStockRows.length === 0;
 
+  // Stock-state counts for segmented tab badges, computed against the search/
+  // panel-filtered set so badges reflect "if you switched, you'd see X".
+  const stockCounts = useMemo(() => {
+    const byProduct = new Map<string, { available: number; frozen: number }>();
+    const q = search.trim().toLowerCase();
+    // eslint-disable-next-line react-hooks/purity -- sell-by uses render-time snapshot
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    for (const row of inStockRows) {
+      const { product, plan, pb, sellBefore, productCount, frozenCount } = row;
+      if (q) {
+        const productMatch = product?.name.toLowerCase().includes(q);
+        const batchMatch = plan.batchNumber?.toLowerCase().includes(q) ||
+          plan.name.toLowerCase().includes(q);
+        if (!productMatch && !batchMatch) continue;
+      }
+      if (filterHasNotes && !plan.notes && !pb.notes) continue;
+      if (filterSellBy) {
+        if (!sellBefore) continue;
+        const diff = sellBefore.getTime() - now;
+        if (filterSellBy === "expired" && diff >= 0) continue;
+        if (filterSellBy === "7d" && diff >= 7 * DAY) continue;
+        if (filterSellBy === "30d" && diff >= 30 * DAY) continue;
+      }
+      const cur = byProduct.get(pb.productId) ?? { available: 0, frozen: 0 };
+      cur.available += productCount ?? 0;
+      cur.frozen += frozenCount;
+      byProduct.set(pb.productId, cur);
+    }
+    let inStockN = 0, frozenN = 0, lowN = 0;
+    for (const [pid, t] of byProduct) {
+      if (t.available > 0) inStockN += 1;
+      if (t.frozen > 0) frozenN += 1;
+      const threshold = productMap.get(pid)?.lowStockThreshold;
+      if (typeof threshold === "number" && t.available < threshold) lowN += 1;
+    }
+    return { inStock: inStockN, frozen: frozenN, low: lowN };
+  }, [inStockRows, search, filterHasNotes, filterSellBy, productMap]);
+
+  const stockStateOptions: SegmentedTabOption<"all" | "in-stock" | "frozen" | "low">[] = [
+    { id: "low", label: "Low", count: stockCounts.low },
+    { id: "in-stock", label: "In stock", count: stockCounts.inStock },
+    { id: "frozen", label: "Frozen", count: stockCounts.frozen },
+    { id: "all", label: "All" },
+  ];
+
   return (
     <div className="px-4 pb-8 space-y-3">
+      <SegmentedTabs
+        ariaLabel="Stock state"
+        value={stockState}
+        onChange={setStockState}
+        options={stockStateOptions}
+      />
       <div className="flex gap-2">
         <div className="flex-1 relative min-w-0">
           <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -276,6 +373,7 @@ function ProductStockTab() {
             className="input !pl-9"
           />
         </div>
+        <SortDropdown value={sortBy} onChange={setSortBy} />
         <button
           onClick={() => setShowFilters((v) => !v)}
           className={`relative rounded-lg border p-2 transition-colors ${showFilters ? "bg-primary text-primary-foreground border-primary" : "border-border bg-background"}`}
@@ -292,15 +390,6 @@ function ProductStockTab() {
 
       {showFilters && (
         <div className="rounded-lg border border-border bg-card p-3 space-y-3">
-          <div>
-            <p className="text-xs text-muted-foreground mb-1.5">Stock level</p>
-            <button
-              onClick={() => setFilterLowOnly((v) => !v)}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${filterLowOnly ? "bg-status-warn-bg text-status-warn" : "border border-border text-muted-foreground"}`}
-            >
-              Low stock only
-            </button>
-          </div>
           <div>
             <p className="text-xs text-muted-foreground mb-1.5">Sell-by date</p>
             <div className="flex flex-wrap gap-1">
@@ -319,29 +408,6 @@ function ProductStockTab() {
             </div>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground mb-1.5">Freezer</p>
-            <div className="flex flex-wrap gap-1">
-              {(["all", "available", "frozen"] as const).map((opt) => {
-                const label = opt === "all" ? "All" : opt === "available" ? "Available" : "Frozen only";
-                const isFrozenOpt = opt === "frozen";
-                return (
-                  <button
-                    key={opt}
-                    onClick={() => setFilterFreezer(opt)}
-                    className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors inline-flex items-center gap-1 ${
-                      filterFreezer === opt
-                        ? isFrozenOpt ? "bg-sky-600 text-white" : "bg-accent text-accent-foreground"
-                        : "border border-border text-muted-foreground"
-                    }`}
-                  >
-                    {isFrozenOpt && <Snowflake className="w-3 h-3" />}
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div>
             <p className="text-xs text-muted-foreground mb-1.5">Notes</p>
             <button
               onClick={() => setFilterHasNotes((v) => !v)}
@@ -352,7 +418,7 @@ function ProductStockTab() {
           </div>
           {activeFilterCount > 0 && (
             <button
-              onClick={() => { setFilterLowOnly(false); setFilterSellBy(""); setFilterHasNotes(false); setFilterFreezer("all"); }}
+              onClick={() => { setFilterSellBy(""); setFilterHasNotes(false); }}
               className="text-xs text-muted-foreground flex items-center gap-1"
             >
               <X className="w-3 h-3" /> Clear filters
@@ -654,15 +720,16 @@ function FillingStockTab() {
   const [addAmount, setAddAmount] = useState("");
   const [addDate, setAddDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [showFilters, setShowFilters] = useState(false);
-  const [filterFreezer, setFilterFreezer] = useState<"all" | "available" | "frozen">("all");
+  const [stockState, setStockState] = useState<"all" | "in-stock" | "frozen">("all");
   const [filterHasNotes, setFilterHasNotes] = useState(false);
+  const [sortBy, setSortBy] = useState<StockSort>("production");
   const [freezingId, setFreezingId] = useState<string | null>(null);
   const [defrostingId, setDefrostingId] = useState<string | null>(null);
 
   const fillingsMap = useMemo(() => new Map(allFillings.map((l) => [l.id!, l])), [allFillings]);
   const plansMap = useMemo(() => new Map(allPlans.map((p) => [p.id!, p])), [allPlans]);
 
-  const activeFilterCount = (filterFreezer !== "all" ? 1 : 0) + (filterHasNotes ? 1 : 0);
+  const activeFilterCount = filterHasNotes ? 1 : 0;
 
   // Group stock entries by filling. `planNotes` is lifted from the originating
   // production plan so the stock view can show batch-level notes alongside the
@@ -685,8 +752,11 @@ function FillingStockTab() {
       const filling = fillingsMap.get(item.fillingId);
       const fillingName = filling?.name ?? "Unknown filling";
       if (q && !fillingName.toLowerCase().includes(q)) continue;
-      if (filterFreezer === "frozen" && !item.frozen) continue;
-      if (filterFreezer === "available" && item.frozen) continue;
+      // Pre-filter at entry level: "in-stock" hides frozen entries, "frozen"
+      // hides available entries. "all" lets everything through and is then
+      // optionally narrowed via the `Has notes` panel chip.
+      if (stockState === "frozen" && !item.frozen) continue;
+      if (stockState === "in-stock" && item.frozen) continue;
       const plan = item.planId ? plansMap.get(item.planId) : undefined;
       if (filterHasNotes && !item.notes && !plan?.notes) continue;
 
@@ -712,33 +782,22 @@ function FillingStockTab() {
       g.entries.sort((a, b) => new Date(a.madeAt).getTime() - new Date(b.madeAt).getTime());
     }
 
-    // eslint-disable-next-line react-hooks/purity -- urgency sort uses a render-time snapshot
+    // eslint-disable-next-line react-hooks/purity -- "oldest first" reads a render-time clock for the missing-entry tie-break only
     const now = Date.now();
-    const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-    // Sort groups: most urgent first (expired → least remaining shelf life → oldest made)
-    // Fillings without shelf life sort after those with shelf life, by oldest entry
     return Array.from(map.values()).sort((a, b) => {
+      if (sortBy === "alpha") {
+        return a.fillingName.localeCompare(b.fillingName, undefined, { sensitivity: "base" });
+      }
+      if (sortBy === "amount") {
+        return a.totalG - b.totalG;
+      }
+      // production: oldest entry first (closest in spirit to the prior
+      // urgency-based default for stock running out earliest).
       const aOldest = a.entries[0] ? new Date(a.entries[0].madeAt).getTime() : now;
       const bOldest = b.entries[0] ? new Date(b.entries[0].madeAt).getTime() : now;
-
-      // Compute remaining weeks for the oldest entry (most urgent)
-      const aRemaining = a.shelfLifeWeeks != null
-        ? a.shelfLifeWeeks - (now - aOldest) / WEEK_MS
-        : null;
-      const bRemaining = b.shelfLifeWeeks != null
-        ? b.shelfLifeWeeks - (now - bOldest) / WEEK_MS
-        : null;
-
-      // Both have shelf life: sort by remaining (expired first, then least remaining)
-      if (aRemaining !== null && bRemaining !== null) return aRemaining - bRemaining;
-      // Only one has shelf life: it sorts first (more actionable)
-      if (aRemaining !== null) return -1;
-      if (bRemaining !== null) return 1;
-      // Neither has shelf life: oldest production date first
       return aOldest - bOldest;
     });
-  }, [fillingStockItems, fillingsMap, plansMap, search, filterFreezer, filterHasNotes]);
+  }, [fillingStockItems, fillingsMap, plansMap, search, stockState, filterHasNotes, sortBy]);
 
   async function handleDiscard(id: string) {
     await discardFillingStock(id);
@@ -775,8 +834,44 @@ function FillingStockTab() {
 
   const isEmpty = fillingStockItems.length === 0 && !showAdd;
 
+  // Stock-state counts for segmented tab badges, computed on the search/notes
+  // filtered set so badges reflect the rest of the panel state.
+  const fillingStockCounts = useMemo(() => {
+    const byFilling = new Map<string, { available: number; frozen: number }>();
+    const q = search.trim().toLowerCase();
+    for (const item of fillingStockItems) {
+      const filling = fillingsMap.get(item.fillingId);
+      const fillingName = filling?.name ?? "Unknown filling";
+      if (q && !fillingName.toLowerCase().includes(q)) continue;
+      const plan = item.planId ? plansMap.get(item.planId) : undefined;
+      if (filterHasNotes && !item.notes && !plan?.notes) continue;
+      const cur = byFilling.get(item.fillingId) ?? { available: 0, frozen: 0 };
+      if (item.frozen) cur.frozen += item.remainingG;
+      else cur.available += item.remainingG;
+      byFilling.set(item.fillingId, cur);
+    }
+    let inStockN = 0, frozenN = 0;
+    for (const t of byFilling.values()) {
+      if (t.available > 0) inStockN += 1;
+      if (t.frozen > 0) frozenN += 1;
+    }
+    return { inStock: inStockN, frozen: frozenN };
+  }, [fillingStockItems, fillingsMap, plansMap, search, filterHasNotes]);
+
+  const stockStateOptions: SegmentedTabOption<"all" | "in-stock" | "frozen">[] = [
+    { id: "in-stock", label: "In stock", count: fillingStockCounts.inStock },
+    { id: "frozen", label: "Frozen", count: fillingStockCounts.frozen },
+    { id: "all", label: "All" },
+  ];
+
   return (
     <div className="px-4 pb-8 space-y-3">
+      <SegmentedTabs
+        ariaLabel="Stock state"
+        value={stockState}
+        onChange={setStockState}
+        options={stockStateOptions}
+      />
       <div className="flex gap-2">
         <div className="flex-1 relative min-w-0">
           <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -789,6 +884,7 @@ function FillingStockTab() {
             className="input !pl-9"
           />
         </div>
+        <SortDropdown value={sortBy} onChange={setSortBy} />
         <button
           onClick={() => setShowFilters((v) => !v)}
           className={`relative rounded-lg border p-2 transition-colors ${showFilters ? "bg-primary text-primary-foreground border-primary" : "border-border bg-background"}`}
@@ -814,29 +910,6 @@ function FillingStockTab() {
       {showFilters && (
         <div className="rounded-lg border border-border bg-card p-3 space-y-3">
           <div>
-            <p className="text-xs text-muted-foreground mb-1.5">Freezer</p>
-            <div className="flex flex-wrap gap-1">
-              {(["all", "available", "frozen"] as const).map((opt) => {
-                const label = opt === "all" ? "All" : opt === "available" ? "Available" : "Frozen only";
-                const isFrozenOpt = opt === "frozen";
-                return (
-                  <button
-                    key={opt}
-                    onClick={() => setFilterFreezer(opt)}
-                    className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors inline-flex items-center gap-1 ${
-                      filterFreezer === opt
-                        ? isFrozenOpt ? "bg-sky-600 text-white" : "bg-accent text-accent-foreground"
-                        : "border border-border text-muted-foreground"
-                    }`}
-                  >
-                    {isFrozenOpt && <Snowflake className="w-3 h-3" />}
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div>
             <p className="text-xs text-muted-foreground mb-1.5">Notes</p>
             <button
               onClick={() => setFilterHasNotes((v) => !v)}
@@ -848,7 +921,7 @@ function FillingStockTab() {
           </div>
           {activeFilterCount > 0 && (
             <button
-              onClick={() => { setFilterFreezer("all"); setFilterHasNotes(false); }}
+              onClick={() => setFilterHasNotes(false)}
               className="text-xs text-muted-foreground flex items-center gap-1"
             >
               <X className="w-3 h-3" /> Clear filters
