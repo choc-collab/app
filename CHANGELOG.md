@@ -4,7 +4,7 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
-## [0.5.0] — Unreleased
+## [0.5.0] — 2026-05-04
 
 ### Added
 - **Today dashboard at `/today`** — a new in-app home that consolidates the daily-action signals into one screen. Four header tiles (Shopping list, In progress, Experiments brewing — placeholder for the Lab, Week sales) over two main sections: **To Make** (a checkbox list of low-or-out-of-stock products in any active collection that hands selected products straight into the production-plan wizard via session-storage seed) and **Sell · Quick** (a one-tap "Sell" or "Sell N" grid backed by the same prepared-sales data and stepper component as the `/shop` Ready tab, with an inline accent-coloured Undo toast). The In progress tile lists active and draft batches with the row name linking to `/production/[id]`, a small `BookOpen` icon link to scaled recipes, and a hover popover surfacing the batch's planned products and target-gram fillings. An audit-reminder footer surfaces when no product has been counted in 14 days.

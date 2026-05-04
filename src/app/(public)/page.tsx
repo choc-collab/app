@@ -126,7 +126,7 @@ export default function LandingPage() {
             style={{ background: "var(--accent-terracotta-ink)" }}
           />
           <span>
-            <strong className="font-medium text-foreground">Latest release · v0.4</strong>
+            <strong className="font-medium text-foreground">Latest release · v0.5</strong>
             <span className="mx-1.5 text-border">·</span>
             What&apos;s new
           </span>
