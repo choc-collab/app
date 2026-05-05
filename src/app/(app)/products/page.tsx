@@ -5,13 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { useProductsList, saveProduct, useProductCategories, useProductCategoryUsageCounts, saveProductCategory, useCoatings, useProductProductionMap, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts, useProductFillingsForProducts, useFillings, useMarketRegion } from "@/lib/hooks";
 import { Plus, Search, ChevronRight, ChevronDown, SlidersHorizontal, X } from "lucide-react";
-import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, ProductStockPills, SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
+import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, ProductStockPills, SegmentedTabs, type SegmentedTabOption, ViewDensityToggle } from "@/components/pantry";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { formatCategoryRange } from "@/lib/productCategories";
 import Link from "next/link";
 import type { Product } from "@/types";
 import { getAllergensByRegion, allergenLabel } from "@/types";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
+import { usePersistedDensity, type ViewDensity } from "@/lib/use-persisted-density";
 import { shelfLifeBucket, SHELF_LIFE_BUCKET_LABELS, SHELF_LIFE_BUCKET_ORDER, type ShelfLifeBucket } from "@/lib/shelfLifeBuckets";
 type ProductSummary = Omit<Product, "photo">;
 
@@ -107,6 +108,7 @@ function ProductsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
+  const [density, setDensity] = usePersistedDensity("products");
   const marketRegion = useMarketRegion();
 
   const filterTagsSet = useMemo(() => new Set(f.filterTags), [f.filterTags]);
@@ -625,6 +627,9 @@ function ProductsTab() {
           </p>
         ) : (
           <div className="space-y-4">
+            <div className="flex justify-end">
+              <ViewDensityToggle value={density} onChange={setDensity} />
+            </div>
             <div className="flex justify-end gap-3">
               <button onClick={() => setCollapsedTypes(new Set(grouped.map((g) => g.type)))} className="text-xs text-muted-foreground">Collapse all</button>
               <button onClick={() => setCollapsedTypes(new Set())} className="text-xs text-muted-foreground">Expand all</button>
@@ -648,7 +653,7 @@ function ProductsTab() {
                         const pid = product.id ?? '';
                         const fillingNames = productFillingNamesMap.get(pid) ?? [];
                         const allergens = Array.from(productAllergenMap.get(pid) ?? []);
-                        return <ProductRow key={product.id} product={product} hasBeenProduced={productionMap.has(pid)} pieces={stockMap.get(pid) ?? 0} frozen={frozenMap.get(pid) ?? 0} fillingNames={fillingNames} allergens={allergens} />;
+                        return <ProductRow key={product.id} product={product} hasBeenProduced={productionMap.has(pid)} pieces={stockMap.get(pid) ?? 0} frozen={frozenMap.get(pid) ?? 0} fillingNames={fillingNames} allergens={allergens} density={density} />;
                       })}
                     </ul>
                   )}
@@ -662,7 +667,8 @@ function ProductsTab() {
   );
 }
 
-function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, allergens }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; allergens?: string[] }) {
+function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, allergens, density }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; allergens?: string[]; density: ViewDensity }) {
+  const isCompact = density === "compact";
   // Row 2: "Milk · filling1 · filling2" — coating capitalised, prefixed if present
   const subtitleParts = [
     product.coating ? product.coating.charAt(0).toUpperCase() + product.coating.slice(1) : null,
@@ -675,12 +681,14 @@ function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, al
   return (
     <li
       className={`rounded-lg border bg-card ${product.archived ? "border-border/50 opacity-60" : "border-border"}`}
-      style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}
+      style={{ contentVisibility: "auto", containIntrinsicSize: isCompact ? "0 40px" : "0 64px" }}
     >
-      <Link href={`/products/${encodeURIComponent(product.id ?? '')}`} className="flex items-center gap-2.5 px-3 py-2.5 min-w-0">
-        <div className="w-8 h-8 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground text-sm font-medium">
-          {product.name.charAt(0)}
-        </div>
+      <Link href={`/products/${encodeURIComponent(product.id ?? '')}`} className={`flex items-center gap-2.5 px-3 ${isCompact ? "py-1.5" : "py-2.5"} min-w-0`}>
+        {!isCompact && (
+          <div className="w-8 h-8 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground text-sm font-medium">
+            {product.name.charAt(0)}
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           {/* Row 1: name + stock pills + stars */}
           <div className="flex items-center gap-2 flex-wrap">
@@ -697,7 +705,7 @@ function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, al
                 threshold={product.lowStockThreshold}
               />
             )}
-            {product.popularity && (
+            {!isCompact && product.popularity && (
               <div className="flex gap-0.5 shrink-0 ml-auto">
                 {[1, 2, 3, 4, 5].map((star) => (
                   <svg key={star} className={`w-2.5 h-2.5 ${product.popularity! >= star ? "text-primary fill-primary" : "text-border fill-transparent"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -708,11 +716,11 @@ function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, al
             )}
           </div>
           {/* Row 2: coating · fillings */}
-          {subtitleParts.length > 0 && (
+          {!isCompact && subtitleParts.length > 0 && (
             <p className="text-xs text-muted-foreground truncate mt-0.5">{subtitleParts.join(" · ")}</p>
           )}
           {/* Row 3: tags + allergens together */}
-          {(hasTags || hasAllergens) && (
+          {!isCompact && (hasTags || hasAllergens) && (
             <div className="flex flex-wrap gap-1 mt-0.5">
               {(product.tags ?? []).map((tag) => (
                 <span key={tag} className="rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-[10px] capitalize">

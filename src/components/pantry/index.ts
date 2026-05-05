@@ -41,6 +41,7 @@ export { SegmentedTabs } from "./segmented-tabs";
 export type { SegmentedTabOption } from "./segmented-tabs";
 export { ListItemCard } from "./list-item-card";
 export { CollapseControls } from "./collapse-controls";
+export { ViewDensityToggle } from "./view-density-toggle";
 export { MultiSelectDropdown } from "./multi-select-dropdown";
 export { UsedInPanel } from "./used-in-panel";
 export type { UsedInItem } from "./used-in-panel";

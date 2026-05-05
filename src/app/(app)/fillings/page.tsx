@@ -11,7 +11,7 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, FillingStockPills, SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
+import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, FillingStockPills, SegmentedTabs, type SegmentedTabOption, ViewDensityToggle } from "@/components/pantry";
 import { CategoryPicker } from "@/components/category-picker";
 import {
   useFillings, saveFilling, useAllFillingStatuses,
@@ -24,6 +24,7 @@ import { ChevronRight, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
+import { usePersistedDensity } from "@/lib/use-persisted-density";
 import { shelfLifeBucket, SHELF_LIFE_BUCKET_LABELS, SHELF_LIFE_BUCKET_ORDER, type ShelfLifeBucket } from "@/lib/shelfLifeBuckets";
 
 type FillingsTab = "fillings" | "categories";
@@ -115,6 +116,8 @@ function FillingsTab() {
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [density, setDensity] = usePersistedDensity("fillings");
+  const isCompact = density === "compact";
 
   const filterCategoriesSet = useMemo(() => new Set(f.filterCategories), [f.filterCategories]);
   const filterAllergensSet = useMemo(() => new Set(f.filterAllergens), [f.filterAllergens]);
@@ -388,6 +391,9 @@ function FillingsTab() {
         </p>
       ) : (
         <div className="space-y-4">
+          <div className="flex justify-end">
+            <ViewDensityToggle value={density} onChange={setDensity} />
+          </div>
           <div className="flex justify-end gap-3">
             <button onClick={() => setCollapsedCategories(new Set(grouped.map((g) => g.category)))} className="text-xs text-muted-foreground">Collapse all</button>
             <button onClick={() => setCollapsedCategories(new Set())} className="text-xs text-muted-foreground">Expand all</button>
@@ -411,11 +417,11 @@ function FillingsTab() {
                       <li
                         key={filling.id}
                         className={`rounded-lg border bg-card ${filling.archived ? "border-muted opacity-60" : "border-border"}`}
-                        style={{ contentVisibility: "auto", containIntrinsicSize: "0 72px" }}
+                        style={{ contentVisibility: "auto", containIntrinsicSize: isCompact ? "0 40px" : "0 72px" }}
                       >
                         <Link
                           href={`/fillings/${encodeURIComponent(filling.id ?? '')}`}
-                          className="flex items-center gap-3 p-3 min-w-0"
+                          className={`flex items-center gap-3 ${isCompact ? "px-3 py-1.5" : "p-3"} min-w-0`}
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -434,29 +440,31 @@ function FillingsTab() {
                                 );
                               })()}
                             </div>
-                            {filling.description && (
+                            {!isCompact && filling.description && (
                               <p className="text-xs text-muted-foreground truncate mt-0.5">{filling.description}</p>
                             )}
-                            <div className="flex flex-wrap items-center gap-1 mt-1">
-                              {filling.status && (
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                                  filling.status === "confirmed" ? "bg-success-muted text-success" :
-                                  filling.status === "testing"   ? "bg-warning-muted text-warning" :
-                                  filling.status === "to try"    ? "bg-muted text-muted-foreground" :
-                                                                   "bg-sky-50 text-sky-700 border border-sky-200"
-                                }`}>
-                                  {filling.status.charAt(0).toUpperCase() + filling.status.slice(1)}
-                                </span>
-                              )}
-                              {filling.allergens.map((a) => (
-                                <span
-                                  key={a}
-                                  className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-2 py-0.5 text-[10px]"
-                                >
-                                  {allergenLabel(a)}
-                                </span>
-                              ))}
-                            </div>
+                            {!isCompact && (filling.status || filling.allergens.length > 0) && (
+                              <div className="flex flex-wrap items-center gap-1 mt-1">
+                                {filling.status && (
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                    filling.status === "confirmed" ? "bg-success-muted text-success" :
+                                    filling.status === "testing"   ? "bg-warning-muted text-warning" :
+                                    filling.status === "to try"    ? "bg-muted text-muted-foreground" :
+                                                                     "bg-sky-50 text-sky-700 border border-sky-200"
+                                  }`}>
+                                    {filling.status.charAt(0).toUpperCase() + filling.status.slice(1)}
+                                  </span>
+                                )}
+                                {filling.allergens.map((a) => (
+                                  <span
+                                    key={a}
+                                    className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-2 py-0.5 text-[10px]"
+                                  >
+                                    {allergenLabel(a)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                           <ChevronRight aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0" />
                         </Link>
