@@ -622,7 +622,7 @@ function PlanContent({
       planProducts,
       productNames,
       moulds: mouldsMap,
-      fillingAmounts,
+      fillingAmounts: fillingAmountsWithNested,
       ingredients: allIngredients.filter((i) => i.id != null) as { id: string; name: string; manufacturer?: string }[],
       previousBatches: Object.keys(fillingPreviousBatches).length > 0 ? fillingPreviousBatches : undefined,
       productsMap,

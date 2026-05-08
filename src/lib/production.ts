@@ -977,8 +977,11 @@ export function generateBatchSummary(params: {
     lines.push("─".repeat(48));
   }
 
-  // --- Effective shelf life per product (when previous batch fillings limit it) ---
-  if (prevEntries.length > 0 && productsMap && productFillingsMap && planProducts.length > 0) {
+  // --- Estimated shelf life per product ---
+  // Renders whenever any product has a shelf life defined, with a parenthetical
+  // note when a previous-batch filling reduces the effective value below the
+  // product's nominal shelf life.
+  if (productsMap && productFillingsMap && planProducts.length > 0) {
     const seenProducts = new Set<string>();
     const shelfLifeLines: string[] = [];
     for (const pb of planProducts) {
@@ -1005,7 +1008,7 @@ export function generateBatchSummary(params: {
     }
     if (shelfLifeLines.length > 0) {
       lines.push("");
-      lines.push("EFFECTIVE SHELF LIFE");
+      lines.push("ESTIMATED SHELF LIFE");
       lines.push("─".repeat(48));
       for (const l of shelfLifeLines) lines.push(l);
       lines.push("─".repeat(48));
