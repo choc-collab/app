@@ -999,11 +999,13 @@ export function generateBatchSummary(params: {
       if (effectiveWeeks === null) continue;
       const productName = productNames.get(pb.productId) ?? "Unknown";
       const originalWeeks = parseFloat(product.shelfLifeWeeks);
+      const bestBy = new Date(completedAt.getTime() + effectiveWeeks * 7 * 24 * 60 * 60 * 1000)
+        .toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
       if (limitedByFillingId && effectiveWeeks < originalWeeks) {
         const limitingFilling = previousBatches?.[limitedByFillingId]?.fillingName ?? limitedByFillingId;
-        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  (reduced from ${originalWeeks} by ${limitingFilling})`);
+        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  ·  Best by: ${bestBy}  (reduced from ${originalWeeks} by ${limitingFilling})`);
       } else {
-        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks`);
+        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  ·  Best by: ${bestBy}`);
       }
     }
     if (shelfLifeLines.length > 0) {

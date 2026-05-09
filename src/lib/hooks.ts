@@ -1099,12 +1099,16 @@ export async function saveProductionPlan(plan: Omit<ProductionPlan, "id"> & { id
   const completedAt = plan.status === "done"
     ? (plan.completedAt ?? now)
     : undefined;
+  // Drop any stale summary the moment a plan leaves "done" — when the user
+  // unchecks a step on an accidentally-completed batch, the next completion
+  // should regenerate a fresh summary rather than re-surface the old one.
+  const batchSummary = plan.status === "done" ? plan.batchSummary : undefined;
   if (plan.id) {
-    await db.productionPlans.update(plan.id, { ...plan, updatedAt: now, completedAt });
+    await db.productionPlans.update(plan.id, { ...plan, updatedAt: now, completedAt, batchSummary });
     return plan.id;
   }
   const batchNumber = plan.batchNumber ?? await generateBatchNumber(now);
-  return db.productionPlans.add({ ...plan, batchNumber, createdAt: now, updatedAt: now, completedAt } as ProductionPlan) as Promise<string>;
+  return db.productionPlans.add({ ...plan, batchNumber, createdAt: now, updatedAt: now, completedAt, batchSummary } as ProductionPlan) as Promise<string>;
 }
 
 export async function deleteProductionPlan(id: string) {
