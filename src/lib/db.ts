@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -39,6 +39,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   ingredientCategories: EntityTable<IngredientCategory, "id">;
   sales: EntityTable<Sale, "id">;
   giveaways: EntityTable<GiveAwayRecord, "id">;
+  labelTemplates: EntityTable<LabelTemplate, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -538,6 +539,19 @@ db.version(14).stores({}).upgrade(async (tx) => {
   }
 });
 
+// v15 — labelTemplates table for the user-designed label printing system.
+//
+// Purely additive: a new table for user-created print templates (mm-based
+// canvas layouts that get rendered against a Product/Batch/Filling/Collection
+// at print time). No upgrade hook needed — existing tables are untouched.
+//
+// Indexed on `application` so the editor's gallery can filter by intended
+// surface (production batch / filling batch / collection package) and on
+// `updatedAt` so the gallery can sort by recency.
+db.version(15).stores({
+  labelTemplates: "id, name, application, updatedAt",
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -580,6 +594,7 @@ const AUTO_ID_TABLES = [
   db.ingredientCategories,
   db.sales,
   db.giveaways,
+  db.labelTemplates,
 ];
 for (const table of AUTO_ID_TABLES) {
    

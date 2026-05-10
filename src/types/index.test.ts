@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { costPerGram, allergenLabel, migrateAllergens, getAllergensByRegion, EU_ALLERGENS, UK_ALLERGENS, US_ALLERGENS, AU_ALLERGENS, CA_ALLERGENS, getCurrencySymbol, CURRENCIES, MARKET_LABEL_RULES, normalizeApplyAt, DECORATION_APPLY_AT_OPTIONS } from "./index";
+import { costPerGram, allergenLabel, migrateAllergens, getAllergensByRegion, EU_ALLERGENS, UK_ALLERGENS, US_ALLERGENS, AU_ALLERGENS, CA_ALLERGENS, getCurrencySymbol, CURRENCIES, MARKET_LABEL_RULES, normalizeApplyAt, DECORATION_APPLY_AT_OPTIONS, createBlankTemplate } from "./index";
 import type { Ingredient } from "./index";
 
 function makeIngredient(overrides: Partial<Ingredient> = {}): Ingredient {
@@ -401,5 +401,54 @@ describe("DECORATION_APPLY_AT_OPTIONS", () => {
     for (const o of DECORATION_APPLY_AT_OPTIONS) {
       expect(o.label).toBeTruthy();
     }
+  });
+});
+
+// ── createBlankTemplate ─────────────────────────────────────────────────────
+
+describe("createBlankTemplate", () => {
+  it("returns a template seeded with the supplied dimensions and metadata", () => {
+    const now = new Date("2026-05-10T12:00:00Z");
+    const tpl = createBlankTemplate({
+      name: "Box of 9",
+      application: "production-batch",
+      width: 89,
+      height: 36,
+      now,
+    });
+    expect(tpl.name).toBe("Box of 9");
+    expect(tpl.application).toBe("production-batch");
+    expect(tpl.width).toBe(89);
+    expect(tpl.height).toBe(36);
+    expect(tpl.fields).toEqual([]);
+    expect(tpl.createdAt).toBe(now);
+    expect(tpl.updatedAt).toBe(now);
+  });
+
+  it("defaults regime to EU when not supplied", () => {
+    const tpl = createBlankTemplate({
+      name: "x",
+      application: "filling-batch",
+      width: 50,
+      height: 30,
+    });
+    expect(tpl.regime).toBe("EU");
+  });
+
+  it("respects an explicit regime override", () => {
+    const tpl = createBlankTemplate({
+      name: "internal sticker",
+      application: "filling-batch",
+      width: 50,
+      height: 30,
+      regime: "none",
+    });
+    expect(tpl.regime).toBe("none");
+  });
+
+  it("returns a fresh fields array on each call (no shared reference)", () => {
+    const a = createBlankTemplate({ name: "a", application: "production-batch", width: 50, height: 30 });
+    const b = createBlankTemplate({ name: "b", application: "production-batch", width: 50, height: 30 });
+    expect(a.fields).not.toBe(b.fields);
   });
 });

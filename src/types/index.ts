@@ -1300,3 +1300,145 @@ export interface GiveAwayRecord {
   /** Sum of `costPerProduct × pieces` at log time, in the user's currency. */
   ingredientCost: number;
 }
+
+// ============================================================================
+// Label printing — templates, fields, and source descriptors
+// ============================================================================
+
+/**
+ * Available field types on a label template. Grouped by binding source:
+ *   - `product` group binds to the source's product/batch context (resolved by
+ *     `LabelSource` at print time).
+ *   - `brand` group binds to the user's `Brand` profile from `userPreferences`.
+ *   - `custom` group is template-local content the user types into the inspector.
+ */
+export type LabelFieldType =
+  // product / batch (auto-bound)
+  | "name"      // product or filling name
+  | "subtitle"  // derived line e.g. "9 pieces · 90g"
+  | "weight"    // net weight string
+  | "ingr"      // ingredient list (EU FIC ordered, allergens emphasised)
+  | "aller"     // allergen declaration block (incl. facility "may contain")
+  | "nutri"     // nutrition table (per 100g, market-aware)
+  | "bbe"       // best-before date
+  | "batch"     // batch number(s)
+  | "prodate"   // production date
+  | "origin"    // shell origin / cocoa percentage line
+  // brand / business (auto-bound)
+  | "logo"      // brand logo image
+  | "company"   // business name + address block
+  | "contact"   // single-line contact (phone / email / web)
+  | "socials"   // multi-line list of named links
+  | "qr"        // QR code (defaults to website URL)
+  // custom (template-local)
+  | "text"      // free text typed into the inspector
+  | "divider"   // horizontal rule
+  | "image";    // user-uploaded image
+
+/** Source surface that a template targets. Drives source-picker UI and the
+ *  resolver in piece 2. Adding a new application is additive — the editor's
+ *  field rail filters by application but otherwise shares one engine. */
+export type LabelApplication = "production-batch" | "filling-batch" | "collection-package";
+
+/** Regulatory regime used by the in-editor linter. `MarketRegion` covers the
+ *  declared regulatory frameworks; `"none"` opts out (e.g. internal stickers). */
+export type LabelRegime = MarketRegion | "none";
+
+/**
+ * Per-field formatting and content options. A single bag of optional keys —
+ * each renderer picks the keys it cares about and ignores the rest. Mirrors
+ * the shape used in the canvas-editor prototype, kept loose so adding a new
+ * formatting knob is one optional field plus a renderer change.
+ */
+export interface LabelFieldProps {
+  /** Font size in pt. Defaults are per field type. */
+  size?: number;
+  /** CSS font-weight (100–900). Used by name/subtitle/headings. */
+  weight?: number;
+  /** When false, hides the small "INGREDIENTS" / "ALLERGENS" heading above the block. */
+  showLabel?: boolean;
+  /** When true, allergen tokens inside the ingredient string are emphasised (bold). */
+  boldAllergens?: boolean;
+  /** Italic body text. Used by `text`. */
+  italic?: boolean;
+  /** Free-text content. Used by `text`. */
+  text?: string;
+}
+
+/**
+ * One field placed on a label. Coordinates and dimensions are in millimetres
+ * with origin top-left, matching the prototype. `id` is template-local (not
+ * shared across templates) — sequential numbers or any unique string is fine
+ * since the field never leaves its owning `LabelTemplate.fields`.
+ */
+export interface LabelField {
+  /** Template-local field identifier — unique within `LabelTemplate.fields`. */
+  id: string;
+  type: LabelFieldType;
+  /** Position in millimetres, top-left origin. */
+  x: number;
+  y: number;
+  /** Size in millimetres. */
+  w: number;
+  h: number;
+  props?: LabelFieldProps;
+}
+
+/**
+ * A user-designed label template. Persisted in the `labelTemplates` Dexie
+ * table; rendered against a resolved `LabelSource` at print time.
+ *
+ * Coordinates and dimensions are stored in millimetres so the same template
+ * renders identically on screen, on the OS print dialog, and on a future
+ * server-side PDF generator.
+ */
+export interface LabelTemplate {
+  id?: string;
+  name: string;
+  application: LabelApplication;
+  /** Physical label dimensions in millimetres. */
+  width: number;
+  height: number;
+  /** Linter regime (defaults to the user's MarketRegion at create time). */
+  regime: LabelRegime;
+  fields: LabelField[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Discriminated union describing what a print run binds against. The
+ * `LabelContext` resolver (piece 2) takes one of these and produces the
+ * normalised data the renderers consume.
+ *
+ *   - `production-batch`    one row per `PlanProduct` in a completed plan
+ *   - `filling-batch`       a row from `fillingStock`
+ *   - `collection-package`  a Collection × Packaging combination from the shop
+ */
+export type LabelSource =
+  | { kind: "production-batch"; planId: string; planProductId: string }
+  | { kind: "filling-batch"; stockId: string }
+  | { kind: "collection-package"; collectionId: string; packagingId: string };
+
+/** Factory for a blank template. Pure — no DB access. Used by the new-template
+ *  flow to seed the editor with sensible defaults; the caller persists. */
+export function createBlankTemplate(input: {
+  name: string;
+  application: LabelApplication;
+  width: number;
+  height: number;
+  regime?: LabelRegime;
+  now?: Date;
+}): Omit<LabelTemplate, "id"> {
+  const now = input.now ?? new Date();
+  return {
+    name: input.name,
+    application: input.application,
+    width: input.width,
+    height: input.height,
+    regime: input.regime ?? "EU",
+    fields: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
