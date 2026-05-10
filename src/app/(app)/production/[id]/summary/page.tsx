@@ -15,8 +15,16 @@ export default function BatchSummaryPage() {
   const [notesInput, setNotesInput] = useState("");
   const [notesSaved, setNotesSaved] = useState(false);
   const notesHydratedFor = useRef<string | undefined>(undefined);
+
+  const sanitizeBackHref = (value: string | null): string | null => {
+    if (!value) return null;
+    if (!value.startsWith("/")) return null;
+    if (value.startsWith("//")) return null;
+    return value;
+  };
+
   useEffect(() => {
-    const from = new URLSearchParams(window.location.search).get("from");
+    const from = sanitizeBackHref(new URLSearchParams(window.location.search).get("from"));
     if (from === "/production") { setBackHref(from); setBackLabel("Production"); }
     else if (from) { setBackHref(from); setBackLabel("Back to product"); }
     else if (planId) { setBackHref(`/production/${planId}`); }
