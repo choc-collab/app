@@ -16,6 +16,7 @@ import { CategoryPicker } from "@/components/category-picker";
 import { ArrowLeft, Pencil, Trash2, Lock, LockOpen, GitBranch, Plus, Search, Copy, ArchiveRestore, Archive } from "lucide-react";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
+import { DuplicatedToast } from "@/components/duplicated-toast";
 import { StepListEditor, StepList } from "@/components/step-list-editor";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import type { Ingredient, Product } from "@/types";
@@ -27,7 +28,7 @@ export default function FillingDetailPage() {
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
   const isForked = searchParams.get("forked") === "1";
-  const isDuplicate = searchParams.get("duplicate") === "1";
+  const [isDuplicate] = useState(() => searchParams.get("duplicate") === "1");
   const filling = useFilling(fillingId);
   const fillingIngredients = useFillingIngredients(fillingId);
   const allIngredients = useIngredients();
@@ -262,6 +263,7 @@ export default function FillingDetailPage() {
       </div>
 
       <div className="px-4 pb-4 space-y-4">
+        <DuplicatedToast active={isDuplicate} />
         {/* Name row — always visible, inline-editable via pencil on name */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">

@@ -6,7 +6,8 @@ import { AlertTriangle, ArrowLeft, Beaker, Check, ChevronDown, History, Package,
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Product, Mould, PlanProduct, PlanFilling, PlanProductAdditionalMould, FillingPreviousBatch, Filling } from "@/types";
-import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, getTotalCavities } from "@/lib/production";
+import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, expandNestedFillings, attachScaledNestedFillings, getTotalCavities } from "@/lib/production";
+import { consumeSeedFromTodayList } from "@/lib/todaySeed";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 
@@ -144,6 +145,36 @@ function NewPlanContent() {
     setInitialized(true);
   }, [sourcePlanProducts, sourcePlanFillings, fromPlanId, initialized]);
 
+  // Seed selectedIds + config from /today's "To make" list when present. The
+  // seeded ids come in via session-storage (single read, then cleared) so a
+  // refresh on this page starts empty. We only seed when not duplicating an
+  // existing plan — the dup flow above already populates selectedIds itself.
+  // Wait for products to load before consuming so we can pre-fill config with
+  // each product's default mould + batch qty (matching toggleProduct's seeding).
+  const [seedConsumed, setSeedConsumed] = useState(false);
+  useEffect(() => {
+    if (seedConsumed || fromPlanId) return;
+    if (products.length === 0) return;
+    const ids = consumeSeedFromTodayList();
+    setSeedConsumed(true);
+    if (ids.length === 0) return;
+    setSelectedIds(new Set(ids));
+    setConfig((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (next[id]) continue;
+        const product = products.find((p) => p.id === id);
+        if (!product) continue;
+        next[id] = {
+          mouldId: product.defaultMouldId ?? (moulds[0]?.id ?? ""),
+          quantity: product.defaultBatchQty ?? 1,
+          additionalMoulds: [],
+        };
+      }
+      return next;
+    });
+  }, [seedConsumed, fromPlanId, products, moulds]);
+
   const allIngredients = useIngredients();
   const selectedProducts = products.filter((r) => selectedIds.has(r.id!));
   const selectedProductIds = useMemo(() => Array.from(selectedIds), [selectedIds]);
@@ -158,6 +189,7 @@ function NewPlanContent() {
   // nested inside a product's host filling, so the batch-sizes phase
   // surfaces them too.
   const allFillingComponentsByFilling = useAllFillingComponentsByFilling();
+  const allFillingIngredientsByFilling = useAllFillingIngredientsByFilling();
 
   // --- Stock awareness: load all product fillings + ingredients for the select phase ---
   const allProductIds = useMemo(() => products.map((r) => r.id!).filter(Boolean), [products]);
@@ -319,7 +351,10 @@ function NewPlanContent() {
   }
 
   function updateConfig(productId: string, field: "mouldId" | "quantity", value: string | number | "") {
-    setConfig((c) => ({ ...c, [productId]: { ...c[productId], [field]: value } }));
+    setConfig((c) => {
+      const cur = c[productId] ?? { mouldId: "", quantity: 1, additionalMoulds: [] };
+      return { ...c, [productId]: { ...cur, [field]: value } };
+    });
   }
 
   // ─── Alternative mould setup (rarely used disclosure) ──────────────────────
@@ -527,6 +562,7 @@ function NewPlanContent() {
         const productNamesMap = new Map(selectedProducts.map((r) => [r.id!, r.name]));
         const mouldsMap = new Map(moulds.map((m) => [m.id!, m]));
         const fillingsMap = new Map(allFillings.map((l) => [l.id!, l]));
+        const productsMap = new Map(selectedProducts.map((r) => [r.id!, r]));
         const fillingAmounts = calculateFillingAmounts(
           savedProducts as any,
           productNamesMap,
@@ -539,6 +575,15 @@ function NewPlanContent() {
           new Map(),
           shelfStableCategoryNames,
         );
+        const nested = expandNestedFillings(
+          fillingAmounts.filter((la) => !la.isFromPreviousBatch),
+          allFillingComponentsByFilling,
+          allFillingIngredientsByFilling,
+          fillingsMap,
+        );
+        attachScaledNestedFillings(fillingAmounts, allFillingComponentsByFilling, allFillingIngredientsByFilling, fillingsMap);
+        attachScaledNestedFillings(nested, allFillingComponentsByFilling, allFillingIngredientsByFilling, fillingsMap);
+        const fillingAmountsWithNested = [...fillingAmounts, ...nested];
 
         // Build yield entries for the modal — total across all mould slots.
         const yieldEntries: YieldEntry[] = savedProducts.map((pb) => {
@@ -563,7 +608,7 @@ function NewPlanContent() {
           }
 
           // Mark all steps as done
-          const steps = generateSteps(savedProducts as any, productNamesMap, productFillingsMap, fillingAmounts, fillingsMap, mouldsMap);
+          const steps = generateSteps(savedProducts as any, productNamesMap, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, {}, new Map(), [], new Map(), allFillingComponentsByFilling);
           for (const step of steps) {
             await toggleStep(planId, step.key, true);
           }
@@ -575,8 +620,10 @@ function NewPlanContent() {
             planProducts: savedProducts as any,
             productNames: productNamesMap,
             moulds: mouldsMap,
-            fillingAmounts,
+            fillingAmounts: fillingAmountsWithNested,
             ingredients: allIngredients.filter((i) => i.id != null) as { id: string; name: string; manufacturer?: string }[],
+            productsMap,
+            productFillingsMap,
           });
           await saveProductionPlan({ id: planId, name: planName.trim() || "Batch", status: "done", notes: batchNote.trim() || undefined, batchSummary, completedAt, batchNumber } as any);
           setSaving(false);

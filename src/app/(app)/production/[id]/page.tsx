@@ -180,6 +180,34 @@ function PlanContent({
     mode: "single" | "batch";
   } | null>(null);
 
+  // Revert-stock confirm modal — surfaced when the user unchecks a
+  // planfilling-* or unmould-* step that already produced stock (FillingStock
+  // row or PlanProduct.actualYield). Confirming deletes/clears the stock
+  // entry before unchecking; cancelling leaves both step and stock untouched
+  // so the data never sits in a half-state.
+  const [revertStockModal, setRevertStockModal] = useState<
+    | {
+        kind: "filling";
+        stepKey: string;
+        fillingName: string;
+        remainingG: number;
+        originalG: number;
+        isFrozen: boolean;
+        isPartiallyUsed: boolean;
+        stockIds: string[];
+      }
+    | {
+        kind: "product";
+        stepKey: string;
+        productName: string;
+        planProductId: string;
+        actualYield: number;
+        frozenQty: number;
+        isPackaged: boolean;
+      }
+    | null
+  >(null);
+
   const printerEnabled = typeof window !== "undefined" && localStorage.getItem("niimbot-printer-enabled") === "true";
 
   useEffect(() => {
@@ -401,6 +429,56 @@ function PlanContent({
   async function handleToggle(key: string) {
     const current = statusMap.get(key) ?? false;
 
+    // Intercept uncheck of planfilling-* / unmould-* when stock was already
+    // produced — checking these wrote a FillingStock row (planfilling-*) or
+    // set PlanProduct.actualYield (unmould-*). Confirm with the user before
+    // reverting; cancel leaves the step + stock alone so we never land in a
+    // limbo where stock exists but the step is unchecked.
+    if (current && key.startsWith("planfilling-")) {
+      const pfId = key.replace("planfilling-", "");
+      const pf = planFillings.find((p) => p.id === pfId);
+      if (pf) {
+        const { db } = await import("@/lib/db");
+        const rows = await db.fillingStock
+          .where("planId").equals(planId)
+          .filter((s) => s.fillingId === pf.fillingId)
+          .toArray();
+        if (rows.length > 0) {
+          const filling = fillingsMap.get(pf.fillingId);
+          const remainingG = rows.reduce((sum, r) => sum + r.remainingG, 0);
+          const originalG = pf.actualYieldG ?? pf.targetGrams;
+          setRevertStockModal({
+            kind: "filling",
+            stepKey: key,
+            fillingName: filling?.name ?? "filling",
+            remainingG,
+            originalG,
+            isFrozen: rows.some((r) => r.frozen === true),
+            isPartiallyUsed: remainingG < originalG,
+            stockIds: rows.map((r) => r.id).filter((id): id is string => id != null),
+          });
+          return;
+        }
+      }
+    }
+
+    if (current && key.startsWith("unmould-")) {
+      const planProductId = key.replace("unmould-", "");
+      const pb = planProducts.find((p) => p.id === planProductId);
+      if (pb && pb.actualYield != null) {
+        setRevertStockModal({
+          kind: "product",
+          stepKey: key,
+          productName: productNames.get(pb.productId) ?? "product",
+          planProductId,
+          actualYield: pb.actualYield,
+          frozenQty: pb.frozenQty ?? 0,
+          isPackaged: pb.stockStatus === "gone",
+        });
+        return;
+      }
+    }
+
     // Intercept fill steps being checked ON → show leftover filling prompt
     if (!current && key.startsWith("fill-")) {
       const planProductId = key.replace("fill-", "");
@@ -501,6 +579,47 @@ function PlanContent({
     }
   }
 
+  /** User confirmed they want to revert the stock change tied to a step they're
+   *  unchecking. For fillings, delete the FillingStock rows for this plan +
+   *  filling. For products, clear PlanProduct.actualYield (and the derived
+   *  stock fields). Then uncheck the step and roll plan status back. */
+  async function handleRevertStockConfirm() {
+    if (!revertStockModal) return;
+    const m = revertStockModal;
+
+    if (m.kind === "filling") {
+      const { db } = await import("@/lib/db");
+      for (const id of m.stockIds) {
+        await db.fillingStock.delete(id);
+      }
+    } else {
+      const pb = planProducts.find((p) => p.id === m.planProductId);
+      if (pb) {
+        await savePlanProduct({
+          ...pb,
+          actualYield: undefined,
+          currentStock: undefined,
+          frozenQty: undefined,
+          frozenAt: undefined,
+          preservedShelfLifeDays: undefined,
+          defrostedAt: undefined,
+          // Preserve "gone" when packaging already created Sales — those
+          // sales reference the bars and shouldn't be double-counted as
+          // stock again. Otherwise reset so the batch shows in-progress.
+          stockStatus: pb.stockStatus === "gone" ? "gone" : undefined,
+        });
+      }
+    }
+
+    await toggleStep(planId, m.stepKey, false);
+    const newDoneCount = doneCount - 1;
+    const newStatus = newDoneCount >= steps.length ? "done" : newDoneCount > 0 ? "active" : "draft";
+    if (newStatus !== plan.status) {
+      await saveProductionPlan({ ...plan as any, id: plan.id, status: newStatus });
+    }
+    setRevertStockModal(null);
+  }
+
   async function completePlan() {
     const completedAt = new Date();
     // Emit FillingStock rows for every standalone filling batch whose step is
@@ -516,7 +635,7 @@ function PlanContent({
       planProducts,
       productNames,
       moulds: mouldsMap,
-      fillingAmounts,
+      fillingAmounts: fillingAmountsWithNested,
       ingredients: allIngredients.filter((i) => i.id != null) as { id: string; name: string; manufacturer?: string }[],
       previousBatches: Object.keys(fillingPreviousBatches).length > 0 ? fillingPreviousBatches : undefined,
       productsMap,
@@ -1391,6 +1510,14 @@ function PlanContent({
         />
       )}
 
+      {revertStockModal && (
+        <RevertStockModal
+          state={revertStockModal}
+          onConfirm={handleRevertStockConfirm}
+          onCancel={() => setRevertStockModal(null)}
+        />
+      )}
+
       {leftoverModal && (
         <LeftoverModal
           entries={leftoverModal.entries}
@@ -1665,4 +1792,102 @@ function StandaloneBatchesPanel({
       )}
     </div>
   );
+}
+
+type RevertStockState =
+  | {
+      kind: "filling";
+      stepKey: string;
+      fillingName: string;
+      remainingG: number;
+      originalG: number;
+      isFrozen: boolean;
+      isPartiallyUsed: boolean;
+      stockIds: string[];
+    }
+  | {
+      kind: "product";
+      stepKey: string;
+      productName: string;
+      planProductId: string;
+      actualYield: number;
+      frozenQty: number;
+      isPackaged: boolean;
+    };
+
+function RevertStockModal({ state, onConfirm, onCancel }: {
+  state: RevertStockState;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancel();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+
+  const title = state.kind === "filling"
+    ? "Filling wasn't made yet?"
+    : "Product wasn't unmoulded yet?";
+
+  const summary = state.kind === "filling"
+    ? `This will remove ${formatGrams(state.remainingG)} of ${state.fillingName} from stock.`
+    : `This will remove ${state.actualYield} ${state.actualYield === 1 ? "piece" : "pieces"} of ${state.productName} from stock.`;
+
+  const warnings: string[] = [];
+  if (state.kind === "filling") {
+    if (state.isPartiallyUsed) {
+      warnings.push(`${formatGrams(state.originalG - state.remainingG)} of this batch was already used elsewhere — that history will be lost.`);
+    }
+    if (state.isFrozen) {
+      warnings.push("Some of this batch is in the freezer.");
+    }
+  } else {
+    if (state.frozenQty > 0) {
+      warnings.push(`${state.frozenQty} ${state.frozenQty === 1 ? "piece is" : "pieces are"} in the freezer — those will be cleared too.`);
+    }
+    if (state.isPackaged) {
+      warnings.push("Bars from this batch have already been packaged into Shop sales — those sales stay put.");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onCancel} />
+      <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 rounded-2xl border border-border bg-card shadow-xl overflow-hidden">
+        <div className="px-5 pt-5 pb-3">
+          <h3 className="text-base font-bold text-foreground mb-1">{title}</h3>
+          <p className="text-sm text-muted-foreground">{summary}</p>
+        </div>
+        {warnings.length > 0 && (
+          <div className="px-5 pb-3 space-y-1.5">
+            {warnings.map((w, i) => (
+              <p key={i} className="text-xs text-muted-foreground italic">{w}</p>
+            ))}
+          </div>
+        )}
+        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end">
+          <button
+            onClick={onCancel}
+            className="rounded-full border border-border bg-card px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            Keep checked
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-full bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+          >
+            Uncheck &amp; remove from stock
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatGrams(g: number): string {
+  const rounded = Math.round(g * 10) / 10;
+  return rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 === 0 ? 0 : 2)} kg` : `${rounded} g`;
 }

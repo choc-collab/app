@@ -24,7 +24,7 @@ export default function MarketingLayout({
               Getting started
             </Link>
             <Link
-              href="/app"
+              href="/today"
               className="btn-primary"
             >
               Open the app

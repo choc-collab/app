@@ -5,6 +5,7 @@ import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COAT
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
 import { computeShopKpis, EMPTY_SHOP_KPIS, type ShopKpis } from "@/lib/shopKpis";
+import { computeTodaySignals, type TodaySignals, type TodayProductInfo } from "@/lib/todaySignals";
 import {
   computeCommitStockDeltas,
   computeRestoreStockDeltas,
@@ -1098,12 +1099,16 @@ export async function saveProductionPlan(plan: Omit<ProductionPlan, "id"> & { id
   const completedAt = plan.status === "done"
     ? (plan.completedAt ?? now)
     : undefined;
+  // Drop any stale summary the moment a plan leaves "done" — when the user
+  // unchecks a step on an accidentally-completed batch, the next completion
+  // should regenerate a fresh summary rather than re-surface the old one.
+  const batchSummary = plan.status === "done" ? plan.batchSummary : undefined;
   if (plan.id) {
-    await db.productionPlans.update(plan.id, { ...plan, updatedAt: now, completedAt });
+    await db.productionPlans.update(plan.id, { ...plan, updatedAt: now, completedAt, batchSummary });
     return plan.id;
   }
   const batchNumber = plan.batchNumber ?? await generateBatchNumber(now);
-  return db.productionPlans.add({ ...plan, batchNumber, createdAt: now, updatedAt: now, completedAt } as ProductionPlan) as Promise<string>;
+  return db.productionPlans.add({ ...plan, batchNumber, createdAt: now, updatedAt: now, completedAt, batchSummary } as ProductionPlan) as Promise<string>;
 }
 
 export async function deleteProductionPlan(id: string) {
@@ -2849,6 +2854,25 @@ export function useFillingStockItems() {
   return useLiveQuery(() => db.fillingStock.toArray().then((items) => items.filter((s) => s.remainingG > 0)), [], []);
 }
 
+/** Aggregated stock totals per filling (live), summed from `fillingStock`
+ *  entries with remainingG > 0. Returns a map of fillingId →
+ *  { availableG, frozenG }. Fillings with neither available nor frozen stock
+ *  are absent from the map. */
+export function useFillingStockMap(): Map<string, { availableG: number; frozenG: number }> {
+  return useLiveQuery(async () => {
+    const items = await db.fillingStock.toArray();
+    const m = new Map<string, { availableG: number; frozenG: number }>();
+    for (const it of items) {
+      if (it.remainingG <= 0) continue;
+      const cur = m.get(it.fillingId) ?? { availableG: 0, frozenG: 0 };
+      if (it.frozen) cur.frozenG += it.remainingG;
+      else cur.availableG += it.remainingG;
+      m.set(it.fillingId, cur);
+    }
+    return m;
+  }, []) ?? new Map<string, { availableG: number; frozenG: number }>();
+}
+
 /** All filling stock entries for a specific filling with remaining > 0 */
 export function useFillingStockForFilling(fillingId: string | undefined) {
   return useLiveQuery(
@@ -3074,6 +3098,60 @@ export function useRecentSoldSales(limit = 10): Sale[] {
 export function useShopKpis(): ShopKpis {
   const sales = useAllSales();
   return computeShopKpis(sales, new Date()) ?? EMPTY_SHOP_KPIS;
+}
+
+/** Aggregated signals for the /today dashboard — in-progress batches,
+ *  expiring stock, low-stock products, and a 7-day shop-revenue window.
+ *  Backed by the same live queries used elsewhere; derivation lives in
+ *  `lib/todaySignals.ts`. */
+export function useTodaySignals(): TodaySignals {
+  const planProducts = useAllPlanProducts();
+  const plans = useProductionPlans();
+  const products = useProductsList();
+  const pendingShoppingCount = usePendingShoppingCount();
+  const sales = useAllSales();
+
+  const productMap = new Map<string, TodayProductInfo>();
+  for (const p of products) {
+    if (p.id) {
+      productMap.set(p.id, {
+        id: p.id,
+        name: p.name,
+        lowStockThreshold: p.lowStockThreshold,
+        shelfLifeWeeks: p.shelfLifeWeeks,
+      });
+    }
+  }
+
+  return computeTodaySignals({
+    now: new Date(),
+    planProducts,
+    plans,
+    products: productMap,
+    pendingShoppingCount,
+    sales,
+  });
+}
+
+/** Frozen pieces per product (live), summed from `planProducts.frozenQty`
+ *  across all done plans. Excludes batches marked `stockStatus === "gone"`
+ *  for symmetry with `useProductStockMap`. Returned values are always > 0
+ *  — products with no frozen pieces are simply absent from the map. */
+export function useProductFrozenMap(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    if (donePlans.length === 0) return new Map<string, number>();
+    const planIds = donePlans.map((p) => p.id!);
+    const batches = await db.planProducts.where("planId").anyOf(planIds).toArray();
+    const m = new Map<string, number>();
+    for (const pb of batches) {
+      if (pb.stockStatus === "gone") continue;
+      const frozen = pb.frozenQty ?? 0;
+      if (frozen <= 0) continue;
+      m.set(pb.productId, (m.get(pb.productId) ?? 0) + frozen);
+    }
+    return m;
+  }, []) ?? new Map<string, number>();
 }
 
 /** Available stock per product (live), derived from completed production plans.

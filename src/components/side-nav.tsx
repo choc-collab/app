@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useObservable } from "dexie-react-hooks";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { db, isCloudConfigured } from "@/lib/db";
 import { usePendingShoppingCount } from "@/lib/hooks";
 
@@ -61,7 +61,15 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
+/** Lookup: home-item href → SectionDef whose parent route matches it.
+ *  Used to inline-expand the active section beneath its parent in the nav.
+ *  Each SectionDef's `routes[0]` is its parent route (e.g. `/pantry`). */
+const SECTION_BY_HOME_HREF: Map<string, SectionDef> = new Map(
+  SECTIONS.map((s) => [s.routes[0], s] as const),
+);
+
 const HOME_ITEMS: NavItem[] = [
+  { href: "/today", label: "Today", icon: HomeIcon },
   { href: "/workshop", label: "Workshop", icon: WorkshopIcon },
   { href: "/pantry", label: "Pantry", icon: PantryIcon },
   { href: "/lab", label: "Lab", icon: FlaskIcon, disabled: true },
@@ -183,7 +191,7 @@ export function SideNav() {
       style={{ backgroundColor: "var(--color-nav)" }}
     >
       <Link
-        href="/app"
+        href="/today"
         title="Home"
         className="flex items-center gap-2 px-2 py-3 shrink-0 rounded-lg hover:bg-muted/60 transition-colors"
       >
@@ -204,27 +212,27 @@ export function SideNav() {
       </button>
 
       <div className="flex flex-col gap-1 p-2 pt-4 flex-1">
-        {activeSection ? (
-          <>
-            {/* Home — always available so testers can return to the main menu */}
-            <Link
-              href="/app"
-              title="Main menu"
-              className="flex items-center gap-3 px-2 py-2.5 rounded-lg transition-colors text-muted-foreground hover:text-foreground hover:bg-muted"
-            >
-              <HomeIcon className="w-5 h-5 shrink-0" />
-              <span className={`${labelClass} text-sm truncate`}>Main menu</span>
-            </Link>
-            {/* Section label */}
-            <span className={`${labelClass} px-2 pt-3 pb-1 text-xs font-semibold text-muted-foreground/60 uppercase tracking-wide truncate`}>
-              {activeSection.label}
-            </span>
-            {/* Section sub-items */}
-            {activeSection.items.map(renderItem)}
-          </>
-        ) : (
-          HOME_ITEMS.map(renderItem)
-        )}
+        {/* Top-level menu is always rendered. When the user navigates into
+            a section (e.g. /pantry, /products) we inline-expand that
+            section's sub-items beneath its parent — this is cheaper than
+            switching to a "section mode" because the user can still reach
+            any other top-level entry without an extra step. */}
+        {HOME_ITEMS.map((item) => {
+          const section = SECTION_BY_HOME_HREF.get(item.href);
+          const expanded = section && activeSection === section;
+          return (
+            <Fragment key={item.href}>
+              {renderItem(item)}
+              {expanded && (
+                <div className="ml-4 border-l border-border pl-1 flex flex-col gap-1">
+                  {section.items
+                    .filter((sub) => sub.href !== item.href)
+                    .map(renderItem)}
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
         {/* Shopping — always pinned at bottom of top block */}
         <div className="mt-auto pt-4">
           <Link

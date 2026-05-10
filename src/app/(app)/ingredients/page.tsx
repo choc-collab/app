@@ -7,8 +7,9 @@ import { useIngredients, saveIngredient, setIngredientLowStock, useIngredientCat
 import { ALLERGEN_LIST, DIET_LIST, costPerGram, allergenLabel, type Ingredient } from "@/types";
 import { Plus, Search, ChevronRight, ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
-import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, MultiSelectDropdown, LowStockFlagButton, StockBadge, GroupStockBadge } from "@/components/pantry";
+import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, MultiSelectDropdown, LowStockFlagButton, StockBadge, GroupStockBadge, ViewDensityToggle } from "@/components/pantry";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
+import { usePersistedDensity } from "@/lib/use-persisted-density";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 
 const VALID_TAGS = new Set<string>([...ALLERGEN_LIST, ...DIET_LIST]);
@@ -112,6 +113,8 @@ function IngredientsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [density, setDensity] = usePersistedDensity("ingredients");
+  const isCompact = density === "compact";
 
   useNShortcut(() => setShowAdd(true), showAdd);
 
@@ -472,6 +475,9 @@ function IngredientsTab() {
         </p>
       ) : (
         <div className="space-y-4">
+          <div className="flex justify-end">
+            <ViewDensityToggle value={density} onChange={setDensity} />
+          </div>
           <div className="flex justify-end gap-3">
             <button onClick={() => setCollapsedCategories(new Set(grouped.map((g) => g.category)))} className="text-xs text-muted-foreground">Collapse all</button>
             <button onClick={() => setCollapsedCategories(new Set())} className="text-xs text-muted-foreground">Expand all</button>
@@ -501,12 +507,12 @@ function IngredientsTab() {
                         <li
                           key={ing.id}
                           className={`rounded-lg border bg-card ${stockStatus === "out-of-stock" ? "border-status-alert-edge" : stockStatus === "low-stock" ? "border-status-warn-edge" : ing.archived ? "border-border/50 opacity-60" : "border-border"}`}
-                          style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}
+                          style={{ contentVisibility: "auto", containIntrinsicSize: isCompact ? "0 40px" : "0 64px" }}
                         >
                           <div className="flex items-center min-w-0">
                             <Link
                               href={`/ingredients/${encodeURIComponent(ing.id ?? '')}`}
-                              className="flex items-center gap-3 p-3 min-w-0 flex-1"
+                              className={`flex items-center gap-3 ${isCompact ? "px-3 py-1.5" : "p-3"} min-w-0 flex-1`}
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -516,34 +522,36 @@ function IngredientsTab() {
                                       <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>
                                     )}
                                   </h3>
-                                  {ing.commercialName && (
+                                  {!isCompact && ing.commercialName && (
                                     <span className="text-xs text-muted-foreground italic truncate">{ing.commercialName}</span>
                                   )}
                                   {!ing.archived && <StockBadge status={stockStatus} />}
                                 </div>
-                                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                  {ing.manufacturer && (
-                                    <span className="text-xs text-muted-foreground">{ing.manufacturer}</span>
-                                  )}
-                                  {ing.manufacturer && (hasComposition(ing) || ing.updatedAt) && (
-                                    <span className="text-muted-foreground/40 text-xs">·</span>
-                                  )}
-                                  {hasComposition(ing) ? (
-                                    <span className="text-[10px] font-medium text-success bg-success-muted px-1.5 py-0.5 rounded-full">composition ✓</span>
-                                  ) : (
-                                    <span className="text-[10px] text-muted-foreground/60">no composition</span>
-                                  )}
-                                  {hasPricing(ing) ? null : (
-                                    <span className="text-[10px] text-status-warn bg-status-warn-bg px-1.5 py-0.5 rounded-full">no pricing</span>
-                                  )}
-                                  {ing.updatedAt && (
-                                    <>
+                                {!isCompact && (
+                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                    {ing.manufacturer && (
+                                      <span className="text-xs text-muted-foreground">{ing.manufacturer}</span>
+                                    )}
+                                    {ing.manufacturer && (hasComposition(ing) || ing.updatedAt) && (
                                       <span className="text-muted-foreground/40 text-xs">·</span>
-                                      <span className="text-[10px] text-muted-foreground">{formatDate(ing.updatedAt)}</span>
-                                    </>
-                                  )}
-                                </div>
-                                {ing.allergens.filter((a) => VALID_TAGS.has(a)).length > 0 && (
+                                    )}
+                                    {hasComposition(ing) ? (
+                                      <span className="text-[10px] font-medium text-success bg-success-muted px-1.5 py-0.5 rounded-full">composition ✓</span>
+                                    ) : (
+                                      <span className="text-[10px] text-muted-foreground/60">no composition</span>
+                                    )}
+                                    {hasPricing(ing) ? null : (
+                                      <span className="text-[10px] text-status-warn bg-status-warn-bg px-1.5 py-0.5 rounded-full">no pricing</span>
+                                    )}
+                                    {ing.updatedAt && (
+                                      <>
+                                        <span className="text-muted-foreground/40 text-xs">·</span>
+                                        <span className="text-[10px] text-muted-foreground">{formatDate(ing.updatedAt)}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                                {!isCompact && ing.allergens.filter((a) => VALID_TAGS.has(a)).length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1">
                                     {ing.allergens.filter((a) => VALID_TAGS.has(a)).map((a) => (
                                       <span key={a} className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px]">

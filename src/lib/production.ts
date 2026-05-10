@@ -977,8 +977,11 @@ export function generateBatchSummary(params: {
     lines.push("─".repeat(48));
   }
 
-  // --- Effective shelf life per product (when previous batch fillings limit it) ---
-  if (prevEntries.length > 0 && productsMap && productFillingsMap && planProducts.length > 0) {
+  // --- Estimated shelf life per product ---
+  // Renders whenever any product has a shelf life defined, with a parenthetical
+  // note when a previous-batch filling reduces the effective value below the
+  // product's nominal shelf life.
+  if (productsMap && productFillingsMap && planProducts.length > 0) {
     const seenProducts = new Set<string>();
     const shelfLifeLines: string[] = [];
     for (const pb of planProducts) {
@@ -996,16 +999,18 @@ export function generateBatchSummary(params: {
       if (effectiveWeeks === null) continue;
       const productName = productNames.get(pb.productId) ?? "Unknown";
       const originalWeeks = parseFloat(product.shelfLifeWeeks);
+      const bestBy = new Date(completedAt.getTime() + effectiveWeeks * 7 * 24 * 60 * 60 * 1000)
+        .toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
       if (limitedByFillingId && effectiveWeeks < originalWeeks) {
         const limitingFilling = previousBatches?.[limitedByFillingId]?.fillingName ?? limitedByFillingId;
-        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  (reduced from ${originalWeeks} by ${limitingFilling})`);
+        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  ·  Best by: ${bestBy}  (reduced from ${originalWeeks} by ${limitingFilling})`);
       } else {
-        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks`);
+        shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  ·  Best by: ${bestBy}`);
       }
     }
     if (shelfLifeLines.length > 0) {
       lines.push("");
-      lines.push("EFFECTIVE SHELF LIFE");
+      lines.push("ESTIMATED SHELF LIFE");
       lines.push("─".repeat(48));
       for (const l of shelfLifeLines) lines.push(l);
       lines.push("─".repeat(48));

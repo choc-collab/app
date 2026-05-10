@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useProductionPlan } from "@/lib/hooks";
+import { useEffect, useRef, useState } from "react";
+import { useProductionPlan, saveProductionPlan } from "@/lib/hooks";
 import { useSpaId } from "@/lib/use-spa-id";
-import { ArrowLeft, Copy, Check } from "lucide-react";
+import { ArrowLeft, Copy, Check, StickyNote } from "lucide-react";
 import Link from "next/link";
 
 export default function BatchSummaryPage() {
@@ -12,6 +12,9 @@ export default function BatchSummaryPage() {
   const [copied, setCopied] = useState(false);
   const [backHref, setBackHref] = useState("/production");
   const [backLabel, setBackLabel] = useState("Back to batch");
+  const [notesInput, setNotesInput] = useState("");
+  const [notesSaved, setNotesSaved] = useState(false);
+  const notesHydratedFor = useRef<string | undefined>(undefined);
 
   const sanitizeBackHref = (value: string | null): string | null => {
     if (!value) return null;
@@ -26,6 +29,14 @@ export default function BatchSummaryPage() {
     else if (from) { setBackHref(from); setBackLabel("Back to product"); }
     else if (planId) { setBackHref(`/production/${planId}`); }
   }, [planId]);
+  // Hydrate the textarea once per plan so typing isn't clobbered by reactive
+  // re-renders from Dexie's live query.
+  useEffect(() => {
+    if (plan?.id && notesHydratedFor.current !== plan.id) {
+      setNotesInput(plan.notes ?? "");
+      notesHydratedFor.current = plan.id;
+    }
+  }, [plan?.id, plan?.notes]);
 
   if (!planId || !plan) {
     return (
@@ -57,6 +68,15 @@ export default function BatchSummaryPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  async function handleSaveNotes() {
+    if (!plan) return;
+    const trimmed = notesInput.trim();
+    if ((plan.notes ?? "") === trimmed) return;
+    await saveProductionPlan({ ...(plan as any), id: plan.id, notes: trimmed || undefined });
+    setNotesSaved(true);
+    setTimeout(() => setNotesSaved(false), 1500);
+  }
+
   return (
     <div>
       <div className="px-4 pt-6 pb-4">
@@ -78,6 +98,24 @@ export default function BatchSummaryPage() {
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
+      </div>
+
+      <div className="px-4 pb-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <StickyNote className="w-3.5 h-3.5" />
+            Notes
+          </div>
+          {notesSaved && <span className="text-[11px] text-muted-foreground">Saved</span>}
+        </div>
+        <textarea
+          value={notesInput}
+          onChange={(e) => setNotesInput(e.target.value)}
+          onBlur={handleSaveNotes}
+          placeholder="Add notes about this batch — observations, deviations, anything worth remembering…"
+          rows={3}
+          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+        />
       </div>
 
       <div className="px-4 pb-8">

@@ -37,9 +37,9 @@ test.describe("Shop", () => {
     await expect(page).toHaveURL(/\/shop\/?$/);
   });
 
-  test("main-menu Shop tile is enabled and navigates to the Shop landing", async ({ page }) => {
-    await page.goto("/app");
-    await page.getByRole("link", { name: /The Shop/ }).click();
+  test("side-nav Shop link navigates to the Shop landing", async ({ page }) => {
+    await page.goto("/today");
+    await page.getByRole("link", { name: "Shop" }).first().click();
     await expect(page).toHaveURL(/\/shop\/?$/);
     await expect(page.getByText(/Shop ·/)).toBeVisible();
   });

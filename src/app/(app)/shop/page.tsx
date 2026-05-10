@@ -24,6 +24,7 @@ import {
   voidPreparedSale,
 } from "@/lib/hooks";
 import { firstNSaleIds, groupPreparedSales, type SaleGroup } from "@/lib/saleGrouping";
+import { SaleQuantityStepper } from "@/components/sale-quantity-stepper";
 import type { ShopProductInfo } from "@/lib/shopColor";
 import { GIVE_AWAY_REASONS } from "@/types";
 import type { GiveAwayRecord, Packaging, Sale } from "@/types";
@@ -1243,11 +1244,12 @@ function PreparedGroupRow({
                 Only {group.count} available
               </span>
             )}
-            <GroupQuantityStepper
+            <SaleQuantityStepper
               value={sellQty}
               max={group.count}
               disabled={sellBusy}
               onChange={setSellQty}
+              testIdPrefix="shop-group-qty"
             />
             <button
               type="button"
@@ -1373,81 +1375,6 @@ function PreparedSubRow({ sale }: { sale: Sale }) {
   );
 }
 
-function GroupQuantityStepper({
-  value,
-  max,
-  disabled,
-  onChange,
-}: {
-  value: number;
-  max: number;
-  disabled?: boolean;
-  onChange: (next: number) => void;
-}) {
-  // Mirrors the fill-screen QuantityStepper — local buffer so the user can
-  // type a number (useful when a morning batch is, say, 40 boxes and the
-  // customer wants 30: typing beats holding the + button).
-  const [text, setText] = useState(String(value));
-  useEffect(() => {
-    setText(String(value));
-  }, [value]);
-
-  const decDisabled = disabled || value <= 1;
-  const incDisabled = disabled || value >= max;
-
-  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value;
-    setText(raw);
-    const n = parseInt(raw, 10);
-    if (!Number.isNaN(n) && n >= 1) onChange(n);
-  }
-
-  function handleBlur() {
-    const n = parseInt(text, 10);
-    if (Number.isNaN(n) || n < 1) setText(String(value));
-  }
-
-  return (
-    <div
-      className="flex items-center gap-0.5 rounded-full border border-border bg-card px-0.5"
-      role="group"
-      aria-label="Sell quantity"
-    >
-      <button
-        type="button"
-        aria-label="Decrease sell quantity"
-        disabled={decDisabled}
-        onClick={() => onChange(value - 1)}
-        className="w-6 h-6 flex items-center justify-center rounded-full text-sm text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-        data-testid="shop-group-qty-dec"
-      >
-        −
-      </button>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={1}
-        value={text}
-        onChange={handleInputChange}
-        onBlur={handleBlur}
-        disabled={disabled}
-        className="font-mono text-xs tabular-nums text-center bg-transparent border-0 focus:outline-none w-8 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none disabled:text-muted-foreground"
-        aria-label="Sell quantity"
-        data-testid="shop-group-qty-value"
-      />
-      <button
-        type="button"
-        aria-label="Increase sell quantity"
-        disabled={incDisabled}
-        onClick={() => onChange(value + 1)}
-        className="w-6 h-6 flex items-center justify-center rounded-full text-sm text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-        data-testid="shop-group-qty-inc"
-      >
-        +
-      </button>
-    </div>
-  );
-}
 
 function SetupEmptyState() {
   return (
