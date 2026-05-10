@@ -427,9 +427,37 @@ export interface UserPreferences {
   defaultFillMode: FillMode;
   facilityMayContain: string[];
   coatings: string[];
+  /** Brand identity used on labels, receipts, and other customer-facing surfaces.
+   *  Optional — when unset, label fields that bind to brand info render placeholders. */
+  brand?: Brand;
   /** Last app version for which the user saw (or was seeded past) the "What's new" banner. */
   lastSeenVersion?: string;
   updatedAt: Date;
+}
+
+/** A single named link on the brand profile (e.g. Instagram, Web, Email). */
+export interface BrandSocial {
+  label: string;
+  url: string;
+}
+
+/**
+ * Brand identity for label printing and other customer-facing output.
+ * All fields are optional so users can fill in only what's relevant to them.
+ */
+export interface Brand {
+  /** Trading / business name (e.g. "Atelier Choc"). */
+  name?: string;
+  /** Business address — free-form, may include multiple lines. */
+  address?: string;
+  /** Contact line — free-form, typically phone/email/web on one line. */
+  contact?: string;
+  /** Ordered list of named social/web links. */
+  socials?: BrandSocial[];
+  /** Logo image as a data URL (base64), same convention as Product.photo. */
+  logo?: string;
+  /** Optional business identifier (VAT, tax ID, company registration). */
+  vatNumber?: string;
 }
 
 export interface Mould {

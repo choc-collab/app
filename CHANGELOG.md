@@ -4,6 +4,11 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
+## [Unreleased]
+
+### Added
+- **Brand tab in Settings** — a new tab between Target Market and Printing where users configure their brand identity: logo upload (stored as base64 alongside Product photos), business name, multi-line address, contact line, optional VAT/business number, and a list of named links (Instagram, Web, etc.). Stored on the existing `userPreferences` record so it syncs via Dexie Cloud and is included in backups. Read-only summary view with an Edit button that opens the same draft/save/cancel flow as the Target Market tab; navigating away with unsaved changes prompts a confirm. Foundation for the upcoming label-template system — the label editor's `logo`, `company`, `contact`, and `qr` fields will read from this profile instead of hardcoded placeholders.
+
 ## [0.5.0] — 2026-05-10
 
 ### Added

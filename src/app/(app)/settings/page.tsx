@@ -3,8 +3,8 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/page-header";
 import { exportBackup, importBackup, clearAllData } from "@/lib/backup";
-import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames } from "@/lib/hooks";
-import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, type CurrencyCode, type MarketRegion, type FillMode } from "@/types";
+import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames, useBrand, setBrand } from "@/lib/hooks";
+import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, type CurrencyCode, type MarketRegion, type FillMode, type Brand, type BrandSocial } from "@/types";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
 import { isCloudConfigured } from "@/lib/db";
@@ -16,17 +16,19 @@ import { makeIngredientImportConfig, getExistingIngredientIndex, exportIngredien
 import type { Ingredient } from "@/types";
 
 type ImportState = "idle" | "confirm" | "importing" | "done" | "error";
-type Tab = "backup" | "import" | "market" | "printing" | "demo";
+type Tab = "backup" | "import" | "market" | "brand" | "printing" | "demo";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("backup");
   const [marketDirty, setMarketDirty] = useState(false);
+  const [brandDirty, setBrandDirty] = useState(false);
   const marketRegion = useMarketRegion();
   const currency = useCurrency();
   const facilityMayContain = useFacilityMayContain();
   const defaultFillMode = useDefaultFillMode();
+  const brand = useBrand();
 
-  const anyDirty = marketDirty;
+  const anyDirty = marketDirty || brandDirty;
 
   // Guard page-level navigation (side nav links, browser close/refresh)
   useNavigationGuard(anyDirty);
@@ -36,6 +38,7 @@ export default function SettingsPage() {
     if (anyDirty) {
       if (!window.confirm("You have unsaved changes. Leave without saving?")) return;
       setMarketDirty(false);
+      setBrandDirty(false);
     }
     setActiveTab(tab);
   }
@@ -110,6 +113,12 @@ export default function SettingsPage() {
           Target Market
         </button>
         <button
+          onClick={() => switchTab("brand")}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "brand" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+        >
+          Brand
+        </button>
+        <button
           onClick={() => switchTab("printing")}
           className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "printing" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
@@ -141,6 +150,8 @@ export default function SettingsPage() {
           <ImportTab />
         ) : activeTab === "market" ? (
           <PreferencesTab marketRegion={marketRegion} onRegionChange={setMarketRegion} currency={currency} onCurrencyChange={setCurrency} facilityMayContain={facilityMayContain} onMayContainChange={setFacilityMayContain} defaultFillMode={defaultFillMode} onFillModeChange={setDefaultFillMode} onDirtyChange={setMarketDirty} />
+        ) : activeTab === "brand" ? (
+          <BrandTab brand={brand} onBrandChange={setBrand} onDirtyChange={setBrandDirty} />
         ) : activeTab === "printing" ? (
           <LabelPrinterSection />
         ) : activeTab === "demo" ? (
@@ -983,6 +994,325 @@ function PreferencesTab({
       </section>
 
       {/* Save / Cancel */}
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          className="flex-1 rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium"
+        >
+          Save
+        </button>
+        <button
+          onClick={handleCancel}
+          className="rounded-full border border-border px-4 py-2 text-sm"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BrandTab({
+  brand,
+  onBrandChange,
+  onDirtyChange,
+}: {
+  brand: Brand;
+  onBrandChange: (brand: Brand) => Promise<void>;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Brand>(brand);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const isDirty = editing && JSON.stringify(draft) !== JSON.stringify(brand);
+  useEffect(() => { onDirtyChange(isDirty); }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function startEditing() {
+    setDraft(brand);
+    setEditing(true);
+  }
+
+  function handleCancel() {
+    setEditing(false);
+  }
+
+  async function handleSave() {
+    const cleaned: Brand = {
+      ...draft,
+      socials: (draft.socials ?? []).filter(s => s.label.trim() || s.url.trim()),
+    };
+    await onBrandChange(cleaned);
+    setEditing(false);
+  }
+
+  function handleLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setDraft(d => ({ ...d, logo: reader.result as string }));
+    reader.readAsDataURL(file);
+  }
+
+  function removeLogo() {
+    setDraft(d => ({ ...d, logo: undefined }));
+  }
+
+  function updateSocial(idx: number, patch: Partial<BrandSocial>) {
+    setDraft(d => ({
+      ...d,
+      socials: (d.socials ?? []).map((s, i) => i === idx ? { ...s, ...patch } : s),
+    }));
+  }
+
+  function addSocial() {
+    setDraft(d => ({ ...d, socials: [...(d.socials ?? []), { label: "", url: "" }] }));
+  }
+
+  function removeSocial(idx: number) {
+    setDraft(d => ({ ...d, socials: (d.socials ?? []).filter((_, i) => i !== idx) }));
+  }
+
+  useEffect(() => {
+    if (!editing) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") handleCancel();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editing]);
+
+  const active = editing ? draft : brand;
+  const hasAnyValue = !!(active.name || active.address || active.contact || active.logo || active.vatNumber || (active.socials ?? []).length > 0);
+
+  // ---- Read-only view ----
+  if (!editing) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-primary">Brand</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Logo, business details, and links printed on labels and other customer-facing output.
+            </p>
+          </div>
+          <button
+            onClick={startEditing}
+            className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Edit
+          </button>
+        </div>
+
+        {!hasAnyValue ? (
+          <div className="rounded-lg border border-dashed border-border bg-card px-4 py-6 text-center">
+            <p className="text-sm text-muted-foreground">No brand info set yet.</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">Add it to populate logo, company, and contact fields on labels.</p>
+          </div>
+        ) : (
+          <>
+            {active.logo && (
+              <div className="rounded-lg border border-border bg-card px-4 py-3">
+                <p className="text-sm text-muted-foreground mb-2">Logo</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={active.logo} alt="Brand logo" className="max-h-24 max-w-[12rem] object-contain" />
+              </div>
+            )}
+
+            <div className="rounded-lg border border-border bg-card divide-y divide-border">
+              {active.name && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Business name</span>
+                  <span className="text-sm font-medium text-right">{active.name}</span>
+                </div>
+              )}
+              {active.address && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Address</span>
+                  <span className="text-sm font-medium text-right whitespace-pre-line">{active.address}</span>
+                </div>
+              )}
+              {active.contact && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Contact</span>
+                  <span className="text-sm font-medium text-right">{active.contact}</span>
+                </div>
+              )}
+              {active.vatNumber && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">VAT / business no.</span>
+                  <span className="text-sm font-medium text-right">{active.vatNumber}</span>
+                </div>
+              )}
+            </div>
+
+            {(active.socials ?? []).length > 0 && (
+              <div className="rounded-lg border border-border bg-card px-4 py-3">
+                <p className="text-sm text-muted-foreground mb-2">Links</p>
+                <ul className="space-y-1">
+                  {(active.socials ?? []).map((s, i) => (
+                    <li key={i} className="flex justify-between gap-4 text-sm">
+                      <span className="text-muted-foreground">{s.label || "—"}</span>
+                      <span className="font-medium text-right break-all">{s.url}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ---- Edit mode ----
+  const draftSocials = draft.socials ?? [];
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-primary">Logo</h2>
+        <p className="text-xs text-muted-foreground">
+          Uploaded as an image and embedded into labels. PNG with a transparent background works best.
+        </p>
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          {draft.logo ? (
+            <div className="flex items-start gap-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={draft.logo} alt="Brand logo preview" className="max-h-24 max-w-[12rem] object-contain border border-border rounded bg-white p-1" />
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-muted"
+                >
+                  Replace
+                </button>
+                <button
+                  type="button"
+                  onClick={removeLogo}
+                  className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-status-warn hover:bg-muted"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-2 rounded-full border border-dashed border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
+            >
+              <Upload className="w-4 h-4" />
+              Upload logo
+            </button>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            onChange={handleLogoFile}
+            className="hidden"
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-primary">Business details</h2>
+        <p className="text-xs text-muted-foreground">
+          Business name and address are required on EU FIC retail labels. The contact line is optional.
+        </p>
+        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">Business name</label>
+            <input
+              type="text"
+              value={draft.name ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, name: e.target.value }))}
+              placeholder="e.g. Atelier Choc"
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">Address</label>
+            <textarea
+              value={draft.address ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, address: e.target.value }))}
+              placeholder={"e.g.\nPrinsengracht 12\n1015 DK Amsterdam"}
+              rows={3}
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm resize-y"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">Contact line</label>
+            <input
+              type="text"
+              value={draft.contact ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, contact: e.target.value }))}
+              placeholder="e.g. atelierchoc.nl · hi@atelierchoc.nl"
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">VAT / business number <span className="text-muted-foreground font-normal">(optional)</span></label>
+            <input
+              type="text"
+              value={draft.vatNumber ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, vatNumber: e.target.value }))}
+              placeholder="e.g. NL123456789B01"
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-primary">Links</h2>
+        <p className="text-xs text-muted-foreground">
+          Socials, website, or any other URL you want to surface on labels or QR codes. The label decides which ones to render.
+        </p>
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          {draftSocials.length === 0 && (
+            <p className="text-sm text-muted-foreground">No links yet.</p>
+          )}
+          {draftSocials.map((s, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={s.label}
+                onChange={(e) => updateSocial(i, { label: e.target.value })}
+                placeholder="Label (e.g. Instagram)"
+                className="w-1/3 rounded-md border border-border bg-card px-3 py-2 text-sm"
+              />
+              <input
+                type="text"
+                value={s.url}
+                onChange={(e) => updateSocial(i, { url: e.target.value })}
+                placeholder="URL or @handle"
+                className="flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => removeSocial(i)}
+                aria-label="Remove link"
+                className="shrink-0 rounded-full border border-border p-2 text-muted-foreground hover:text-status-warn hover:bg-muted"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addSocial}
+            className="rounded-full border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+          >
+            + Add link
+          </button>
+        </div>
+      </section>
+
       <div className="flex gap-2">
         <button
           onClick={handleSave}
