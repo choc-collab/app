@@ -42,6 +42,8 @@ export interface BackupData {
   fillingStock?: unknown[];
   fillingCategories?: unknown[];
   ingredientCategories?: unknown[];
+  sales?: unknown[];
+  giveaways?: unknown[];
 
   // --- Legacy key compat (older backups written before the Product/Filling rename) ---
   // These are accepted on import and remapped to the new tables above.
@@ -94,6 +96,8 @@ async function buildBackupData(): Promise<BackupData> {
     fillingStock,
     fillingCategories,
     ingredientCategories,
+    sales,
+    giveaways,
   ] = await Promise.all([
     db.ingredients.toArray(),
     db.products.toArray(),
@@ -127,6 +131,8 @@ async function buildBackupData(): Promise<BackupData> {
     db.fillingStock.toArray(),
     db.fillingCategories.toArray(),
     db.ingredientCategories.toArray(),
+    db.sales.toArray(),
+    db.giveaways.toArray(),
   ]);
 
   return {
@@ -165,6 +171,8 @@ async function buildBackupData(): Promise<BackupData> {
     fillingStock,
     fillingCategories,
     ingredientCategories,
+    sales,
+    giveaways,
   };
 }
 
@@ -184,6 +192,7 @@ function hasAnyData(data: BackupData): boolean {
     data.collectionProducts ?? [], data.collectionPackagings ?? [],
     data.collectionPricingSnapshots ?? [], data.fillingStock ?? [],
     data.fillingCategories ?? [], data.ingredientCategories ?? [],
+    data.sales ?? [], data.giveaways ?? [],
   ];
   return arrays.some((a) => Array.isArray(a) && a.length > 0);
 }
@@ -257,6 +266,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
       db.experiments, db.experimentIngredients, db.shoppingItems,
       db.collections, db.collectionProducts, db.collectionPackagings, db.collectionPricingSnapshots, db.fillingStock,
       db.fillingCategories, db.ingredientCategories,
+      db.sales, db.giveaways,
     ],
     async () => {
       await Promise.all([
@@ -272,6 +282,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
         db.collections.clear(), db.collectionProducts.clear(),
         db.collectionPackagings.clear(), db.collectionPricingSnapshots.clear(),
         db.fillingStock.clear(), db.fillingCategories.clear(), db.ingredientCategories.clear(),
+        db.sales.clear(), db.giveaways.clear(),
       ]);
     },
   );
@@ -446,6 +457,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const rawFillingCategories       = data.fillingCategories       ?? [];
   const rawIngredientCategories    = data.ingredientCategories    ?? [];
   const rawFillingComponents       = data.fillingComponents       ?? [];
+  const rawSales                   = data.sales                   ?? [];
+  const rawGiveaways               = data.giveaways               ?? [];
 
   // Apply field-level migrations for backups written pre-rename.
   const ingredients              = rawIngredients as never[];
@@ -479,6 +492,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const fillingStock             = applyAll<never>(rawFillingStock, migrateFillingStock);
   const fillingCategories        = rawFillingCategories as never[];
   const ingredientCategories     = rawIngredientCategories as never[];
+  const sales                    = rawSales as never[];
+  const giveaways                = rawGiveaways as never[];
 
   // Validate filling-component refs against the fillings list. A backup that
   // names a fillingId/childFillingId without including the corresponding row
@@ -540,6 +555,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
       db.experiments, db.experimentIngredients, db.shoppingItems,
       db.collections, db.collectionProducts, db.collectionPackagings, db.collectionPricingSnapshots, db.fillingStock,
       db.fillingCategories, db.ingredientCategories,
+      db.sales, db.giveaways,
     ],
     async () => {
       await Promise.all([
@@ -555,6 +571,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         db.collections.clear(), db.collectionProducts.clear(),
         db.collectionPackagings.clear(), db.collectionPricingSnapshots.clear(),
         db.fillingStock.clear(), db.fillingCategories.clear(), db.ingredientCategories.clear(),
+        db.sales.clear(), db.giveaways.clear(),
       ]);
       await Promise.all([
         ingredients.length              && db.ingredients.bulkAdd(ingredients),
@@ -589,6 +606,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         fillingStock.length             && db.fillingStock.bulkAdd(fillingStock),
         fillingCategories.length        && db.fillingCategories.bulkAdd(fillingCategories),
         ingredientCategories.length     && db.ingredientCategories.bulkAdd(ingredientCategories),
+        sales.length                    && db.sales.bulkAdd(sales),
+        giveaways.length                && db.giveaways.bulkAdd(giveaways),
       ]);
     },
   );

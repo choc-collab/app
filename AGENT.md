@@ -171,7 +171,7 @@ When you add a new Dexie table, you must update `backup.ts` in the same session:
 3. **`importBackup`** — add the table to the transaction table list, the `clear()` list, and the `bulkAdd` list
 
 **Coverage checklist** — all tables currently handled in backup/restore:
-`ingredients`, `products`, `productCategories`, `fillings`, `fillingCategories`, `ingredientCategories`, `productFillings`, `fillingIngredients`, `moulds`, `productionPlans`, `planProducts`, `planStepStatus`, `settings`, `userPreferences`, `productFillingHistory`, `ingredientPriceHistory`, `coatingChocolateMappings`, `productCostSnapshots`, `packaging`, `packagingOrders`, `decorationMaterials`, `decorationCategories`, `shellDesigns`, `experiments`, `experimentIngredients`, `shoppingItems`, `collections`, `collectionProducts`, `collectionPackagings`, `collectionPricingSnapshots`, `fillingStock`
+`ingredients`, `products`, `productCategories`, `fillings`, `fillingCategories`, `ingredientCategories`, `productFillings`, `fillingIngredients`, `moulds`, `productionPlans`, `planProducts`, `planStepStatus`, `settings`, `userPreferences`, `productFillingHistory`, `ingredientPriceHistory`, `coatingChocolateMappings`, `productCostSnapshots`, `packaging`, `packagingOrders`, `decorationMaterials`, `decorationCategories`, `shellDesigns`, `experiments`, `experimentIngredients`, `shoppingItems`, `collections`, `collectionProducts`, `collectionPackagings`, `collectionPricingSnapshots`, `fillingStock`, `sales`, `giveaways`
 
 ### Data-loss protections
 Three layered safeguards work together so neither a browser eviction, a misclick, nor a schema upgrade can silently wipe a user's data:
