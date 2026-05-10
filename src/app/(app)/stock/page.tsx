@@ -937,6 +937,7 @@ function FillingStockTab() {
           <select
             value={addFillingId}
             onChange={(e) => setAddFillingId(e.target.value)}
+            aria-label="Select filling"
             className="input text-sm"
           >
             <option value="">Select filling…</option>

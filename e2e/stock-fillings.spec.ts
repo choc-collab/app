@@ -29,7 +29,7 @@ test.describe("Stock — Fillings tab", () => {
     await page.getByRole("button", { name: "Add filling stock" }).click();
 
     // Select filling and fill amount
-    await page.getByRole("combobox").selectOption({ label: "Test Praline" });
+    await page.getByLabel("Select filling").selectOption({ label: "Test Praline" });
     await page.getByPlaceholder("Amount in grams").fill("250");
     await page.getByRole("button", { name: "Add", exact: true }).click();
 
@@ -53,7 +53,7 @@ test.describe("Stock — Fillings tab", () => {
     await page.goto("/stock");
     await page.getByRole("button", { name: "Fillings" }).click();
     await page.getByRole("button", { name: "Add filling stock" }).click();
-    await page.getByRole("combobox").selectOption({ label: "Adjust Test" });
+    await page.getByLabel("Select filling").selectOption({ label: "Adjust Test" });
     await page.getByPlaceholder("Amount in grams").fill("300");
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.locator("text=300g").first()).toBeVisible();
@@ -83,7 +83,7 @@ test.describe("Stock — Fillings tab", () => {
     await page.goto("/stock");
     await page.getByRole("button", { name: "Fillings" }).click();
     await page.getByRole("button", { name: "Add filling stock" }).click();
-    await page.getByRole("combobox").selectOption({ label: "Discard Test" });
+    await page.getByLabel("Select filling").selectOption({ label: "Discard Test" });
     await page.getByPlaceholder("Amount in grams").fill("100");
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByText("Discard Test")).toBeVisible();
@@ -127,7 +127,7 @@ test.describe("Stock — Fillings tab", () => {
     // Add stock for both
     for (const name of ["Hazelnut Praline", "Mango Gel"]) {
       await page.getByRole("button", { name: "Add filling stock" }).click();
-      await page.getByRole("combobox").selectOption({ label: name });
+      await page.getByLabel("Select filling").selectOption({ label: name });
       await page.getByPlaceholder("Amount in grams").fill("200");
       await page.getByRole("button", { name: "Add", exact: true }).click();
     }
