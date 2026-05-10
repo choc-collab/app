@@ -85,6 +85,14 @@
 /fillings/:id/*           /fillings/_spa/:splat           200
 /fillings/*/              /fillings/_spa/                 200
 /fillings/:id             /fillings/_spa/                 200
+# Label templates — `/labels/new` is a static sibling of the dynamic [id]
+# route, so the literal pass-through must come BEFORE the catch-all.
+/labels/new/*             /labels/new/:splat              200
+/labels/new/              /labels/new/                    200
+/labels/new               /labels/new/                    200
+/labels/:id/*             /labels/_spa/:splat             200
+/labels/*/                /labels/_spa/                   200
+/labels/:id               /labels/_spa/                   200
 /ingredients/:id/*        /ingredients/_spa/:splat        200
 /ingredients/*/           /ingredients/_spa/              200
 /ingredients/:id          /ingredients/_spa/              200

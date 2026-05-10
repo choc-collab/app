@@ -411,13 +411,11 @@ describe("createBlankTemplate", () => {
     const now = new Date("2026-05-10T12:00:00Z");
     const tpl = createBlankTemplate({
       name: "Box of 9",
-      application: "production-batch",
       width: 89,
       height: 36,
       now,
     });
     expect(tpl.name).toBe("Box of 9");
-    expect(tpl.application).toBe("production-batch");
     expect(tpl.width).toBe(89);
     expect(tpl.height).toBe(36);
     expect(tpl.fields).toEqual([]);
@@ -425,30 +423,9 @@ describe("createBlankTemplate", () => {
     expect(tpl.updatedAt).toBe(now);
   });
 
-  it("defaults regime to EU when not supplied", () => {
-    const tpl = createBlankTemplate({
-      name: "x",
-      application: "filling-batch",
-      width: 50,
-      height: 30,
-    });
-    expect(tpl.regime).toBe("EU");
-  });
-
-  it("respects an explicit regime override", () => {
-    const tpl = createBlankTemplate({
-      name: "internal sticker",
-      application: "filling-batch",
-      width: 50,
-      height: 30,
-      regime: "none",
-    });
-    expect(tpl.regime).toBe("none");
-  });
-
   it("returns a fresh fields array on each call (no shared reference)", () => {
-    const a = createBlankTemplate({ name: "a", application: "production-batch", width: 50, height: 30 });
-    const b = createBlankTemplate({ name: "b", application: "production-batch", width: 50, height: 30 });
+    const a = createBlankTemplate({ name: "a", width: 50, height: 30 });
+    const b = createBlankTemplate({ name: "b", width: 50, height: 30 });
     expect(a.fields).not.toBe(b.fields);
   });
 });

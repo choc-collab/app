@@ -10,7 +10,8 @@ import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
 import { isCloudConfigured } from "@/lib/db";
 import { getStorageStatus, requestPersistentStorage, formatBytes, type StorageStatus } from "@/lib/persistent-storage";
 import { readLastSnapshotMetadata, dismissLastSnapshotMetadata, type LastSnapshotMetadata } from "@/lib/upgrade-snapshot";
-import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive } from "lucide-react";
+import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive, Tags, ChevronRight } from "lucide-react";
+import Link from "next/link";
 import { CSVImport } from "@/components/csv-import";
 import { makeIngredientImportConfig, getExistingIngredientIndex, exportIngredientsCSV } from "@/lib/csv-import-ingredients";
 import type { Ingredient } from "@/types";
@@ -153,7 +154,10 @@ export default function SettingsPage() {
         ) : activeTab === "brand" ? (
           <BrandTab brand={brand} onBrandChange={setBrand} onDirtyChange={setBrandDirty} />
         ) : activeTab === "printing" ? (
-          <LabelPrinterSection />
+          <div className="space-y-6">
+            <LabelTemplatesLink />
+            <LabelPrinterSection />
+          </div>
         ) : activeTab === "demo" ? (
           <DemoTab />
         ) : null}
@@ -502,6 +506,30 @@ function DemoTab() {
       <DemoDataSection />
       <ClearAllDataSection />
     </div>
+  );
+}
+
+function LabelTemplatesLink() {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-primary">Label templates</h2>
+      <Link
+        href="/labels"
+        className="group block rounded-lg border border-border bg-card p-4 hover:bg-muted/40 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <Tags className="w-5 h-5 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Design printable label templates</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Drag-and-drop editor for box stickers, filling labels, and retail boxes. Templates are
+              stored on this device (and synced via Dexie Cloud if configured) and reused at print time.
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground shrink-0" />
+        </div>
+      </Link>
+    </section>
   );
 }
 

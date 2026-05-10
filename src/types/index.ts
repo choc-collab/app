@@ -1335,15 +1335,6 @@ export type LabelFieldType =
   | "divider"   // horizontal rule
   | "image";    // user-uploaded image
 
-/** Source surface that a template targets. Drives source-picker UI and the
- *  resolver in piece 2. Adding a new application is additive — the editor's
- *  field rail filters by application but otherwise shares one engine. */
-export type LabelApplication = "production-batch" | "filling-batch" | "collection-package";
-
-/** Regulatory regime used by the in-editor linter. `MarketRegion` covers the
- *  declared regulatory frameworks; `"none"` opts out (e.g. internal stickers). */
-export type LabelRegime = MarketRegion | "none";
-
 /**
  * Per-field formatting and content options. A single bag of optional keys —
  * each renderer picks the keys it cares about and ignores the rest. Mirrors
@@ -1363,6 +1354,11 @@ export interface LabelFieldProps {
   italic?: boolean;
   /** Free-text content. Used by `text`. */
   text?: string;
+  /** Image source as a data URL (base64). Used by `image`. */
+  image?: string;
+  /** Override URL encoded into the QR code. Used by `qr`. When unset, falls
+   *  back to the brand's first social/web link, then to an empty placeholder. */
+  qrUrl?: string;
 }
 
 /**
@@ -1388,6 +1384,12 @@ export interface LabelField {
  * A user-designed label template. Persisted in the `labelTemplates` Dexie
  * table; rendered against a resolved `LabelSource` at print time.
  *
+ * Templates are deliberately fungible — they aren't pinned to a specific
+ * source kind or regulatory framework. The user designs them however they
+ * want, and at print time chooses which template to use against which source.
+ * Market-specific behaviour (which nutrients render in the nutrition table,
+ * etc.) is driven by the global `userPreferences.marketRegion` setting.
+ *
  * Coordinates and dimensions are stored in millimetres so the same template
  * renders identically on screen, on the OS print dialog, and on a future
  * server-side PDF generator.
@@ -1395,12 +1397,14 @@ export interface LabelField {
 export interface LabelTemplate {
   id?: string;
   name: string;
-  application: LabelApplication;
   /** Physical label dimensions in millimetres. */
   width: number;
   height: number;
-  /** Linter regime (defaults to the user's MarketRegion at create time). */
-  regime: LabelRegime;
+  /** Number of product pieces this label represents. The `weight` and
+   *  `subtitle` renderers multiply `LabelContext.perCavityWeightG` by this
+   *  value so a "Box of 9" template prints "90g" rather than the per-piece
+   *  weight. Defaults to 1 (single-piece label) when omitted. */
+  piecesPerLabel?: number;
   fields: LabelField[];
   createdAt: Date;
   updatedAt: Date;
@@ -1420,23 +1424,83 @@ export type LabelSource =
   | { kind: "filling-batch"; stockId: string }
   | { kind: "collection-package"; collectionId: string; packagingId: string };
 
+/**
+ * One ingredient line in a resolved label context. Ordered position in
+ * `LabelContext.ingredients` is significant (descending by mass per cavity)
+ * so renderers can produce an EU-FIC-compliant ingredient list with no
+ * additional sorting.
+ */
+export interface LabelContextIngredient {
+  /** Display name as printed on the label (e.g. "milk*", "yuzu juice (5%)"). */
+  name: string;
+  /** Allergen ids carried by this ingredient (e.g. ["milk", "soy"]).
+   *  Renderers use this to bold the token inside the rendered list. */
+  allergens: string[];
+  /** Grams contributed by this ingredient per single product (one cavity).
+   *  Used by editor diagnostics; renderers normally consume `name` + `allergens` only. */
+  amountG: number;
+}
+
+/**
+ * Normalised, renderer-ready data resolved from a `LabelSource`. The label
+ * editor and print pipeline both render templates against this shape — never
+ * directly against Product / PlanProduct / Filling rows. Keeps the renderer
+ * layer pure and source-agnostic, and lets us add a new `LabelSource` kind
+ * later without touching the renderers themselves.
+ *
+ * "Per cavity" / "per piece" semantics: every numeric atom on this object is
+ * scoped to a *single product unit* (one cavity, one filling batch row, one
+ * box). Renderers that represent N pieces on one label (e.g. a box of 9)
+ * scale the per-cavity values themselves.
+ */
+export interface LabelContext {
+  source: LabelSource;
+  /** Customer-facing name (Product.name for production-batch, Filling.name for
+   *  filling-batch, Collection.name for collection-package). */
+  name: string;
+  /** Weight of one product unit in grams. */
+  perCavityWeightG: number;
+  /** Total pieces in scope of this resolution. For production-batch this is
+   *  `actualYield` (or `quantity × cavities` if the plan hasn't recorded a
+   *  measured yield yet) so users can see how many labels make sense. */
+  totalCavityCount: number;
+  /** Ingredients ordered by mass per cavity, descending. */
+  ingredients: LabelContextIngredient[];
+  /** Aggregated allergens declared on any ingredient — unique, sorted. */
+  allergens: string[];
+  /** Facility "may contain" advisories from `userPreferences.facilityMayContain`. */
+  mayContain: string[];
+  /** Aggregated nutrition per 100g, market-aware via the existing nutrition
+   *  pipeline. Empty `{}` when no underlying ingredient carries nutrition data. */
+  nutritionPer100g: import("@/lib/nutrition").NutritionData;
+  /** Best-before computed from `ProductionPlan.completedAt + Product.shelfLifeWeeks`,
+   *  or null when either is missing. */
+  bestBefore: Date | null;
+  /** Batch number stamped on the source plan. Empty string when not yet assigned. */
+  batchNumber: string;
+  /** Production date — `ProductionPlan.completedAt` when the plan is done, else null. */
+  producedAt: Date | null;
+  /** Shell origin / cocoa percentage line, derived from
+   *  `Product.shellIngredientId → Ingredient.commercialName`. Empty when no shell. */
+  origin: string;
+  /** Resolver-time warnings (e.g. "no default mould — weight unavailable").
+   *  Surfaced by the editor preview and the linter. */
+  warnings: string[];
+}
+
 /** Factory for a blank template. Pure — no DB access. Used by the new-template
  *  flow to seed the editor with sensible defaults; the caller persists. */
 export function createBlankTemplate(input: {
   name: string;
-  application: LabelApplication;
   width: number;
   height: number;
-  regime?: LabelRegime;
   now?: Date;
 }): Omit<LabelTemplate, "id"> {
   const now = input.now ?? new Date();
   return {
     name: input.name,
-    application: input.application,
     width: input.width,
     height: input.height,
-    regime: input.regime ?? "EU",
     fields: [],
     createdAt: now,
     updatedAt: now,
