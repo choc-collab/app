@@ -47,7 +47,7 @@
     "dexie-react-hooks": "^4.4.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.11.0",
-    "next": "^16.2.4",
+    "next": "^16.2.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.5.0"
