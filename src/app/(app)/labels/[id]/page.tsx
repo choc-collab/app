@@ -14,7 +14,8 @@ import {
   useMarketRegion,
 } from "@/lib/hooks";
 import { useLabelContext } from "@/lib/labelContext";
-import { renderField, FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, type LabelFieldGroup } from "@/lib/labelFields";
+import { FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, type LabelFieldGroup } from "@/lib/labelFields";
+import { renderTemplateSvg } from "@/lib/labelSvg";
 import { lintTemplate, summariseLint, type LintWarning } from "@/lib/labelLinter";
 import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelFieldProps } from "@/types";
 
@@ -434,6 +435,7 @@ function Canvas({
             boxShadow: "0 6px 18px rgba(0,0,0,0.06)",
           }}
         >
+          <CanvasSvg tpl={tpl} context={context} brand={brand} marketRegion={marketRegion} />
           {tpl.fields.map((f) => (
             <FieldNode
               key={f.id}
@@ -442,9 +444,6 @@ function Canvas({
               px={px}
               selected={sel === f.id}
               onSelect={() => setSel(f.id)}
-              context={context}
-              brand={brand}
-              marketRegion={marketRegion}
               updateLocal={updateFieldLocal}
               commitCurrent={commitCurrent}
             />
@@ -455,17 +454,43 @@ function Canvas({
   );
 }
 
+/**
+ * Visual layer of the canvas — one SVG produced by the pure renderer in
+ * `labelSvg.ts`, mounted via `dangerouslySetInnerHTML` and sized to fill the
+ * canvas. Pointer events pass through to the React overlay layer above.
+ *
+ * Memoised on the inputs that actually change the rendered output so dragging
+ * a field doesn't re-serialise the whole SVG on every pointermove tick.
+ */
+function CanvasSvg({
+  tpl, context, brand, marketRegion,
+}: {
+  tpl: LabelTemplate;
+  context: ReturnType<typeof useLabelContext> extends infer T ? (T extends undefined ? null : NonNullable<T> | null) : null;
+  brand: ReturnType<typeof useBrand>;
+  marketRegion: ReturnType<typeof useMarketRegion>;
+}) {
+  const svg = useMemo(
+    () => renderTemplateSvg(tpl, context ?? null, brand, { marketRegion, sizing: "fill" }),
+    [tpl, context, brand, marketRegion],
+  );
+  return (
+    <div
+      aria-hidden
+      style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
 function FieldNode({
-  field, tpl, px, selected, onSelect, context, brand, marketRegion, updateLocal, commitCurrent,
+  field, tpl, px, selected, onSelect, updateLocal, commitCurrent,
 }: {
   field: LabelField;
   tpl: LabelTemplate;
   px: number;
   selected: boolean;
   onSelect: () => void;
-  context: Parameters<typeof renderField>[0]["context"];
-  brand: Parameters<typeof renderField>[0]["brand"];
-  marketRegion: ReturnType<typeof useMarketRegion>;
   updateLocal: (id: string, patch: Partial<LabelField>) => void;
   commitCurrent: () => void;
 }) {
@@ -516,6 +541,10 @@ function FieldNode({
     target.addEventListener("pointercancel", onUp);
   }
 
+  // The field content is painted by the underlying <CanvasSvg>. This div is
+  // a transparent hit-target that handles selection, drag, and the resize
+  // affordance. Keeping the interaction layer in React (rather than SVG) lets
+  // the existing pointer-capture drag implementation continue working as-is.
   return (
     <div
       onPointerDown={(e) => startInteraction(e, "move")}
@@ -531,12 +560,9 @@ function FieldNode({
         touchAction: "none",
         outline: selected ? "1.5px solid #1f6feb" : undefined,
         outlineOffset: selected ? 3 : undefined,
-        padding: 1,
+        background: "transparent",
       }}
     >
-      <div style={{ width: "100%", height: "100%", overflow: "hidden", pointerEvents: "none" }}>
-        {renderField({ field, context, brand, template: tpl, marketRegion })}
-      </div>
       {selected && (
         <span
           onPointerDown={(e) => startInteraction(e, "resize")}

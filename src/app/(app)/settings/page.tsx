@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/page-header";
 import { exportBackup, importBackup, clearAllData } from "@/lib/backup";
-import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames, useBrand, setBrand } from "@/lib/hooks";
+import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames, useBrand, setBrand, useLabelTemplates, useDefaultBatchLabelTemplateId, setDefaultBatchLabelTemplateId } from "@/lib/hooks";
 import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, type CurrencyCode, type MarketRegion, type FillMode, type Brand, type BrandSocial } from "@/types";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
@@ -156,7 +156,7 @@ export default function SettingsPage() {
         ) : activeTab === "printing" ? (
           <div className="space-y-6">
             <LabelTemplatesLink />
-            <LabelPrinterSection />
+            <DefaultBatchLabelTemplateSection />
           </div>
         ) : activeTab === "demo" ? (
           <DemoTab />
@@ -533,39 +533,43 @@ function LabelTemplatesLink() {
   );
 }
 
-function LabelPrinterSection() {
-  const [enabled, setEnabled] = useState(() =>
-    typeof window !== "undefined" && localStorage.getItem("niimbot-printer-enabled") === "true"
-  );
+function DefaultBatchLabelTemplateSection() {
+  const templates = useLabelTemplates();
+  const defaultId = useDefaultBatchLabelTemplateId();
 
-  function toggle() {
-    const next = !enabled;
-    setEnabled(next);
-    localStorage.setItem("niimbot-printer-enabled", next ? "true" : "false");
+  function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setDefaultBatchLabelTemplateId(e.target.value);
   }
 
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-primary">Label Printer</h2>
+      <h2 className="text-sm font-semibold text-primary">Production batch labels</h2>
       <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-        <div className="flex items-center gap-3">
-          <Printer className="w-5 h-5 text-primary shrink-0" />
+        <div className="flex items-start gap-3">
+          <Printer className="w-5 h-5 text-primary shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Label printing</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Shows a &ldquo;Save labels&rdquo; button on completed production batches. Generates one PNG
-              traceability label per product type and opens the share sheet — save to Photos,
-              AirDrop, or open in the Niimbot app to print.
+            <p className="text-sm font-medium">Default label template</p>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+              When you tap &ldquo;Save labels&rdquo; on a finished batch, this template is pre-selected
+              in the picker. You can still change it per-batch before printing.
             </p>
+            {templates.length === 0 ? (
+              <p className="text-xs italic text-muted-foreground">
+                No templates yet — design one in <Link href="/labels" className="underline">Label templates</Link>.
+              </p>
+            ) : (
+              <select
+                value={defaultId}
+                onChange={onChange}
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">— Pick at print time —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name} ({t.width}×{t.height}mm)</option>
+                ))}
+              </select>
+            )}
           </div>
-          <button
-            role="switch"
-            aria-checked={enabled}
-            onClick={toggle}
-            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-border"}`}
-          >
-            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`} />
-          </button>
         </div>
       </div>
     </section>

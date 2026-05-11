@@ -357,3 +357,132 @@ export function useLabelContext(source: LabelSource | null | undefined): LabelCo
   }, [source?.kind, source && "planId" in source ? source.planId : null, source && "planProductId" in source ? source.planProductId : null, source && "stockId" in source ? source.stockId : null, source && "collectionId" in source ? source.collectionId : null, source && "packagingId" in source ? source.packagingId : null]);
 }
 
+// ---------------------------------------------------------------------------
+// Batch loader for the print pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Load one `LabelContext` per `PlanProduct` in a completed production batch.
+ *
+ * Used by the print pipeline (event-driven, not reactive) to resolve every
+ * label that the batch should produce in a single Dexie sweep. Batches lookups
+ * by table — one query per table, not one per product — so a 20-product batch
+ * stays a handful of round-trips even on slow devices.
+ *
+ * Returns an empty array when the plan or its plan-products aren't found, so
+ * the caller can render an empty-state message rather than crash.
+ */
+export async function loadProductionBatchContexts(planId: string): Promise<LabelContext[]> {
+  const plan = await db.productionPlans.get(planId);
+  if (!plan?.id) return [];
+
+  const planProducts = await db.planProducts.where("planId").equals(planId).toArray();
+  if (planProducts.length === 0) return [];
+
+  const productIds = [...new Set(planProducts.map((pp) => pp.productId))];
+  const products = productIds.length > 0
+    ? await db.products.where("id").anyOf(productIds).toArray()
+    : [];
+  const productMap = new Map(products.filter((p) => !!p.id).map((p) => [p.id!, p]));
+
+  const mouldIds = [...new Set(products
+    .map((p) => p.defaultMouldId)
+    .filter((id): id is string => !!id))];
+  const moulds = mouldIds.length > 0
+    ? await db.moulds.where("id").anyOf(mouldIds).toArray()
+    : [];
+  const mouldMap = new Map(moulds.filter((m) => !!m.id).map((m) => [m.id!, m]));
+
+  // Per-product fillings (the row that ties a Product to a Filling, with
+  // fill percentages and sort order). One query covers every product.
+  const productFillings = productIds.length > 0
+    ? await db.productFillings.where("productId").anyOf(productIds).toArray()
+    : [];
+  const fillingsByProduct = new Map<string, ProductFilling[]>();
+  for (const pf of productFillings) {
+    const arr = fillingsByProduct.get(pf.productId) ?? [];
+    arr.push(pf);
+    fillingsByProduct.set(pf.productId, arr);
+  }
+
+  // Walk the filling-component graph so descendant fillings are loaded too.
+  const allFillingIds = new Set<string>(productFillings.map((pf) => pf.fillingId));
+  let frontier = new Set<string>(allFillingIds);
+  while (frontier.size > 0) {
+    const components = await db.fillingComponents
+      .where("fillingId").anyOf([...frontier])
+      .toArray();
+    const next = new Set<string>();
+    for (const c of components) {
+      if (!allFillingIds.has(c.childFillingId)) {
+        allFillingIds.add(c.childFillingId);
+        next.add(c.childFillingId);
+      }
+    }
+    frontier = next;
+  }
+
+  const fillingIdArr = [...allFillingIds];
+  const [fillingIngredientRows, fillingComponentRows] = await Promise.all([
+    fillingIdArr.length > 0
+      ? db.fillingIngredients.where("fillingId").anyOf(fillingIdArr).toArray()
+      : Promise.resolve([] as FillingIngredient[]),
+    fillingIdArr.length > 0
+      ? db.fillingComponents.where("fillingId").anyOf(fillingIdArr).toArray()
+      : Promise.resolve([] as FillingComponent[]),
+  ]);
+
+  const fillingIngredientsMap = new Map<string, FillingIngredient[]>();
+  for (const li of fillingIngredientRows) {
+    const arr = fillingIngredientsMap.get(li.fillingId) ?? [];
+    arr.push(li);
+    fillingIngredientsMap.set(li.fillingId, arr);
+  }
+  const fillingComponentsMap = new Map<string, FillingComponent[]>();
+  for (const fc of fillingComponentRows) {
+    const arr = fillingComponentsMap.get(fc.fillingId) ?? [];
+    arr.push(fc);
+    fillingComponentsMap.set(fc.fillingId, arr);
+  }
+
+  const ingredientIds = new Set<string>();
+  for (const li of fillingIngredientRows) ingredientIds.add(li.ingredientId);
+  for (const p of products) if (p.shellIngredientId) ingredientIds.add(p.shellIngredientId);
+  const ingredients = ingredientIds.size > 0
+    ? await db.ingredients.where("id").anyOf([...ingredientIds]).toArray()
+    : [];
+  const ingredientMap = new Map(ingredients.filter((i) => !!i.id).map((i) => [i.id!, i]));
+
+  const prefs = (await db.userPreferences.toArray())[0];
+  const facilityMayContain = prefs?.facilityMayContain ?? [];
+
+  return planProducts.map((pp) => {
+    const product = productMap.get(pp.productId);
+    if (!product?.id || !pp.id) {
+      return unresolvedContext(
+        { kind: "production-batch", planId, planProductId: pp.id ?? "" },
+        "Product or plan-product row not found.",
+      );
+    }
+    const mould = product.defaultMouldId ? mouldMap.get(product.defaultMouldId) ?? null : null;
+    const shellIngredient = product.shellIngredientId
+      ? ingredientMap.get(product.shellIngredientId) ?? null
+      : null;
+    return buildProductionBatchContext({
+      source: { kind: "production-batch", planId, planProductId: pp.id },
+      plan,
+      planProduct: pp,
+      product,
+      mould,
+      productFillings: (fillingsByProduct.get(product.id) ?? [])
+        .slice()
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+      fillingIngredientsMap,
+      fillingComponentsMap,
+      ingredientMap,
+      shellIngredient,
+      facilityMayContain,
+    });
+  });
+}
+

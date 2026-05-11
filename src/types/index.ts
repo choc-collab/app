@@ -430,6 +430,10 @@ export interface UserPreferences {
   /** Brand identity used on labels, receipts, and other customer-facing surfaces.
    *  Optional — when unset, label fields that bind to brand info render placeholders. */
   brand?: Brand;
+  /** Template id pre-selected when the user prints labels for a completed
+   *  production batch. The production page still opens a picker so the user
+   *  can override per-batch; this just sets the picker's initial value. */
+  defaultBatchLabelTemplateId?: string;
   /** Last app version for which the user saw (or was seeded past) the "What's new" banner. */
   lastSeenVersion?: string;
   updatedAt: Date;

@@ -10,6 +10,7 @@ import {
   useProductCategoryMap, useCollections, usePackagingList, useAllCollectionPackagings, useCurrencySymbol,
   packagePlanProductAsSales,
   useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
+  useLabelTemplates, useDefaultBatchLabelTemplateId, useBrand, useMarketRegion,
 } from "@/lib/hooks";
 import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
@@ -23,8 +24,9 @@ import { PackageModal } from "@/components/package-modal";
 import type { PackageChoice } from "@/components/package-modal";
 import { useRouter } from "next/navigation";
 import { LowStockFlagButton } from "@/components/pantry";
-import { printLabels } from "@/lib/printer";
-import type { LabelData } from "@/lib/printer";
+import { printLabels } from "@/lib/labelPrint";
+import { loadProductionBatchContexts } from "@/lib/labelContext";
+import type { LabelTemplate } from "@/types";
 import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
 
@@ -208,7 +210,13 @@ function PlanContent({
     | null
   >(null);
 
-  const printerEnabled = typeof window !== "undefined" && localStorage.getItem("niimbot-printer-enabled") === "true";
+  // Label printing — opens a template-picker on click. State is local so the
+  // modal can be cancelled without touching the underlying batch.
+  const labelTemplates = useLabelTemplates();
+  const defaultLabelTemplateId = useDefaultBatchLabelTemplateId();
+  const brand = useBrand();
+  const marketRegion = useMarketRegion();
+  const [printerPickerOpen, setPrinterPickerOpen] = useState(false);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -935,45 +943,35 @@ function PlanContent({
     }
   }
 
-  async function handlePrintLabels() {
+  function handleOpenPrintPicker() {
     if (!plan.completedAt) return;
+    setPrintError("");
+    setPrinterPickerOpen(true);
+  }
+
+  async function handleConfirmPrint(template: LabelTemplate) {
+    if (!plan.id) return;
+    setPrinterPickerOpen(false);
     setPrintState("printing");
     setPrintError("");
 
-    // Guard: if any filling referenced by this batch can't be resolved, allergen data
-    // would silently be incomplete — block the print rather than produce a bad label.
-    for (const pb of planProducts) {
-      const fillings = productFillingsMap.get(pb.productId) ?? [];
-      const unresolved = fillings.filter((rl) => !fillingsMap.get(rl.fillingId));
-      if (unresolved.length > 0) {
-        const name = productNames.get(pb.productId) ?? "a product";
-        setPrintState("error");
-        setPrintError(`Allergen data incomplete for "${name}" — some fillings could not be resolved. Check the product before printing.`);
-        return;
-      }
+    // Resolve one LabelContext per PlanProduct in a single Dexie sweep, then
+    // hand the whole batch to the share/download pipeline. Allergen / nutrition
+    // gaps surface as `context.warnings` rather than blocking — the user has
+    // already seen them in the template editor's preview.
+    const contexts = await loadProductionBatchContexts(plan.id);
+    if (contexts.length === 0) {
+      setPrintState("error");
+      setPrintError("No products in this batch to label.");
+      return;
     }
 
-    const labels: LabelData[] = planProducts.map((pb) => {
-      const product = productsMap.get(pb.productId);
-      const fillings = productFillingsMap.get(pb.productId) ?? [];
-      const allergenSet = new Set<string>();
-      for (const rl of fillings) {
-        for (const a of fillingsMap.get(rl.fillingId)!.allergens) allergenSet.add(a);
-      }
-      const weeks = parseInt(product?.shelfLifeWeeks ?? "");
-      const bestBefore = !isNaN(weeks) && weeks > 0
-        ? new Date(new Date(plan.completedAt!).getTime() + weeks * 7 * 24 * 60 * 60 * 1000)
-        : null;
-      return {
-        productName: productNames.get(pb.productId) ?? "Unknown",
-        batchNumber: plan.batchNumber ?? "",
-        bestBeforeDate: bestBefore,
-        allergens: Array.from(allergenSet).sort(),
-        vegan: product?.vegan ?? false,
-      };
+    const result = await printLabels({
+      template,
+      contexts,
+      brand,
+      marketRegion,
     });
-
-    const result = await printLabels(labels);
     if (result.success) {
       setPrintState("done");
       setTimeout(() => setPrintState("idle"), 3000);
@@ -1105,14 +1103,17 @@ function PlanContent({
           </button>
         )}
 
-        {/* Print labels (Niimbot) */}
-        {plan.status === "done" && printerEnabled && (
+        {/* Print labels — printer-agnostic. Click opens a template picker;
+            on confirm we render the user's chosen template against one
+            LabelContext per PlanProduct and hand the resulting PNGs to the
+            share sheet (or download fallback). */}
+        {plan.status === "done" && (
           <div className="mt-3">
             {printState === "error" && (
               <p className="text-xs text-destructive mb-1">{printError}</p>
             )}
             <button
-              onClick={handlePrintLabels}
+              onClick={handleOpenPrintPicker}
               disabled={printState === "printing"}
               className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             >
@@ -1485,6 +1486,18 @@ function PlanContent({
             </button>
           )}
         </div>
+      )}
+
+      {/* Label-template picker — surfaces after the user clicks "Save labels"
+          on a completed batch. Pre-selects the user's default template (set in
+          Settings → Printing). When no templates exist, links to the editor. */}
+      {printerPickerOpen && (
+        <PrintTemplatePicker
+          templates={labelTemplates}
+          defaultId={defaultLabelTemplateId}
+          onConfirm={handleConfirmPrint}
+          onCancel={() => setPrinterPickerOpen(false)}
+        />
       )}
 
       {/* Yield modal */}
@@ -1890,4 +1903,108 @@ function RevertStockModal({ state, onConfirm, onCancel }: {
 function formatGrams(g: number): string {
   const rounded = Math.round(g * 10) / 10;
   return rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 === 0 ? 0 : 2)} kg` : `${rounded} g`;
+}
+
+/**
+ * Modal that lets the user pick a label template for a print run. Pre-selects
+ * the user's configured default (from Settings → Printing) when one exists,
+ * otherwise leaves the selection unset. Surfaces a link to the editor when no
+ * templates are available yet rather than leaving the user stuck.
+ */
+function PrintTemplatePicker({
+  templates,
+  defaultId,
+  onConfirm,
+  onCancel,
+}: {
+  templates: LabelTemplate[];
+  defaultId: string;
+  onConfirm: (template: LabelTemplate) => void;
+  onCancel: () => void;
+}) {
+  const initial = defaultId && templates.some((t) => t.id === defaultId)
+    ? defaultId
+    : templates[0]?.id ?? "";
+  const [selectedId, setSelectedId] = useState(initial);
+
+  function onSave() {
+    const t = templates.find((x) => x.id === selectedId);
+    if (t) onConfirm(t);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div className="w-full max-w-sm rounded-lg bg-card border border-border shadow-lg p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Save labels</h2>
+        {templates.length === 0 ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              No label templates yet. Design one in the editor first.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={onCancel}
+                className="rounded-md px-3 py-1.5 text-sm hover:bg-muted"
+              >
+                Close
+              </button>
+              <Link
+                href="/labels"
+                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+              >
+                Open editor
+              </Link>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">
+              One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app.
+            </p>
+            <div className="space-y-1 max-h-64 overflow-y-auto">
+              {templates.map((t) => (
+                <label
+                  key={t.id}
+                  className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer transition-colors ${selectedId === t.id ? "border-primary bg-accent" : "border-border hover:bg-muted/40"}`}
+                >
+                  <input
+                    type="radio"
+                    name="label-template"
+                    value={t.id}
+                    checked={selectedId === t.id}
+                    onChange={() => setSelectedId(t.id!)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{t.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t.width}×{t.height}mm · {t.fields.length} field{t.fields.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={onCancel}
+                className="rounded-md px-3 py-1.5 text-sm hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onSave}
+                disabled={!selectedId}
+                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                Save labels
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }

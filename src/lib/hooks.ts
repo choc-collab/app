@@ -1771,6 +1771,20 @@ export async function setBrand(brand: Brand): Promise<void> {
   await updatePreference({ brand });
 }
 
+/** Reactive read of the user-configured default batch label template id.
+ *  Empty string means "no default configured" — the production page falls
+ *  back to picking the first template alphabetically. */
+export function useDefaultBatchLabelTemplateId(): string {
+  return useLiveQuery(async () => (await getPreferences()).defaultBatchLabelTemplateId ?? "", [], "");
+}
+
+/** Persist the user's default batch label template choice. Empty string means
+ *  "no default configured" and is stored verbatim so Dexie's `update` doesn't
+ *  treat it as a "leave unchanged" hint. */
+export async function setDefaultBatchLabelTemplateId(id: string): Promise<void> {
+  await updatePreference({ defaultBatchLabelTemplateId: id });
+}
+
 /**
  * Reactive read of the last app version the user saw the "What's new" banner
  * for. `undefined` means they've never seen one (fresh install or pre-banner
