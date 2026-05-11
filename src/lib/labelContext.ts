@@ -36,8 +36,9 @@ import {
   DEFAULT_SHELL_PERCENTAGE,
   deriveShellPercentageFromFractions,
 } from "@/lib/costCalculation";
-import { calculateProductNutrition } from "@/lib/nutrition";
+import { aggregateNutrition, calculateProductNutrition } from "@/lib/nutrition";
 import type {
+  Filling,
   FillingComponent,
   FillingIngredient,
   Ingredient,
@@ -45,6 +46,7 @@ import type {
   LabelContextIngredient,
   LabelSource,
   Mould,
+  PlanFilling,
   PlanProduct,
   Product,
   ProductFilling,
@@ -219,6 +221,115 @@ export function buildProductionBatchContext(input: ProductionBatchContextInput):
 }
 
 // ---------------------------------------------------------------------------
+// Pure builder — filling-batch
+// ---------------------------------------------------------------------------
+
+export interface FillingBatchContextInput {
+  source: Extract<LabelSource, { kind: "filling-batch" }>;
+  plan: ProductionPlan;
+  planFilling: PlanFilling;
+  filling: Filling;
+  fillingIngredientsMap: ReadonlyMap<string, FillingIngredient[]>;
+  fillingComponentsMap: ReadonlyMap<string, FillingComponent[]>;
+  ingredientMap: ReadonlyMap<string, Ingredient>;
+  facilityMayContain: string[];
+}
+
+/**
+ * Build a `LabelContext` for the `filling-batch` source kind. One label per
+ * `PlanFilling` — represents the *amount of filling produced by this batch*,
+ * not a specific stock container. `perCavityWeightG` carries the total batch
+ * weight (with `piecesPerLabel = 1` at template level) so the renderer's
+ * weight field prints "500g" for a 500g batch.
+ *
+ * Best-before is derived from `plan.completedAt + filling.shelfLifeWeeks`.
+ * Origin is always empty (no chocolate shell on a filling label). Pure —
+ * caller supplies pre-loaded rows.
+ */
+export function buildFillingBatchContext(input: FillingBatchContextInput): LabelContext {
+  const { source, plan, planFilling, filling, fillingIngredientsMap, fillingComponentsMap, ingredientMap, facilityMayContain } = input;
+  const warnings: string[] = [];
+
+  // Total grams produced by this filling batch. Prefer the actual yield (set
+  // when the batch is finalised) and fall back to the targeted amount so
+  // labels printed before the user confirms yield still show something
+  // sensible.
+  const totalBatchG = planFilling.actualYieldG ?? planFilling.targetGrams ?? 0;
+  if (totalBatchG <= 0) warnings.push("Total batch weight is unknown.");
+
+  // Flatten the filling's recipe to leaf ingredients with their per-recipe
+  // grams. Roll up duplicates (same ingredient appearing in multiple component
+  // fillings) into single entries.
+  const flatRows = rollUpAmounts(
+    flattenFillingToIngredients(filling.id!, fillingIngredientsMap, fillingComponentsMap),
+  );
+  const recipeTotalG = flatRows.reduce((s, r) => s + r.amount, 0);
+
+  // Scale each ingredient from "amount in the recipe" to "amount in this
+  // specific batch". If the recipe total is 0 (degenerate) we just pass through
+  // the raw amounts.
+  const scale = recipeTotalG > 0 && totalBatchG > 0 ? totalBatchG / recipeTotalG : 1;
+  const perIngredientGrams = new Map<string, number>();
+  for (const row of flatRows) {
+    perIngredientGrams.set(row.ingredientId, (perIngredientGrams.get(row.ingredientId) ?? 0) + row.amount * scale);
+  }
+
+  // Sort descending by mass for EU FIC ordering, project to LabelContextIngredient.
+  const allergenSet = new Set<string>();
+  const ingredients: LabelContextIngredient[] = [...perIngredientGrams.entries()]
+    .map(([ingredientId, grams]) => {
+      const ing = ingredientMap.get(ingredientId);
+      if (!ing) return null;
+      for (const a of ing.allergens ?? []) allergenSet.add(a);
+      return {
+        name: ing.commercialName ?? ing.name,
+        allergens: ing.allergens ?? [],
+        amountG: Math.round(grams * 1000) / 1000,
+      };
+    })
+    .filter((x): x is LabelContextIngredient => x !== null)
+    .sort((a, b) => b.amountG - a.amountG);
+
+  // Per-100g nutrition, weighted by each ingredient's grams in the batch.
+  const nutritionResult = aggregateNutrition(
+    ingredients.map((ing) => {
+      const id = [...perIngredientGrams.keys()].find((k) => {
+        const i = ingredientMap.get(k);
+        return i && (i.commercialName ?? i.name) === ing.name;
+      });
+      return {
+        amountG: ing.amountG,
+        nutrition: (id ? ingredientMap.get(id)?.nutrition : undefined) ?? {},
+      };
+    }),
+  );
+
+  // Best-before: completed-at + shelf-life weeks, when both are set.
+  let bestBefore: Date | null = null;
+  if (plan.completedAt && filling.shelfLifeWeeks && filling.shelfLifeWeeks > 0) {
+    bestBefore = new Date(new Date(plan.completedAt).getTime() + filling.shelfLifeWeeks * 7 * 86400000);
+  } else if (!filling.shelfLifeWeeks) {
+    warnings.push("Filling has no shelf life defined.");
+  }
+
+  return {
+    source,
+    name: filling.name,
+    perCavityWeightG: Math.round(totalBatchG * 1000) / 1000,
+    totalCavityCount: 1,
+    ingredients,
+    allergens: [...allergenSet].sort(),
+    mayContain: [...facilityMayContain],
+    nutritionPer100g: nutritionResult.per100g,
+    bestBefore,
+    batchNumber: plan.batchNumber ?? "",
+    producedAt: plan.completedAt ?? null,
+    origin: "",
+    warnings,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // DB-loading reactive hook
 // ---------------------------------------------------------------------------
 
@@ -252,6 +363,77 @@ function unresolvedContext(source: LabelSource, reason: string): LabelContext {
 export function useLabelContext(source: LabelSource | null | undefined): LabelContext | undefined {
   return useLiveQuery(async () => {
     if (!source) return undefined;
+
+    if (source.kind === "filling-batch") {
+      const [plan, planFilling] = await Promise.all([
+        db.productionPlans.get(source.planId),
+        db.planFillings.get(source.planFillingId),
+      ]);
+      if (!plan || !planFilling) {
+        return unresolvedContext(source, "Plan or plan-filling not found.");
+      }
+      const filling = await db.fillings.get(planFilling.fillingId);
+      if (!filling?.id) {
+        return unresolvedContext(source, "Filling not found.");
+      }
+
+      // Walk the filling-component graph so descendant fillings are loaded.
+      const allFillingIds = new Set<string>([filling.id]);
+      let frontier = new Set<string>([filling.id]);
+      while (frontier.size > 0) {
+        const components = await db.fillingComponents
+          .where("fillingId").anyOf([...frontier])
+          .toArray();
+        const next = new Set<string>();
+        for (const c of components) {
+          if (!allFillingIds.has(c.childFillingId)) {
+            allFillingIds.add(c.childFillingId);
+            next.add(c.childFillingId);
+          }
+        }
+        frontier = next;
+      }
+
+      const fillingIdArr = [...allFillingIds];
+      const [ingredientRows, componentRows] = await Promise.all([
+        db.fillingIngredients.where("fillingId").anyOf(fillingIdArr).toArray(),
+        db.fillingComponents.where("fillingId").anyOf(fillingIdArr).toArray(),
+      ]);
+
+      const fillingIngredientsMap = new Map<string, FillingIngredient[]>();
+      for (const li of ingredientRows) {
+        const arr = fillingIngredientsMap.get(li.fillingId) ?? [];
+        arr.push(li);
+        fillingIngredientsMap.set(li.fillingId, arr);
+      }
+      const fillingComponentsMap = new Map<string, FillingComponent[]>();
+      for (const fc of componentRows) {
+        const arr = fillingComponentsMap.get(fc.fillingId) ?? [];
+        arr.push(fc);
+        fillingComponentsMap.set(fc.fillingId, arr);
+      }
+
+      const ingredientIds = new Set<string>(ingredientRows.map((r) => r.ingredientId));
+      const ingredients = ingredientIds.size > 0
+        ? (await Promise.all([...ingredientIds].map((id) => db.ingredients.get(id))))
+          .filter((i): i is Ingredient => !!i)
+        : [];
+      const ingredientMap = new Map(ingredients.filter((i) => !!i.id).map((i) => [i.id!, i]));
+
+      const prefs = (await db.userPreferences.toArray())[0];
+      const facilityMayContain = prefs?.facilityMayContain ?? [];
+
+      return buildFillingBatchContext({
+        source,
+        plan,
+        planFilling,
+        filling,
+        fillingIngredientsMap,
+        fillingComponentsMap,
+        ingredientMap,
+        facilityMayContain,
+      });
+    }
 
     if (source.kind !== "production-batch") {
       return unresolvedContext(
@@ -354,7 +536,14 @@ export function useLabelContext(source: LabelSource | null | undefined): LabelCo
       shellIngredient,
       facilityMayContain,
     });
-  }, [source?.kind, source && "planId" in source ? source.planId : null, source && "planProductId" in source ? source.planProductId : null, source && "stockId" in source ? source.stockId : null, source && "collectionId" in source ? source.collectionId : null, source && "packagingId" in source ? source.packagingId : null]);
+  }, [
+    source?.kind,
+    source && "planId" in source ? source.planId : null,
+    source && "planProductId" in source ? source.planProductId : null,
+    source && "planFillingId" in source ? source.planFillingId : null,
+    source && "collectionId" in source ? source.collectionId : null,
+    source && "packagingId" in source ? source.packagingId : null,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +670,95 @@ export async function loadProductionBatchContexts(planId: string): Promise<Label
       fillingComponentsMap,
       ingredientMap,
       shellIngredient,
+      facilityMayContain,
+    });
+  });
+}
+
+/**
+ * Load one `LabelContext` per `PlanFilling` in a completed batch. Mirrors
+ * `loadProductionBatchContexts` but for filling-only / filling-side labels.
+ * One label per planFilling: the user reprints if they want extras for split
+ * containers from the leftover-modal flow.
+ */
+export async function loadFillingBatchContexts(planId: string): Promise<LabelContext[]> {
+  const plan = await db.productionPlans.get(planId);
+  if (!plan?.id) return [];
+
+  const planFillings = await db.planFillings.where("planId").equals(planId).toArray();
+  if (planFillings.length === 0) return [];
+
+  const fillingIds = [...new Set(planFillings.map((pf) => pf.fillingId))];
+  const fillings = fillingIds.length > 0
+    ? await db.fillings.where("id").anyOf(fillingIds).toArray()
+    : [];
+  const fillingMap = new Map(fillings.filter((f) => !!f.id).map((f) => [f.id!, f]));
+
+  // Walk the full filling-component graph from each host filling.
+  const allFillingIds = new Set<string>(fillingIds);
+  let frontier = new Set<string>(fillingIds);
+  while (frontier.size > 0) {
+    const components = await db.fillingComponents
+      .where("fillingId").anyOf([...frontier])
+      .toArray();
+    const next = new Set<string>();
+    for (const c of components) {
+      if (!allFillingIds.has(c.childFillingId)) {
+        allFillingIds.add(c.childFillingId);
+        next.add(c.childFillingId);
+      }
+    }
+    frontier = next;
+  }
+
+  const fillingIdArr = [...allFillingIds];
+  const [ingredientRows, componentRows] = await Promise.all([
+    fillingIdArr.length > 0
+      ? db.fillingIngredients.where("fillingId").anyOf(fillingIdArr).toArray()
+      : Promise.resolve([] as FillingIngredient[]),
+    fillingIdArr.length > 0
+      ? db.fillingComponents.where("fillingId").anyOf(fillingIdArr).toArray()
+      : Promise.resolve([] as FillingComponent[]),
+  ]);
+
+  const fillingIngredientsMap = new Map<string, FillingIngredient[]>();
+  for (const li of ingredientRows) {
+    const arr = fillingIngredientsMap.get(li.fillingId) ?? [];
+    arr.push(li);
+    fillingIngredientsMap.set(li.fillingId, arr);
+  }
+  const fillingComponentsMap = new Map<string, FillingComponent[]>();
+  for (const fc of componentRows) {
+    const arr = fillingComponentsMap.get(fc.fillingId) ?? [];
+    arr.push(fc);
+    fillingComponentsMap.set(fc.fillingId, arr);
+  }
+
+  const ingredientIds = new Set<string>(ingredientRows.map((r) => r.ingredientId));
+  const ingredients = ingredientIds.size > 0
+    ? await db.ingredients.where("id").anyOf([...ingredientIds]).toArray()
+    : [];
+  const ingredientMap = new Map(ingredients.filter((i) => !!i.id).map((i) => [i.id!, i]));
+
+  const prefs = (await db.userPreferences.toArray())[0];
+  const facilityMayContain = prefs?.facilityMayContain ?? [];
+
+  return planFillings.map((pf) => {
+    const filling = fillingMap.get(pf.fillingId);
+    if (!filling?.id || !pf.id) {
+      return unresolvedContext(
+        { kind: "filling-batch", planId, planFillingId: pf.id ?? "" },
+        "Filling or plan-filling row not found.",
+      );
+    }
+    return buildFillingBatchContext({
+      source: { kind: "filling-batch", planId, planFillingId: pf.id },
+      plan,
+      planFilling: pf,
+      filling,
+      fillingIngredientsMap,
+      fillingComponentsMap,
+      ingredientMap,
       facilityMayContain,
     });
   });

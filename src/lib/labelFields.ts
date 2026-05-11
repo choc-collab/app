@@ -158,6 +158,60 @@ export function formatNetWeight(grams: number): string {
   return grams >= 10 ? `${Math.round(grams)}g` : `${grams.toFixed(1)}g`;
 }
 
+// ---------------------------------------------------------------------------
+// Fonts — curated cross-platform list, no web-font loading required
+// ---------------------------------------------------------------------------
+
+export interface FontOption {
+  /** Stable id stored on `LabelFieldProps.font`. Stays valid even if we rename
+   *  the human-readable label or tweak the family stack later. */
+  id: string;
+  /** Display label shown in the inspector dropdown. */
+  label: string;
+  /** CSS font-family stack — always names at least one font available on iOS,
+   *  macOS, Windows, and Linux so the rasterised PNG renders the same shape
+   *  whether the user saves from an iPad or a desktop. */
+  family: string;
+  /** Loose grouping shown as `<optgroup>` headers in the inspector. */
+  category: "sans" | "serif" | "mono" | "display";
+}
+
+/** Default font stack — used when `LabelFieldProps.font` is unset. */
+export const DEFAULT_FONT_FAMILY =
+  `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`;
+
+/** Curated, cross-platform fonts the inspector exposes as a dropdown. Adding
+ *  a new entry is one line — the id becomes the saved value, so leave existing
+ *  ids alone or templates that use them will fall back to the default. */
+export const FONT_OPTIONS: ReadonlyArray<FontOption> = [
+  { id: "system",    label: "System default", family: DEFAULT_FONT_FAMILY,                                            category: "sans"    },
+  { id: "helvetica", label: "Helvetica",      family: `"Helvetica Neue", Helvetica, Arial, sans-serif`,               category: "sans"    },
+  { id: "arial",     label: "Arial",          family: `Arial, Helvetica, sans-serif`,                                 category: "sans"    },
+  { id: "verdana",   label: "Verdana",        family: `Verdana, Geneva, Tahoma, sans-serif`,                          category: "sans"    },
+  { id: "trebuchet", label: "Trebuchet",      family: `"Trebuchet MS", "Lucida Sans", sans-serif`,                    category: "sans"    },
+  { id: "georgia",   label: "Georgia",        family: `Georgia, "Times New Roman", serif`,                            category: "serif"   },
+  { id: "times",     label: "Times",          family: `"Times New Roman", Times, serif`,                              category: "serif"   },
+  { id: "palatino",  label: "Palatino",       family: `"Palatino Linotype", Palatino, "Book Antiqua", serif`,         category: "serif"   },
+  { id: "courier",   label: "Courier",        family: `"Courier New", Courier, monospace`,                            category: "mono"    },
+  { id: "menlo",     label: "Menlo",          family: `Menlo, Consolas, "Courier New", monospace`,                    category: "mono"    },
+  { id: "impact",    label: "Impact",         family: `Impact, "Haettenschweiler", "Arial Narrow Bold", sans-serif`,  category: "display" },
+];
+
+/** Resolve a saved font id to its CSS family stack. Unknown / unset ids fall
+ *  back to the default so old templates and bad data never break the layout. */
+export function resolveFontFamily(id: string | undefined | null): string {
+  if (!id) return DEFAULT_FONT_FAMILY;
+  return FONT_OPTIONS.find((f) => f.id === id)?.family ?? DEFAULT_FONT_FAMILY;
+}
+
+/** Convenience: group fonts by category for the inspector's `<optgroup>`s. */
+export const FONT_OPTIONS_BY_CATEGORY: Record<FontOption["category"], FontOption[]> = {
+  sans:    FONT_OPTIONS.filter((f) => f.category === "sans"),
+  serif:   FONT_OPTIONS.filter((f) => f.category === "serif"),
+  mono:    FONT_OPTIONS.filter((f) => f.category === "mono"),
+  display: FONT_OPTIONS.filter((f) => f.category === "display"),
+};
+
 /** Look up a field's metadata (group, label, defaults). */
 export function getFieldDefinition(type: LabelFieldType): FieldDefinition {
   return FIELD_DEFINITIONS[type];

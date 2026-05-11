@@ -1365,14 +1365,24 @@ export type LabelDateFormat = string;
 export interface LabelFieldProps {
   /** Font size in pt. Defaults are per field type. */
   size?: number;
-  /** CSS font-weight (100–900). Used by name/subtitle/headings. */
+  /** CSS font-weight (100–900). Used by name/subtitle/headings.
+   *  @deprecated Use `bold` for the user-facing toggle; `weight` is still
+   *  honoured by the renderer for backward-compat with older templates. */
   weight?: number;
+  /** When true, the field's body text is rendered at weight 700.
+   *  When unset, the renderer uses the field type's natural weight (e.g.
+   *  `aller` is mandatorily bold for regulatory reasons regardless of this). */
+  bold?: boolean;
+  /** Italic body text. Applies to every text-bearing field. */
+  italic?: boolean;
+  /** Font family — stored as a stable id from `FONT_OPTIONS` (in labelFields).
+   *  When unset, the renderer falls back to the system-default sans stack so
+   *  templates designed before this prop existed keep printing identically. */
+  font?: string;
   /** When false, hides the small "INGREDIENTS" / "ALLERGENS" heading above the block. */
   showLabel?: boolean;
   /** When true, allergen tokens inside the ingredient string are emphasised (bold). */
   boldAllergens?: boolean;
-  /** Italic body text. Used by `text`. */
-  italic?: boolean;
   /** Free-text content. Used by `text`. */
   text?: string;
   /** Image source as a data URL (base64). Used by `image`. */
@@ -1444,7 +1454,7 @@ export interface LabelTemplate {
  */
 export type LabelSource =
   | { kind: "production-batch"; planId: string; planProductId: string }
-  | { kind: "filling-batch"; stockId: string }
+  | { kind: "filling-batch"; planId: string; planFillingId: string }
   | { kind: "collection-package"; collectionId: string; packagingId: string };
 
 /**

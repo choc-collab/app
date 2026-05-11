@@ -97,12 +97,31 @@ async function rasterizeSvgToPng(
   }
 }
 
+/**
+ * Detect a touch-first mobile/tablet device where the OS share sheet is the
+ * natural save flow (iOS Photos extension, AirDrop, etc.). Everything else —
+ * macOS, Windows, Linux, ChromeOS desktops — routes through the download
+ * path instead, because the macOS / Chromebook share sheets don't offer
+ * useful "Save to Photos" / "Save as…" options for PNG files, and users
+ * expect a downloaded file.
+ *
+ * iPadOS Safari reports a Mac user-agent in its desktop-mode default; we
+ * disambiguate by checking `navigator.maxTouchPoints` (real Macs report 0).
+ */
+function isShareSheetPreferred(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  if (/Android|iPhone|iPod|iPad/.test(ua)) return true;
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true; // iPadOS desktop UA
+  return false;
+}
+
 /** Builds a stable, filesystem-friendly name for one rendered label. */
 function buildFilename(prefix: string, ctx: LabelContext, index: number): string {
   const namePart = slugify(ctx.name);
   const idPart =
     ctx.batchNumber ||
-    (ctx.source.kind === "filling-batch" ? ctx.source.stockId :
+    (ctx.source.kind === "filling-batch" ? ctx.source.planFillingId :
      ctx.source.kind === "collection-package" ? `${ctx.source.collectionId}_${ctx.source.packagingId}` :
      `${index + 1}`);
   return `${prefix}_${namePart}_${slugify(String(idPart))}.png`;
@@ -138,7 +157,12 @@ export async function printLabels(input: PrintLabelInput): Promise<PrintResult> 
       files.push(new File([png], buildFilename(filenamePrefix, ctx, i), { type: "image/png" }));
     }
 
+    // Only invoke the OS share sheet on touch-first devices (iOS/iPadOS,
+    // Android). On macOS / Windows / Linux desktops the share sheet exists
+    // but doesn't offer useful save-to-disk actions for PNGs — users expect
+    // to receive a downloaded file instead.
     if (
+      isShareSheetPreferred() &&
       typeof navigator !== "undefined" &&
       typeof navigator.canShare === "function" &&
       navigator.canShare({ files })

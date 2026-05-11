@@ -25,7 +25,7 @@ import type { PackageChoice } from "@/components/package-modal";
 import { useRouter } from "next/navigation";
 import { LowStockFlagButton } from "@/components/pantry";
 import { printLabels } from "@/lib/labelPrint";
-import { loadProductionBatchContexts } from "@/lib/labelContext";
+import { loadFillingBatchContexts, loadProductionBatchContexts } from "@/lib/labelContext";
 import type { LabelTemplate } from "@/types";
 import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
@@ -216,7 +216,9 @@ function PlanContent({
   const defaultLabelTemplateId = useDefaultBatchLabelTemplateId();
   const brand = useBrand();
   const marketRegion = useMarketRegion();
-  const [printerPickerOpen, setPrinterPickerOpen] = useState(false);
+  // `null` = picker closed; "products" / "fillings" = which entity kind the
+  // user clicked. Lets one picker UI serve both flows on mixed batches.
+  const [printerPickerMode, setPrinterPickerMode] = useState<"products" | "fillings" | null>(null);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -943,26 +945,31 @@ function PlanContent({
     }
   }
 
-  function handleOpenPrintPicker() {
+  function handleOpenPrintPicker(mode: "products" | "fillings") {
     if (!plan.completedAt) return;
     setPrintError("");
-    setPrinterPickerOpen(true);
+    setPrinterPickerMode(mode);
   }
 
   async function handleConfirmPrint(template: LabelTemplate) {
-    if (!plan.id) return;
-    setPrinterPickerOpen(false);
+    if (!plan.id || !printerPickerMode) return;
+    const mode = printerPickerMode;
+    setPrinterPickerMode(null);
     setPrintState("printing");
     setPrintError("");
 
-    // Resolve one LabelContext per PlanProduct in a single Dexie sweep, then
-    // hand the whole batch to the share/download pipeline. Allergen / nutrition
+    // Resolve one LabelContext per entity in a single Dexie sweep, then hand
+    // the whole batch to the share/download pipeline. Allergen / nutrition
     // gaps surface as `context.warnings` rather than blocking — the user has
     // already seen them in the template editor's preview.
-    const contexts = await loadProductionBatchContexts(plan.id);
+    const contexts = mode === "products"
+      ? await loadProductionBatchContexts(plan.id)
+      : await loadFillingBatchContexts(plan.id);
     if (contexts.length === 0) {
       setPrintState("error");
-      setPrintError("No products in this batch to label.");
+      setPrintError(mode === "products"
+        ? "No products in this batch to label."
+        : "No fillings in this batch to label.");
       return;
     }
 
@@ -1103,23 +1110,35 @@ function PlanContent({
           </button>
         )}
 
-        {/* Print labels — printer-agnostic. Click opens a template picker;
-            on confirm we render the user's chosen template against one
-            LabelContext per PlanProduct and hand the resulting PNGs to the
-            share sheet (or download fallback). */}
-        {plan.status === "done" && (
-          <div className="mt-3">
+        {/* Print labels — printer-agnostic. One button per entity kind so the
+            user picks "product labels" vs "filling labels" before opening the
+            template picker. Filling-only batches see just the filling button;
+            mixed batches see both. */}
+        {plan.status === "done" && (planProducts.length > 0 || planFillings.length > 0) && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             {printState === "error" && (
-              <p className="text-xs text-destructive mb-1">{printError}</p>
+              <p className="text-xs text-destructive w-full">{printError}</p>
             )}
-            <button
-              onClick={handleOpenPrintPicker}
-              disabled={printState === "printing"}
-              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              {printState === "printing" ? "Generating…" : printState === "done" ? "Saved!" : "Save labels"}
-            </button>
+            {planProducts.length > 0 && (
+              <button
+                onClick={() => handleOpenPrintPicker("products")}
+                disabled={printState === "printing"}
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                {printState === "printing" ? "Generating…" : printState === "done" ? "Saved!" : "Save product labels"}
+              </button>
+            )}
+            {planFillings.length > 0 && (
+              <button
+                onClick={() => handleOpenPrintPicker("fillings")}
+                disabled={printState === "printing"}
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Save filling labels
+              </button>
+            )}
           </div>
         )}
 
@@ -1491,12 +1510,13 @@ function PlanContent({
       {/* Label-template picker — surfaces after the user clicks "Save labels"
           on a completed batch. Pre-selects the user's default template (set in
           Settings → Printing). When no templates exist, links to the editor. */}
-      {printerPickerOpen && (
+      {printerPickerMode && (
         <PrintTemplatePicker
+          mode={printerPickerMode}
           templates={labelTemplates}
           defaultId={defaultLabelTemplateId}
           onConfirm={handleConfirmPrint}
-          onCancel={() => setPrinterPickerOpen(false)}
+          onCancel={() => setPrinterPickerMode(null)}
         />
       )}
 
@@ -1912,11 +1932,13 @@ function formatGrams(g: number): string {
  * templates are available yet rather than leaving the user stuck.
  */
 function PrintTemplatePicker({
+  mode,
   templates,
   defaultId,
   onConfirm,
   onCancel,
 }: {
+  mode: "products" | "fillings";
   templates: LabelTemplate[];
   defaultId: string;
   onConfirm: (template: LabelTemplate) => void;
@@ -1938,7 +1960,7 @@ function PrintTemplatePicker({
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
     >
       <div className="w-full max-w-sm rounded-lg bg-card border border-border shadow-lg p-4 space-y-3">
-        <h2 className="text-sm font-semibold">Save labels</h2>
+        <h2 className="text-sm font-semibold">{mode === "products" ? "Save product labels" : "Save filling labels"}</h2>
         {templates.length === 0 ? (
           <>
             <p className="text-sm text-muted-foreground">
@@ -1962,7 +1984,9 @@ function PrintTemplatePicker({
         ) : (
           <>
             <p className="text-xs text-muted-foreground">
-              One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app.
+              {mode === "products"
+                ? "One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app."
+                : "One PNG per filling in this batch — share to AirDrop, Photos, or your label-printer app."}
             </p>
             <div className="space-y-1 max-h-64 overflow-y-auto">
               {templates.map((t) => (

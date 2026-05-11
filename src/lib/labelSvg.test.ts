@@ -95,9 +95,9 @@ describe("renderTemplateSvg — structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderTemplateSvg — text-only renderers", () => {
-  it("name renders the context name with the default 600 weight", () => {
+  it("name renders the context name with the default 600 weight when it fits on one line", () => {
     const svg = renderTemplateSvg(
-      tpl([{ id: "f", type: "name", x: 0, y: 0, w: 50, h: 8 }]),
+      tpl([{ id: "f", type: "name", x: 0, y: 0, w: 80, h: 8 }]),
       CTX,
       FULL_BRAND,
       baseOpts,
@@ -106,9 +106,20 @@ describe("renderTemplateSvg — text-only renderers", () => {
     expect(svg).toMatch(/font-weight="600"/);
   });
 
+  it("name wraps to multiple lines when the box is narrower than the rendered text", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "name", x: 0, y: 0, w: 18, h: 14 }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    expect(svg).toContain(">Yuzu</text>");
+    expect(svg).toContain(">Praline</text>");
+  });
+
   it("name shows the em-dash placeholder when context is null", () => {
     const svg = renderTemplateSvg(
-      tpl([{ id: "f", type: "name", x: 0, y: 0, w: 50, h: 8 }]),
+      tpl([{ id: "f", type: "name", x: 0, y: 0, w: 80, h: 8 }]),
       null,
       FULL_BRAND,
       baseOpts,
@@ -169,6 +180,24 @@ describe("renderTemplateSvg — allergens", () => {
     );
     expect(svg).toMatch(/font-weight="700"[^>]*>Milk · Soybeans</);
     expect(svg).toMatch(/font-style="italic"[^>]*fill="#666666"[^>]*>Tree nuts<|fill="#666666"[^>]*font-style="italic"[^>]*>Tree nuts</);
+  });
+
+  it("wraps the allergen declaration when the box is narrower than the rendered text", () => {
+    const ctx: LabelContext = {
+      ...CTX,
+      allergens: ["milk", "soybeans", "peanuts", "treenuts", "eggs", "wheat"],
+      mayContain: [],
+    };
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "aller", x: 0, y: 0, w: 22, h: 12 }]),
+      ctx,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // Multiple <text> nodes mean the declaration broke across lines (rather
+    // than overflowing the field box as a single long string).
+    const textNodes = svg.match(/<text /g) ?? [];
+    expect(textNodes.length).toBeGreaterThan(1);
   });
 
   it("shows the placeholder when there are no allergens, no may-contain row", () => {
@@ -406,6 +435,127 @@ describe("renderTemplateSvg — custom", () => {
       baseOpts,
     );
     expect(svg).toContain(`href="data:image/png;base64,BBB"`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bold / italic — user-controlled emphasis on every text-bearing field
+// ---------------------------------------------------------------------------
+
+describe("renderTemplateSvg — font selection", () => {
+  it("emits the resolved font-family stack when props.font references a known id", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "batch", x: 0, y: 0, w: 18, h: 4, props: { font: "georgia" } }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    expect(svg).toContain(`Georgia`);
+    expect(svg).toMatch(/font-family="[^"]*Georgia/);
+  });
+
+  it("falls back to the system default when props.font is unset", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "batch", x: 0, y: 0, w: 18, h: 4 }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // Default stack starts with -apple-system
+    expect(svg).toMatch(/font-family="-apple-system/);
+  });
+
+  it("falls back to the system default when props.font is an unknown id", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "batch", x: 0, y: 0, w: 18, h: 4, props: { font: "comic-sans-gone-wild" } }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    expect(svg).toMatch(/font-family="-apple-system/);
+  });
+
+  it("applies the chosen font to the ingredient-list base style and tspans inherit it", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "i", type: "ingr", x: 0, y: 0, w: 50, h: 14, props: { font: "courier" } }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // The base <text> element carries the Courier stack; the inner bold
+    // allergen tspan doesn't repeat font-family (it inherits from <text>).
+    expect(svg).toMatch(/<text[^>]*font-family="[^"]*Courier[^"]*"/);
+    expect(svg).toContain(`<tspan font-weight="700">milk chocolate</tspan>`);
+  });
+});
+
+describe("renderTemplateSvg — bold / italic toggles", () => {
+  it("respects props.bold across text fields (batch, bbe, weight, origin, text)", () => {
+    const svg = renderTemplateSvg(
+      tpl([
+        { id: "b", type: "batch",   x: 0, y: 0,  w: 18, h: 4, props: { bold: true } },
+        { id: "d", type: "bbe",     x: 0, y: 5,  w: 22, h: 4, props: { bold: true } },
+        { id: "w", type: "weight",  x: 0, y: 10, w: 14, h: 4, props: { bold: true } },
+        { id: "o", type: "origin",  x: 0, y: 15, w: 28, h: 4, props: { bold: true } },
+        { id: "t", type: "text",    x: 0, y: 20, w: 30, h: 4, props: { bold: true, text: "Handmade" } },
+      ]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // Each of the five should have font-weight="700" on its <text> element
+    const matches = svg.match(/font-weight="700"/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("respects props.italic across text fields (batch, bbe, origin, contact)", () => {
+    const svg = renderTemplateSvg(
+      tpl([
+        { id: "b", type: "batch",   x: 0, y: 0,  w: 18, h: 4, props: { italic: true } },
+        { id: "d", type: "bbe",     x: 0, y: 5,  w: 22, h: 4, props: { italic: true } },
+        { id: "o", type: "origin",  x: 0, y: 10, w: 28, h: 4, props: { italic: true } },
+        { id: "c", type: "contact", x: 0, y: 15, w: 40, h: 4, props: { italic: true } },
+      ]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    const matches = svg.match(/font-style="italic"/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("default-weight fields stay at 400 when bold is unset", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "b", type: "batch", x: 0, y: 0, w: 18, h: 4 }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // 400 is the default and not emitted explicitly — absence is the assertion.
+    expect(svg).not.toMatch(/font-weight="\d+"/);
+  });
+
+  it("aller stays bold even when props.bold is unset (regulatory natural default)", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "a", type: "aller", x: 0, y: 0, w: 28, h: 8 }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    expect(svg).toMatch(/font-weight="700"[^>]*>Milk · Soybeans</);
+  });
+
+  it("ingr renders allergen tspans bold while the surrounding text honours props.bold", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "i", type: "ingr", x: 0, y: 0, w: 50, h: 14, props: { bold: true } }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // The base <text> weight is 700 (user toggle)…
+    expect(svg).toMatch(/<text[^>]*font-weight="700"[^>]*>.*milk chocolate/);
+    // …and the inner allergen tspan is still wrapped (it stays 700 anyway).
+    expect(svg).toContain(`<tspan font-weight="700">milk chocolate</tspan>`);
   });
 });
 

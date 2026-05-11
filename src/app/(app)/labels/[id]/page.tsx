@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, Trash2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Trash2, AlertTriangle, CheckCircle2, AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal, AlignStartVertical, AlignCenterVertical, AlignEndVertical, AlignHorizontalSpaceAround, AlignVerticalSpaceAround } from "lucide-react";
 import { useSpaId } from "@/lib/use-spa-id";
 import {
   useLabelTemplate,
@@ -14,7 +14,7 @@ import {
   useMarketRegion,
 } from "@/lib/hooks";
 import { useLabelContext } from "@/lib/labelContext";
-import { FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, type LabelFieldGroup } from "@/lib/labelFields";
+import { FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, FONT_OPTIONS_BY_CATEGORY, type LabelFieldGroup } from "@/lib/labelFields";
 import { renderTemplateSvg } from "@/lib/labelSvg";
 import { lintTemplate, summariseLint, type LintWarning } from "@/lib/labelLinter";
 import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelFieldProps } from "@/types";
@@ -70,7 +70,16 @@ function Editor({ initial }: { initial: LabelTemplate }) {
   // exactly once (on mount); subsequent mutations write through `commit`.
   const [tpl, setTpl] = useState<LabelTemplate>(initial);
   const [zoom, setZoom] = useState(3);
-  const [sel, setSel] = useState<string | null>(null);
+  // Selection is now an ordered array so the inspector can swap to alignment
+  // controls when 2+ fields are selected. Single-select stays the common case
+  // (every click without shift replaces the selection with one field).
+  const [sel, setSel] = useState<string[]>([]);
+
+  /** Replace the selection with a single field, or extend/toggle it with shift. */
+  function selectField(id: string, additive: boolean) {
+    if (!additive) { setSel([id]); return; }
+    setSel((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  }
   const [showWarnings, setShowWarnings] = useState(true);
   const [showTabletWarning, setShowTabletWarning] = useState(false);
 
@@ -140,15 +149,36 @@ function Editor({ initial }: { initial: LabelTemplate }) {
       props: {},
     };
     commit({ ...cur, fields: [...cur.fields, newF], updatedAt: new Date() });
-    setSel(newF.id);
+    setSel([newF.id]);
   }
   function removeField(fieldId: string) {
     const cur = tplRef.current;
     commit({ ...cur, fields: cur.fields.filter((f) => f.id !== fieldId), updatedAt: new Date() });
-    if (sel === fieldId) setSel(null);
+    setSel((s) => s.filter((id) => id !== fieldId));
   }
 
-  const selectedField = sel ? tpl.fields.find((f) => f.id === sel) ?? null : null;
+  /** Batch update: apply `patch` to every selected field's position/size, commit
+   *  the result in a single save. Used by the alignment + distribute toolbar. */
+  function updateSelectedFields(patcher: (field: LabelField, all: LabelField[]) => Partial<LabelField>) {
+    const cur = tplRef.current;
+    const selected = cur.fields.filter((f) => sel.includes(f.id));
+    if (selected.length === 0) return;
+    const next: LabelTemplate = {
+      ...cur,
+      fields: cur.fields.map((f) => {
+        if (!sel.includes(f.id)) return f;
+        return { ...f, ...patcher(f, selected) };
+      }),
+      updatedAt: new Date(),
+    };
+    commit(next);
+  }
+
+  const selectedFields = tpl.fields.filter((f) => sel.includes(f.id));
+  // For the single-selection inspector view we always reach for the most recent
+  // selection — matches how design tools surface "primary" properties when
+  // multiple objects share state.
+  const selectedField = selectedFields.length === 1 ? selectedFields[0] : null;
 
   // Source picker — drives the live preview.
   const [source, setSource] = useState<LabelSource | null>(() => readPersistedSource(tpl.id));
@@ -186,22 +216,28 @@ function Editor({ initial }: { initial: LabelTemplate }) {
           zoom={zoom}
           sel={sel}
           setSel={setSel}
+          selectField={selectField}
           context={context ?? null}
           brand={brand}
           marketRegion={marketRegion}
           updateFieldLocal={updateFieldLocal}
           commitCurrent={commitCurrent}
           addFieldAt={(type, at) => addField(type, at)}
+          selectedFields={selectedFields}
+          updateSelectedFields={updateSelectedFields}
         />
         <Inspector
           tpl={tpl}
           field={selectedField}
+          selectedFields={selectedFields}
           setMetadata={setMetadata}
           updateField={updateAndCommitField}
           removeField={removeField}
+          updateSelectedFields={updateSelectedFields}
           lint={lint}
           showWarnings={showWarnings}
           setShowWarnings={setShowWarnings}
+          clearSelection={() => setSel([])}
         />
       </div>
     </div>
@@ -385,18 +421,21 @@ function FieldRail({
 // ---------------------------------------------------------------------------
 
 function Canvas({
-  tpl, zoom, sel, setSel, context, brand, marketRegion, updateFieldLocal, commitCurrent, addFieldAt,
+  tpl, zoom, sel, setSel, selectField, context, brand, marketRegion, updateFieldLocal, commitCurrent, addFieldAt, selectedFields, updateSelectedFields,
 }: {
   tpl: LabelTemplate;
   zoom: number;
-  sel: string | null;
-  setSel: (id: string | null) => void;
+  sel: string[];
+  setSel: (s: string[]) => void;
+  selectField: (id: string, additive: boolean) => void;
   context: ReturnType<typeof useLabelContext> extends infer T ? (T extends undefined ? null : NonNullable<T> | null) : null;
   brand: ReturnType<typeof useBrand>;
   marketRegion: ReturnType<typeof useMarketRegion>;
   updateFieldLocal: (id: string, patch: Partial<LabelField>) => void;
   commitCurrent: () => void;
   addFieldAt: (type: LabelFieldType, at: { x: number; y: number }) => void;
+  selectedFields: LabelField[];
+  updateSelectedFields: (patcher: (field: LabelField, all: LabelField[]) => Partial<LabelField>) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const px = MM_BASE * zoom;
@@ -423,9 +462,15 @@ function Canvas({
           {tpl.width}mm × {tpl.height}mm · {Math.round(zoom * 100)}%
           {context && context.warnings.length > 0 && <span className="ml-2">· {context.warnings.length} resolver note{context.warnings.length === 1 ? "" : "s"}</span>}
         </div>
+        {selectedFields.length >= 2 && (
+          <AlignmentToolbar
+            count={selectedFields.length}
+            onAction={(action) => applyAlignmentAction(action, updateSelectedFields)}
+          />
+        )}
         <div
           ref={ref}
-          onClick={(e) => { if (e.target === e.currentTarget) setSel(null); }}
+          onClick={(e) => { if (e.target === e.currentTarget) setSel([]); }}
           onDrop={onDrop}
           onDragOver={onDragOver}
           style={{
@@ -442,8 +487,8 @@ function Canvas({
               field={f}
               tpl={tpl}
               px={px}
-              selected={sel === f.id}
-              onSelect={() => setSel(f.id)}
+              selected={sel.includes(f.id)}
+              onSelect={(additive) => selectField(f.id, additive)}
               updateLocal={updateFieldLocal}
               commitCurrent={commitCurrent}
             />
@@ -462,6 +507,148 @@ function Canvas({
  * Memoised on the inputs that actually change the rendered output so dragging
  * a field doesn't re-serialise the whole SVG on every pointermove tick.
  */
+// ---------------------------------------------------------------------------
+// Alignment + distribute — pure helpers used by the toolbar
+// ---------------------------------------------------------------------------
+
+type AlignmentAction =
+  | "align-left" | "align-h-center" | "align-right"
+  | "align-top"  | "align-v-center" | "align-bottom"
+  | "distribute-h" | "distribute-v";
+
+/**
+ * Compute the new (x, y) for one field under an alignment action, given the
+ * selection's bounding-box edges. Pure — caller passes the bbox once and we
+ * apply it to every selected field. Returns a partial patch with only the
+ * coordinates that change so the inspector's other props are untouched.
+ */
+function applyAlignmentAction(
+  action: AlignmentAction,
+  updateSelectedFields: (patcher: (field: LabelField, all: LabelField[]) => Partial<LabelField>) => void,
+) {
+  updateSelectedFields((field, all) => {
+    const minX = Math.min(...all.map((f) => f.x));
+    const maxR = Math.max(...all.map((f) => f.x + f.w));
+    const minY = Math.min(...all.map((f) => f.y));
+    const maxB = Math.max(...all.map((f) => f.y + f.h));
+    const cx = (minX + maxR) / 2;
+    const cy = (minY + maxB) / 2;
+    switch (action) {
+      case "align-left":     return { x: minX };
+      case "align-right":    return { x: maxR - field.w };
+      case "align-h-center": return { x: cx - field.w / 2 };
+      case "align-top":      return { y: minY };
+      case "align-bottom":   return { y: maxB - field.h };
+      case "align-v-center": return { y: cy - field.h / 2 };
+      case "distribute-h": {
+        // Anchor the leftmost + rightmost in place; redistribute the rest so
+        // the *gaps* between adjacent fields are equal. With <3 fields this
+        // is a no-op (the two existing positions already define the spacing).
+        if (all.length < 3) return {};
+        const sorted = [...all].sort((a, b) => a.x - b.x);
+        const idx = sorted.findIndex((f) => f.id === field.id);
+        if (idx === 0 || idx === sorted.length - 1) return {}; // anchors stay
+        const totalWidth = sorted.reduce((s, f) => s + f.w, 0);
+        const span = (sorted[sorted.length - 1].x + sorted[sorted.length - 1].w) - sorted[0].x;
+        const gap = (span - totalWidth) / (sorted.length - 1);
+        let cursor = sorted[0].x + sorted[0].w + gap;
+        for (let i = 1; i < idx; i++) cursor += sorted[i].w + gap;
+        return { x: cursor };
+      }
+      case "distribute-v": {
+        if (all.length < 3) return {};
+        const sorted = [...all].sort((a, b) => a.y - b.y);
+        const idx = sorted.findIndex((f) => f.id === field.id);
+        if (idx === 0 || idx === sorted.length - 1) return {};
+        const totalHeight = sorted.reduce((s, f) => s + f.h, 0);
+        const span = (sorted[sorted.length - 1].y + sorted[sorted.length - 1].h) - sorted[0].y;
+        const gap = (span - totalHeight) / (sorted.length - 1);
+        let cursor = sorted[0].y + sorted[0].h + gap;
+        for (let i = 1; i < idx; i++) cursor += sorted[i].h + gap;
+        return { y: cursor };
+      }
+    }
+  });
+}
+
+/**
+ * Floating toolbar above the canvas — only mounts when 2+ fields are selected.
+ * Six alignment buttons plus two distribute buttons (only meaningful at 3+).
+ * Distribute buttons are dimmed-but-clickable at 2 selected for affordance.
+ */
+function AlignmentToolbar({
+  count,
+  onAction,
+}: {
+  count: number;
+  onAction: (action: AlignmentAction) => void;
+}) {
+  const canDistribute = count >= 3;
+  return (
+    <div className="mb-2 inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 shadow-sm text-xs">
+      <span className="text-muted-foreground tabular-nums mr-1">{count} selected</span>
+      <ToolbarButton title="Align left" onClick={() => onAction("align-left")}>
+        <AlignStartVertical className="w-4 h-4" />
+      </ToolbarButton>
+      <ToolbarButton title="Align centre (horizontal)" onClick={() => onAction("align-h-center")}>
+        <AlignCenterVertical className="w-4 h-4" />
+      </ToolbarButton>
+      <ToolbarButton title="Align right" onClick={() => onAction("align-right")}>
+        <AlignEndVertical className="w-4 h-4" />
+      </ToolbarButton>
+      <span className="w-px h-4 bg-border mx-1" />
+      <ToolbarButton title="Align top" onClick={() => onAction("align-top")}>
+        <AlignStartHorizontal className="w-4 h-4" />
+      </ToolbarButton>
+      <ToolbarButton title="Align centre (vertical)" onClick={() => onAction("align-v-center")}>
+        <AlignCenterHorizontal className="w-4 h-4" />
+      </ToolbarButton>
+      <ToolbarButton title="Align bottom" onClick={() => onAction("align-bottom")}>
+        <AlignEndHorizontal className="w-4 h-4" />
+      </ToolbarButton>
+      <span className="w-px h-4 bg-border mx-1" />
+      <ToolbarButton
+        title={canDistribute ? "Distribute horizontally" : "Needs 3+ fields"}
+        onClick={() => canDistribute && onAction("distribute-h")}
+        disabled={!canDistribute}
+      >
+        <AlignHorizontalSpaceAround className="w-4 h-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title={canDistribute ? "Distribute vertically" : "Needs 3+ fields"}
+        onClick={() => canDistribute && onAction("distribute-v")}
+        disabled={!canDistribute}
+      >
+        <AlignVerticalSpaceAround className="w-4 h-4" />
+      </ToolbarButton>
+    </div>
+  );
+}
+
+function ToolbarButton({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+    >
+      {children}
+    </button>
+  );
+}
+
 function CanvasSvg({
   tpl, context, brand, marketRegion,
 }: {
@@ -490,7 +677,8 @@ function FieldNode({
   tpl: LabelTemplate;
   px: number;
   selected: boolean;
-  onSelect: () => void;
+  /** Receives whether the gesture was additive (shift-held) — multi-select. */
+  onSelect: (additive: boolean) => void;
   updateLocal: (id: string, patch: Partial<LabelField>) => void;
   commitCurrent: () => void;
 }) {
@@ -499,7 +687,7 @@ function FieldNode({
     if (e.button !== undefined && e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault(); // suppress native image drag, text selection, etc.
-    if (mode === "move") onSelect();
+    if (mode === "move") onSelect(e.shiftKey);
 
     const target = e.currentTarget;
     const pointerId = e.pointerId;
@@ -583,24 +771,101 @@ function FieldNode({
 // ---------------------------------------------------------------------------
 
 function Inspector({
-  tpl, field, setMetadata, updateField, removeField, lint, showWarnings, setShowWarnings,
+  tpl, field, selectedFields, setMetadata, updateField, removeField, updateSelectedFields, lint, showWarnings, setShowWarnings, clearSelection,
 }: {
   tpl: LabelTemplate;
   field: LabelField | null;
+  selectedFields: LabelField[];
   setMetadata: (patch: Partial<LabelTemplate>) => void;
   updateField: (id: string, patch: Partial<LabelField>) => void;
   removeField: (id: string) => void;
+  updateSelectedFields: (patcher: (field: LabelField, all: LabelField[]) => Partial<LabelField>) => void;
   lint: LintWarning[];
   showWarnings: boolean;
   setShowWarnings: (v: boolean) => void;
+  clearSelection: () => void;
 }) {
   return (
     <div className="border-l border-border p-4 overflow-auto bg-card flex flex-col gap-4">
-      {field
-        ? <FieldInspector field={field} updateField={updateField} removeField={removeField} />
-        : <TemplateInspector tpl={tpl} setMetadata={setMetadata} />
-      }
+      {selectedFields.length >= 2 ? (
+        <MultiSelectInspector
+          selectedFields={selectedFields}
+          updateSelectedFields={updateSelectedFields}
+          clearSelection={clearSelection}
+        />
+      ) : field ? (
+        <FieldInspector field={field} updateField={updateField} removeField={removeField} />
+      ) : (
+        <TemplateInspector tpl={tpl} setMetadata={setMetadata} />
+      )}
       <WarningsPanel lint={lint} show={showWarnings} setShow={setShowWarnings} />
+    </div>
+  );
+}
+
+function MultiSelectInspector({
+  selectedFields,
+  updateSelectedFields,
+  clearSelection,
+}: {
+  selectedFields: LabelField[];
+  updateSelectedFields: (patcher: (field: LabelField, all: LabelField[]) => Partial<LabelField>) => void;
+  clearSelection: () => void;
+}) {
+  const types = Array.from(new Set(selectedFields.map((f) => FIELD_DEFINITIONS[f.type].label))).join(", ");
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Selected · {selectedFields.length} fields</div>
+        <div className="text-[11px] text-muted-foreground mt-0.5 truncate" title={types}>{types}</div>
+      </div>
+      <Section title="Align">
+        <div className="grid grid-cols-3 gap-1">
+          <ToolbarButton title="Align left" onClick={() => applyAlignmentAction("align-left", updateSelectedFields)}>
+            <AlignStartVertical className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Centre horizontally" onClick={() => applyAlignmentAction("align-h-center", updateSelectedFields)}>
+            <AlignCenterVertical className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Align right" onClick={() => applyAlignmentAction("align-right", updateSelectedFields)}>
+            <AlignEndVertical className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Align top" onClick={() => applyAlignmentAction("align-top", updateSelectedFields)}>
+            <AlignStartHorizontal className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Centre vertically" onClick={() => applyAlignmentAction("align-v-center", updateSelectedFields)}>
+            <AlignCenterHorizontal className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Align bottom" onClick={() => applyAlignmentAction("align-bottom", updateSelectedFields)}>
+            <AlignEndHorizontal className="w-4 h-4" />
+          </ToolbarButton>
+        </div>
+      </Section>
+      <Section title="Distribute">
+        <div className="grid grid-cols-2 gap-1">
+          <ToolbarButton
+            title={selectedFields.length >= 3 ? "Distribute horizontally" : "Needs 3+ fields"}
+            onClick={() => applyAlignmentAction("distribute-h", updateSelectedFields)}
+            disabled={selectedFields.length < 3}
+          >
+            <AlignHorizontalSpaceAround className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton
+            title={selectedFields.length >= 3 ? "Distribute vertically" : "Needs 3+ fields"}
+            onClick={() => applyAlignmentAction("distribute-v", updateSelectedFields)}
+            disabled={selectedFields.length < 3}
+          >
+            <AlignVerticalSpaceAround className="w-4 h-4" />
+          </ToolbarButton>
+        </div>
+      </Section>
+      <button
+        type="button"
+        onClick={clearSelection}
+        className="self-start text-xs text-muted-foreground hover:text-foreground underline"
+      >
+        Deselect all
+      </button>
     </div>
   );
 }
@@ -676,22 +941,61 @@ function FieldInspector({
             />
           </Row>
         )}
+        {hasSizeControl && (
+          <Row label="Style">
+            <StyleToggle
+              kind="bold"
+              active={!!props.bold}
+              onToggle={() => setProp("bold", props.bold ? undefined : true)}
+            />
+            <StyleToggle
+              kind="italic"
+              active={!!props.italic}
+              onToggle={() => setProp("italic", props.italic ? undefined : true)}
+            />
+          </Row>
+        )}
+        {hasSizeControl && (
+          <Row label="Font">
+            <select
+              value={props.font ?? "system"}
+              onChange={(e) => setProp("font", e.target.value === "system" ? undefined : e.target.value)}
+              className="flex-1 text-xs border border-border rounded px-2 py-1 bg-card"
+            >
+              <optgroup label="Sans">
+                {FONT_OPTIONS_BY_CATEGORY.sans.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Serif">
+                {FONT_OPTIONS_BY_CATEGORY.serif.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Monospace">
+                {FONT_OPTIONS_BY_CATEGORY.mono.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Display">
+                {FONT_OPTIONS_BY_CATEGORY.display.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          </Row>
+        )}
         {field.type === "ingr" && (
           <Toggle label="Bold allergen tokens" value={props.boldAllergens !== false} onChange={(v) => setProp("boldAllergens", v)} />
         )}
         {(field.type === "text" || field.type === "subtitle") && (
-          <>
-            <textarea
-              value={props.text ?? ""}
-              onChange={(e) => setProp("text", e.target.value)}
-              rows={3}
-              placeholder="Free text…"
-              className="w-full text-xs border border-border rounded px-2 py-1.5 bg-card resize-y"
-            />
-            {field.type === "text" && (
-              <Toggle label="Italic" value={!!props.italic} onChange={(v) => setProp("italic", v)} />
-            )}
-          </>
+          <textarea
+            value={props.text ?? ""}
+            onChange={(e) => setProp("text", e.target.value)}
+            rows={3}
+            placeholder="Free text…"
+            className="w-full text-xs border border-border rounded px-2 py-1.5 bg-card resize-y"
+          />
         )}
         {(field.type === "bbe" || field.type === "prodate") && (
           <DateFormatControl
@@ -709,6 +1013,12 @@ function FieldInspector({
               className="flex-1 text-xs border border-border rounded px-2 py-1 bg-card"
             />
           </Row>
+        )}
+        {field.type === "image" && (
+          <ImageUploadRow
+            value={props.image}
+            onChange={(dataUrl) => setProp("image", dataUrl)}
+          />
         )}
       </Section>
 
@@ -883,6 +1193,103 @@ function DateFormatControl({
         Tokens: <code>YYYY</code>, <code>YY</code>, <code>MM</code>, <code>M</code>, <code>DD</code>, <code>D</code>. Everything else prints as-is.
       </p>
     </div>
+  );
+}
+
+/**
+ * Picker + preview for the `image` field. Stores the chosen file as a base64
+ * data URL on `LabelFieldProps.image` so it travels with the template (Dexie
+ * row, backup export, Dexie Cloud sync) and the renderer can emit it inline
+ * as an `<image href>` without any external fetch at print time.
+ */
+function ImageUploadRow({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (dataUrl: string | undefined) => void;
+}) {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") onChange(reader.result);
+    };
+    reader.readAsDataURL(file);
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {value ? (
+        <div className="border border-border rounded p-1.5 bg-white flex items-center justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={value} alt="Field image preview" className="max-h-20 max-w-full object-contain" />
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground italic">
+          No image set — pick a file below. Stored on the template, no upload.
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <label className="cursor-pointer rounded-md border border-border bg-card px-3 py-1 text-xs hover:bg-muted">
+          {value ? "Replace…" : "Choose image…"}
+          <input
+            type="file"
+            accept="image/*"
+            onChange={onPick}
+            className="hidden"
+          />
+        </label>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange(undefined)}
+            className="text-xs text-muted-foreground hover:text-foreground underline"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Compact icon button for a single style toggle (Bold / Italic). Renders a
+ * square button labelled `B` (bold) or `I` (italic). Active state inverts the
+ * fill so the row reads at a glance like a word-processor toolbar. Used on
+ * every text-bearing field's inspector so the user can mark any data point.
+ */
+function StyleToggle({
+  kind,
+  active,
+  onToggle,
+}: {
+  kind: "bold" | "italic";
+  active: boolean;
+  onToggle: () => void;
+}) {
+  const label = kind === "bold" ? "B" : "I";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      title={kind === "bold" ? "Bold" : "Italic"}
+      className={`w-7 h-7 rounded-md border text-xs flex items-center justify-center transition-colors ${
+        active
+          ? "bg-foreground text-background border-foreground"
+          : "bg-card text-foreground border-border hover:bg-muted"
+      }`}
+      style={{
+        fontWeight: kind === "bold" ? 700 : 400,
+        fontStyle: kind === "italic" ? "italic" : "normal",
+        fontFamily: "serif",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

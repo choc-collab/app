@@ -29,11 +29,13 @@ import type {
 import { allergenLabel } from "@/types";
 import { getNutrientsByMarket } from "@/lib/nutrition";
 import {
+  DEFAULT_FONT_FAMILY,
   FIELD_DEFINITIONS,
   effectiveFieldSizePt,
   effectiveLabelWeightG,
   formatLabelDate,
   formatNetWeight,
+  resolveFontFamily,
 } from "@/lib/labelFields";
 
 // ---------------------------------------------------------------------------
@@ -48,10 +50,10 @@ function ptToMm(pt: number): number {
   return pt * PT_TO_MM;
 }
 
-/** System font stack — chosen so the editor preview matches the printed PNG
- *  on both Mac and Windows. Browsers substitute consistently; Node rasterisers
- *  fall back to whatever serif/sans is installed. */
-const FONT_FAMILY = `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`;
+/** Default font family used when a field doesn't override via `props.font`.
+ *  Re-exported from `labelFields` so the curated FONT_OPTIONS list and the
+ *  renderer agree on what "default" means. */
+const FONT_FAMILY = DEFAULT_FONT_FAMILY;
 
 const COLOR_TEXT = "#222222";
 const COLOR_TEXT_DIM = "#444444";
@@ -64,11 +66,14 @@ const PLACEHOLDER = "—";
 // Text measurement
 // ---------------------------------------------------------------------------
 
-/** Returns the rendered width (in user units == mm) of `text` at `fontMm`. */
+/** Returns the rendered width (in user units == mm) of `text` at `fontMm`.
+ *  `fontFamily` is optional — the heuristic ignores it, the browser measurer
+ *  uses it so wrap points match the actual rendered font. */
 export type TextMeasurer = (
   text: string,
   fontMm: number,
   weight?: number,
+  fontFamily?: string,
 ) => number;
 
 let _measureCtx: CanvasRenderingContext2D | null = null;
@@ -84,10 +89,10 @@ function getBrowserMeasureCtx(): CanvasRenderingContext2D | null {
  * Browser-accurate measurer. Uses a hidden canvas at 1px-per-mm scale —
  * measureText returns CSS pixels, which equal mm in our viewBox coords.
  */
-export const browserMeasurer: TextMeasurer = (text, fontMm, weight = 400) => {
+export const browserMeasurer: TextMeasurer = (text, fontMm, weight = 400, fontFamily) => {
   const ctx = getBrowserMeasureCtx();
-  if (!ctx) return heuristicMeasurer(text, fontMm, weight);
-  ctx.font = `${weight} ${fontMm}px ${FONT_FAMILY}`;
+  if (!ctx) return heuristicMeasurer(text, fontMm, weight, fontFamily);
+  ctx.font = `${weight} ${fontMm}px ${fontFamily ?? FONT_FAMILY}`;
   return ctx.measureText(text).width;
 };
 
@@ -139,17 +144,18 @@ export function wrapLines(
   fontMm: number,
   weight: number,
   measure: TextMeasurer = defaultMeasurer,
+  fontFamily?: string,
 ): string[] {
   if (!text) return [];
   const out: string[] = [];
   for (const src of text.split("\n")) {
     if (!src) { out.push(""); continue; }
-    if (measure(src, fontMm, weight) <= maxWidthMm) { out.push(src); continue; }
+    if (measure(src, fontMm, weight, fontFamily) <= maxWidthMm) { out.push(src); continue; }
     const words = src.split(" ");
     let current = "";
     for (const word of words) {
       const candidate = current ? `${current} ${word}` : word;
-      if (measure(candidate, fontMm, weight) <= maxWidthMm) {
+      if (measure(candidate, fontMm, weight, fontFamily) <= maxWidthMm) {
         current = candidate;
       } else {
         if (current) out.push(current);
@@ -168,6 +174,8 @@ export function wrapLines(
 interface TextOpts {
   fontMm: number;
   weight?: number;
+  /** Optional font-family override. Defaults to the system stack. */
+  fontFamily?: string;
   fill?: string;
   anchor?: "start" | "middle" | "end";
   italic?: boolean;
@@ -179,6 +187,7 @@ function textEl(content: string, x: number, y: number, opts: TextOpts): string {
   const {
     fontMm,
     weight = 400,
+    fontFamily = FONT_FAMILY,
     fill = COLOR_TEXT,
     anchor = "start",
     italic = false,
@@ -187,7 +196,7 @@ function textEl(content: string, x: number, y: number, opts: TextOpts): string {
   const attrs: string[] = [
     `x="${fmt(x)}"`,
     `y="${fmt(y)}"`,
-    `font-family="${FONT_FAMILY}"`,
+    `font-family="${esc(fontFamily)}"`,
     `font-size="${fmt(fontMm)}"`,
   ];
   if (weight !== 400) attrs.push(`font-weight="${weight}"`);
@@ -228,24 +237,55 @@ export interface SvgRenderInput {
 
 type SvgFieldRenderer = (input: SvgRenderInput) => string;
 
+/**
+ * Resolve the effective font weight for a text field. The user's `bold`
+ * toggle overrides toward 700; otherwise fall back to the legacy `weight`
+ * prop (templates saved before `bold` existed) and finally to the field's
+ * natural default — which differs by field type (`name` is semibold, `aller`
+ * is mandatorily bold, everything else is 400).
+ */
+function effectiveWeight(
+  p: { bold?: boolean; weight?: number },
+  naturalDefault: number,
+): number {
+  if (p.bold) return 700;
+  if (p.weight !== undefined) return p.weight;
+  return naturalDefault;
+}
+
 const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   // ────────────────────── product / batch ──────────────────────
-  name: ({ field, context }) => {
+  name: ({ field, context, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("name", p.size));
-    const weight = p.weight ?? 600;
-    return textEl(context?.name || PLACEHOLDER, 0, 0, {
+    const fontFamily = resolveFontFamily(p.font);
+    const weight = effectiveWeight(p, 600);
+    // Wrap by the field's box width so long product names break across lines
+    // when the user keeps the box narrow — dragging the box wider lets more
+    // characters fit per line.
+    const lines = wrapLines(context?.name || PLACEHOLDER, field.w, fontMm, weight, measure, fontFamily);
+    return multiLine(lines, 0, 0, {
       fontMm,
+      fontFamily,
       weight,
+      italic: !!p.italic,
       letterSpacing: -fontMm * 0.02,
+      lineHeightMm: fontMm * 1.05,
     });
   },
 
   subtitle: ({ field, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("subtitle", p.size));
-    const lines = wrapLines(p.text || PLACEHOLDER, field.w, fontMm, 400, measure);
-    return multiLine(lines, 0, 0, { fontMm, fill: COLOR_TEXT_DIM });
+    const fontFamily = resolveFontFamily(p.font);
+    const lines = wrapLines(p.text || PLACEHOLDER, field.w, fontMm, 400, measure, fontFamily);
+    return multiLine(lines, 0, 0, {
+      fontMm,
+      fontFamily,
+      weight: effectiveWeight(p, 400),
+      italic: !!p.italic,
+      fill: COLOR_TEXT_DIM,
+    });
   },
 
   weight: ({ field, context, template }) => {
@@ -255,45 +295,76 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
       formatNetWeight(effectiveLabelWeightG(context, template)),
       0,
       0,
-      { fontMm },
+      {
+        fontMm,
+        fontFamily: resolveFontFamily(p.font),
+        weight: effectiveWeight(p, 400),
+        italic: !!p.italic,
+      },
     );
   },
 
   ingr: ({ field, context, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("ingr", p.size));
+    const fontFamily = resolveFontFamily(p.font);
     const lineHeight = fontMm * 1.42;
     const ings = context?.ingredients ?? [];
     if (ings.length === 0) {
-      return textEl(PLACEHOLDER, 0, 0, { fontMm, fill: COLOR_TEXT });
+      return textEl(PLACEHOLDER, 0, 0, { fontMm, fontFamily, fill: COLOR_TEXT });
     }
-    return renderIngredientLinesSvg(ings, field.w, fontMm, lineHeight, p.boldAllergens !== false, measure);
+    return renderIngredientLinesSvg(
+      ings,
+      field.w,
+      fontMm,
+      lineHeight,
+      p.boldAllergens !== false,
+      effectiveWeight(p, 400),
+      !!p.italic,
+      fontFamily,
+      measure,
+    );
   },
 
-  aller: ({ field, context }) => {
+  aller: ({ field, context, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("aller", p.size));
+    const fontFamily = resolveFontFamily(p.font);
     const lineHeight = fontMm * 1.42;
     const allergens = context?.allergens ?? [];
     const mayContain = context?.mayContain ?? [];
+    // `aller` is mandatorily bold for regulatory reasons — natural default 700.
+    const weight = effectiveWeight(p, 700);
     const parts: string[] = [];
+    let yCursor = 0;
+    // Allergen declaration line — wrap by the box width so long allergen
+    // lists break across lines instead of overflowing. Each line emits its
+    // own `<text>` so the bold weight applies uniformly.
     if (allergens.length > 0) {
-      parts.push(textEl(allergens.map(allergenLabel).join(" · "), 0, 0, {
-        fontMm,
-        weight: 700,
-      }));
+      const declaration = allergens.map(allergenLabel).join(" · ");
+      const declLines = wrapLines(declaration, field.w, fontMm, weight, measure, fontFamily);
+      for (const line of declLines) {
+        parts.push(textEl(line, 0, yCursor, { fontMm, fontFamily, weight, italic: !!p.italic }));
+        yCursor += lineHeight;
+      }
     } else {
-      parts.push(textEl(PLACEHOLDER, 0, 0, {
-        fontMm,
-        fill: COLOR_TEXT_PLACEHOLDER,
-      }));
+      parts.push(textEl(PLACEHOLDER, 0, 0, { fontMm, fontFamily, fill: COLOR_TEXT_PLACEHOLDER }));
+      yCursor += lineHeight;
     }
+    // May-contain line stays italic + muted by convention (advisory tone);
+    // also wraps by width so it can span multiple lines below the declaration.
     if (mayContain.length > 0) {
-      parts.push(textEl(mayContain.map(allergenLabel).join(" · "), 0, lineHeight, {
-        fontMm,
-        fill: COLOR_TEXT_MUTED,
-        italic: true,
-      }));
+      const mc = mayContain.map(allergenLabel).join(" · ");
+      const mcLines = wrapLines(mc, field.w, fontMm, 400, measure, fontFamily);
+      for (const line of mcLines) {
+        parts.push(textEl(line, 0, yCursor, {
+          fontMm,
+          fontFamily,
+          fill: COLOR_TEXT_MUTED,
+          italic: true,
+        }));
+        yCursor += lineHeight;
+      }
     }
     return parts.join("");
   },
@@ -301,9 +372,11 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   nutri: ({ field, context, marketRegion }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("nutri", p.size));
+    const fontFamily = resolveFontFamily(p.font);
     const lineHeight = fontMm * 1.32;
     const data = context?.nutritionPer100g ?? {};
     const nutrients = getNutrientsByMarket(marketRegion ?? "EU");
+    const weight = effectiveWeight(p, 400);
     return nutrients
       .map((nut, i) => {
         const val = data[nut.key];
@@ -311,6 +384,9 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
         const valStr = val == null ? PLACEHOLDER : `${val}${nut.unit}`;
         return textEl(`${nut.label} ${valStr}`, indentMm, i * lineHeight, {
           fontMm,
+          fontFamily,
+          weight,
+          italic: !!p.italic,
           fill: COLOR_TEXT,
         });
       })
@@ -320,25 +396,45 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   bbe: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("bbe", p.size));
-    return textEl(formatLabelDate(context?.bestBefore ?? null, p.dateFormat), 0, 0, { fontMm });
+    return textEl(formatLabelDate(context?.bestBefore ?? null, p.dateFormat), 0, 0, {
+      fontMm,
+      fontFamily: resolveFontFamily(p.font),
+      weight: effectiveWeight(p, 400),
+      italic: !!p.italic,
+    });
   },
 
   batch: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("batch", p.size));
-    return textEl(context?.batchNumber || PLACEHOLDER, 0, 0, { fontMm });
+    return textEl(context?.batchNumber || PLACEHOLDER, 0, 0, {
+      fontMm,
+      fontFamily: resolveFontFamily(p.font),
+      weight: effectiveWeight(p, 400),
+      italic: !!p.italic,
+    });
   },
 
   prodate: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("prodate", p.size));
-    return textEl(formatLabelDate(context?.producedAt ?? null, p.dateFormat), 0, 0, { fontMm });
+    return textEl(formatLabelDate(context?.producedAt ?? null, p.dateFormat), 0, 0, {
+      fontMm,
+      fontFamily: resolveFontFamily(p.font),
+      weight: effectiveWeight(p, 400),
+      italic: !!p.italic,
+    });
   },
 
   origin: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("origin", p.size));
-    return textEl(context?.origin || PLACEHOLDER, 0, 0, { fontMm });
+    return textEl(context?.origin || PLACEHOLDER, 0, 0, {
+      fontMm,
+      fontFamily: resolveFontFamily(p.font),
+      weight: effectiveWeight(p, 400),
+      italic: !!p.italic,
+    });
   },
 
   // ────────────────────── brand / business ──────────────────────
@@ -352,19 +448,25 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   company: ({ field, brand, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("company", p.size));
+    const fontFamily = resolveFontFamily(p.font);
     const lineHeight = fontMm * 1.35;
+    // The brand name is naturally bold (built-in 700) so it stands out above
+    // the address; the user's `bold` toggle forces every line to 700.
+    const forceBold = !!p.bold;
+    const italic = !!p.italic;
     const lines: Array<{ text: string; bold: boolean }> = [];
     if (brand.name) lines.push({ text: brand.name, bold: true });
     if (brand.address) {
       for (const line of brand.address.split("\n")) {
-        for (const wrapped of wrapLines(line, field.w, fontMm, 400, measure)) {
-          lines.push({ text: wrapped, bold: false });
+        for (const wrapped of wrapLines(line, field.w, fontMm, 400, measure, fontFamily)) {
+          lines.push({ text: wrapped, bold: forceBold });
         }
       }
     }
     if (lines.length === 0) {
       return textEl(PLACEHOLDER, 0, 0, {
         fontMm,
+        fontFamily,
         fill: COLOR_TEXT_PLACEHOLDER,
       });
     }
@@ -372,7 +474,9 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
       .map((l, i) =>
         textEl(l.text, 0, i * lineHeight, {
           fontMm,
-          weight: l.bold ? 700 : 400,
+          fontFamily,
+          weight: (l.bold || forceBold) ? 700 : 400,
+          italic,
           fill: COLOR_TEXT,
         }),
       )
@@ -382,17 +486,27 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   contact: ({ field, brand }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("contact", p.size));
-    return textEl(brand.contact || PLACEHOLDER, 0, 0, { fontMm, fill: COLOR_TEXT_DIM });
+    return textEl(brand.contact || PLACEHOLDER, 0, 0, {
+      fontMm,
+      fontFamily: resolveFontFamily(p.font),
+      weight: effectiveWeight(p, 400),
+      italic: !!p.italic,
+      fill: COLOR_TEXT_DIM,
+    });
   },
 
   socials: ({ field, brand, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("socials", p.size));
+    const fontFamily = resolveFontFamily(p.font);
     const lineHeight = fontMm * 1.4;
+    const weight = effectiveWeight(p, 400);
+    const italic = !!p.italic;
     const socials = brand.socials ?? [];
     if (socials.length === 0) {
       return textEl(PLACEHOLDER, 0, 0, {
         fontMm,
+        fontFamily,
         fill: COLOR_TEXT_PLACEHOLDER,
       });
     }
@@ -400,12 +514,12 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
       .map((s, i) => {
         const y = i * lineHeight;
         const labelStr = `${s.label} `;
-        const labelW = measure(labelStr, fontMm, 400);
+        const labelW = measure(labelStr, fontMm, weight, fontFamily);
         // Emit label (muted) and url (body) as two adjacent <text> elements —
         // simpler than tspan alignment, perfectly fine for left-anchored rows.
         return (
-          textEl(labelStr, 0, y, { fontMm, fill: COLOR_TEXT_MUTED }) +
-          textEl(s.url, labelW, y, { fontMm, fill: COLOR_TEXT })
+          textEl(labelStr, 0, y, { fontMm, fontFamily, weight, italic, fill: COLOR_TEXT_MUTED }) +
+          textEl(s.url, labelW, y, { fontMm, fontFamily, weight, italic, fill: COLOR_TEXT })
         );
       })
       .join("");
@@ -436,9 +550,12 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   text: ({ field, measure }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("text", p.size));
-    const lines = wrapLines(p.text || PLACEHOLDER, field.w, fontMm, 400, measure);
+    const fontFamily = resolveFontFamily(p.font);
+    const lines = wrapLines(p.text || PLACEHOLDER, field.w, fontMm, 400, measure, fontFamily);
     return multiLine(lines, 0, 0, {
       fontMm,
+      fontFamily,
+      weight: effectiveWeight(p, 400),
       italic: !!p.italic,
       fill: COLOR_TEXT,
     });
@@ -472,22 +589,27 @@ function renderIngredientLinesSvg(
   fontMm: number,
   lineHeightMm: number,
   boldAllergens: boolean,
+  baseWeight: number,
+  italic: boolean,
+  fontFamily: string,
   measure: TextMeasurer,
 ): string {
-  // Tokenize: alternating ingredient names and ", " separators.
-  type Tok = { text: string; bold: boolean };
+  // Tokenize: alternating ingredient names and ", " separators. Each token
+  // remembers whether it's an "allergen run" so the surrounding line can keep
+  // its own weight while the allergen tspan jumps to 700.
+  type Tok = { text: string; allergen: boolean };
   const toks: Tok[] = [];
   ingredients.forEach((ing, i) => {
-    if (i > 0) toks.push({ text: ", ", bold: false });
-    toks.push({ text: ing.name, bold: boldAllergens && ing.allergens.length > 0 });
+    if (i > 0) toks.push({ text: ", ", allergen: false });
+    toks.push({ text: ing.name, allergen: boldAllergens && ing.allergens.length > 0 });
   });
 
-  // Pack tokens into lines greedily, measuring each candidate.
+  // Pack tokens into lines greedily, measuring each candidate at its own weight.
   const lines: Tok[][] = [];
   let current: Tok[] = [];
   let currentWidth = 0;
   for (const tok of toks) {
-    const w = measure(tok.text, fontMm, tok.bold ? 700 : 400);
+    const w = measure(tok.text, fontMm, tok.allergen ? 700 : baseWeight, fontFamily);
     if (currentWidth + w <= maxWidthMm || current.length === 0) {
       current.push(tok);
       currentWidth += w;
@@ -500,20 +622,23 @@ function renderIngredientLinesSvg(
   if (current.length > 0) lines.push(current);
 
   // Emit each line as a <text> with <tspan> children for bold/non-bold runs.
+  const baseStyleAttrs =
+    `font-family="${esc(fontFamily)}" font-size="${fmt(fontMm)}" ` +
+    (baseWeight !== 400 ? `font-weight="${baseWeight}" ` : "") +
+    (italic ? `font-style="italic" ` : "") +
+    `fill="${COLOR_TEXT}" dominant-baseline="hanging"`;
   return lines
     .map((line, i) => {
       const y = i * lineHeightMm;
       const tspans = line
         .map((t) => {
-          if (t.bold) {
+          if (t.allergen) {
             return `<tspan font-weight="700">${esc(t.text)}</tspan>`;
           }
           return esc(t.text);
         })
         .join("");
-      return (
-        `<text x="0" y="${fmt(y)}" font-family="${FONT_FAMILY}" font-size="${fmt(fontMm)}" fill="${COLOR_TEXT}" dominant-baseline="hanging">${tspans}</text>`
-      );
+      return `<text x="0" y="${fmt(y)}" ${baseStyleAttrs}>${tspans}</text>`;
     })
     .join("");
 }

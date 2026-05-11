@@ -11,29 +11,36 @@ import { createBlankTemplate } from "@/types";
 interface PresetSize { label: string; width: number; height: number }
 
 // A small set of practical label sizes. Free-form W/H is also available.
+// Names stay dimensions-only — the user picks the template name themselves,
+// so prescriptive labels like "Box of 9 retail" or "Filling jar" just
+// presuppose use cases the template doesn't actually pin to.
 const PRESETS: PresetSize[] = [
-  { label: "Box of 9 retail (89×36mm)",   width: 89,  height: 36 },
-  { label: "Square sticker (50×50mm)",     width: 50,  height: 50 },
-  { label: "Round sticker (40×40mm)",       width: 40,  height: 40 },
-  { label: "Filling jar (60×40mm)",         width: 60,  height: 40 },
-  { label: "Address label (89×62mm)",       width: 89,  height: 62 },
-  { label: "Niimbot B21 50×40mm",           width: 50,  height: 40 },
+  { label: "40×40 mm", width: 40, height: 40 },
+  { label: "50×40 mm", width: 50, height: 40 },
+  { label: "50×50 mm", width: 50, height: 50 },
+  { label: "60×40 mm", width: 60, height: 40 },
+  { label: "89×36 mm", width: 89, height: 36 },
+  { label: "89×62 mm", width: 89, height: 62 },
 ];
 
 export default function NewLabelTemplatePage() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [presetIdx, setPresetIdx] = useState<number | "custom">(0);
-  const [width, setWidth] = useState(89);
-  const [height, setHeight] = useState(36);
+  const [presetIdx, setPresetIdx] = useState<number | "custom">(1);
+  // Track width / height as strings so the user can transiently empty the
+  // field while typing (e.g. clear "50" before typing "60"). Coercing to a
+  // number on every keystroke would re-render the input with "0" and trap
+  // them into "060". Parsed once at submit.
+  const [width, setWidth] = useState("50");
+  const [height, setHeight] = useState("40");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>("");
 
   function handlePreset(idx: number | "custom") {
     setPresetIdx(idx);
     if (idx !== "custom") {
-      setWidth(PRESETS[idx].width);
-      setHeight(PRESETS[idx].height);
+      setWidth(String(PRESETS[idx].width));
+      setHeight(String(PRESETS[idx].height));
     }
   }
 
@@ -45,18 +52,20 @@ export default function NewLabelTemplatePage() {
       setError("Give the template a name.");
       return;
     }
-    if (!Number.isFinite(width) || width <= 0 || width > 500) {
+    const widthMm = parseFloat(width);
+    const heightMm = parseFloat(height);
+    if (!Number.isFinite(widthMm) || widthMm <= 0 || widthMm > 500) {
       setError("Width must be between 1 and 500 mm.");
       return;
     }
-    if (!Number.isFinite(height) || height <= 0 || height > 500) {
+    if (!Number.isFinite(heightMm) || heightMm <= 0 || heightMm > 500) {
       setError("Height must be between 1 and 500 mm.");
       return;
     }
 
     setSubmitting(true);
     try {
-      const draft = createBlankTemplate({ name: trimmed, width, height });
+      const draft = createBlankTemplate({ name: trimmed, width: widthMm, height: heightMm });
       const id = await saveLabelTemplate(draft);
       router.push(`/labels/${encodeURIComponent(id)}?new=1`);
     } catch (err) {
@@ -107,7 +116,7 @@ export default function NewLabelTemplatePage() {
                 <input
                   type="number"
                   value={width}
-                  onChange={(e) => { setWidth(parseFloat(e.target.value) || 0); setPresetIdx("custom"); }}
+                  onChange={(e) => { setWidth(e.target.value); setPresetIdx("custom"); }}
                   className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                   min={1}
                   max={500}
@@ -118,7 +127,7 @@ export default function NewLabelTemplatePage() {
                 <input
                   type="number"
                   value={height}
-                  onChange={(e) => { setHeight(parseFloat(e.target.value) || 0); setPresetIdx("custom"); }}
+                  onChange={(e) => { setHeight(e.target.value); setPresetIdx("custom"); }}
                   className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                   min={1}
                   max={500}
