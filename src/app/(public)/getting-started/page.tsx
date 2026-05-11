@@ -172,7 +172,7 @@ const SECTIONS: Section[] = [
             <strong>What to watch out for:</strong> data is tied to this one
             browser on this one device. Clear your browser data and it&apos;s
             gone. No sync across iPad + laptop. <strong>Backup is essential</strong>
-            {" "}— see section 16.
+            {" "}— see section 17.
           </li>
         </ul>
         <h3>Hosted (with Dexie Cloud sync)</h3>
@@ -769,15 +769,183 @@ const SECTIONS: Section[] = [
         <ul>
           <li><strong>Pulls from stock.</strong> Filling a box reserves the pieces; selling it commits the deduction. Voiding a prepared box returns them to stock.</li>
           <li><strong>Uses collection pricing.</strong> Retail price comes from the collection × packaging pair you set up in section 12. Change the price on the collection and future boxes pick it up; already-prepared boxes keep the price they were prepared at.</li>
-          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 14 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
+          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 15 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
         </ul>
         <Shot label="Shop landing — today's revenue, KPIs, and ready-to-sell boxes" src="/docs/screenshots/shop-landing.png" />
       </>
     ),
   },
   {
-    id: "observatory",
+    id: "labels",
     num: "14",
+    title: "Labels — design templates and print stickers",
+    teaser: "Drag-and-drop label editor, brand profile, and one-tap printing from batches and the shop.",
+    render: () => (
+      <>
+        <p className="sub">
+          Every chocolate box that leaves your workshop needs a sticker — name, ingredients, allergens,
+          net weight, sometimes a QR code. Choc-collab&apos;s label system lets you design a template once
+          and print it against any production batch, filling jar, or retail box. The data on the label
+          comes from your products, fillings, and ingredients; you control the layout.
+        </p>
+
+        <h3>Step 1 — set up your Brand profile (do this first)</h3>
+        <p>
+          Open <strong>Settings → Brand</strong> and fill in whatever is relevant: business name,
+          address, contact line (phone / email / website), VAT or business number, and a list of
+          named links (Instagram, Web, etc.). You can upload a logo image too — it&apos;s stored
+          alongside your data, no external hosting needed.
+        </p>
+        <p>
+          The label editor&apos;s <em>logo</em>, <em>company</em>, <em>contact</em>, <em>socials</em>, and
+          <em> QR</em> fields all pull from this profile. Filling in Brand once means every template
+          you design from then on is already populated — change your phone number on a future label
+          by editing Settings, not by re-editing 12 templates.
+        </p>
+        <Callout kind="tip" title="Optional but worth it">
+          You can skip Brand and still design templates — placeholder dashes will show where your
+          brand info would go. But for printed customer-facing labels, the address and contact line
+          are usually legally required, so fill them in before your first real print run.
+        </Callout>
+
+        <h3>Step 2 — design a template at <code>/labels</code></h3>
+        <p>
+          From the side nav: <strong>Pantry → Label templates</strong>, or directly at <code>/labels</code>.
+          Tap <strong>+ New template</strong>, give it a name and a size in millimetres (presets cover
+          common label sizes from 40×40 mm up to 89×62 mm; free-form W/H is always available).
+        </p>
+        <p>
+          The editor has three columns: a draggable field rail on the left, a millimetre-accurate
+          canvas in the centre, and an inspector on the right.
+        </p>
+        <ul>
+          <li>
+            <strong>Drag fields from the rail onto the canvas.</strong> Three groups:
+            <ul>
+              <li>
+                <strong>Product / batch (auto)</strong> — name, subtitle, net weight, ingredients,
+                allergens, nutrition table, best-before, batch number, production date, origin /
+                cocoa %. These auto-bind to whatever batch you print against.
+              </li>
+              <li>
+                <strong>Brand / business (auto)</strong> — logo, company info, contact, links, QR
+                code. These auto-bind to your Brand profile from Step 1.
+              </li>
+              <li>
+                <strong>Custom</strong> — free text (any wording you want), divider lines, uploaded
+                images. Use free-text fields to add language-specific labels next to the auto fields
+                (e.g. write <em>&quot;Ingrediënten:&quot;</em> in front of the ingredient list).
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Click a field to position and style it.</strong> The inspector shows X/Y/W/H in
+            mm, a size stepper, bold / italic toggles, a font picker (curated cross-platform fonts:
+            Helvetica, Arial, Verdana, Georgia, Times, Courier, Impact, more), and field-specific
+            options (date format pattern for best-before / production date, allergen-bolding for
+            ingredient lists, free-text editor for the text field, image upload for the image field).
+          </li>
+          <li>
+            <strong>Multi-select to align fields.</strong> Shift-click multiple fields to select
+            them at once, then use the alignment toolbar above the canvas (or the panel in the
+            inspector): align left / centre / right, top / middle / bottom, plus distribute
+            horizontally / vertically for evenly-spaced rows.
+          </li>
+          <li>
+            <strong>Resize the bounding box to wrap text.</strong> For text fields like ingredients
+            and allergens, the width of the box controls where the text wraps. Drag the corner
+            handle to make a field narrower and the text breaks across more lines; drag it taller
+            to give the wrapped lines room.
+          </li>
+        </ul>
+        <Callout kind="note" title="Language-neutral by design">
+          The renderers never add English prose around your data — no &quot;Ingredients:&quot; or
+          &quot;BBE:&quot; prefixes that would be wrong in another language. If you want labels in
+          Dutch, French, Spanish, etc., drop free-text fields next to the data fields and type the
+          wording your customer reads. Dates use ISO <code>YYYY-MM-DD</code> by default; the date
+          format inspector takes any pattern using <code>YYYY / YY / MM / M / DD / D</code> tokens.
+        </Callout>
+        <Callout kind="tip" title="The preview source dropdown">
+          The top bar of the editor has a <em>Preview against</em> dropdown — pick a recent
+          completed production batch and the auto-bound fields populate with that batch&apos;s
+          actual product name, ingredients, allergens, and weight. Your template stays generic; the
+          preview just shows how it&apos;ll look once it hits real data.
+        </Callout>
+
+        <h3>Step 3 — set a default template (optional)</h3>
+        <p>
+          Open <strong>Settings → Printing</strong> and pick a default in the
+          <em> Production batch labels</em> dropdown. From then on, every &quot;Save labels&quot; click
+          opens the picker pre-selected to that template — you can still change it per-batch before
+          confirming, but power users with one go-to label save the extra tap.
+        </p>
+
+        <h3>Step 4 — print labels</h3>
+        <p>
+          The same template can be used in three places. Each click runs the same pipeline:
+          render the template → rasterise to PNG → hand the file to the OS share sheet (iOS / iPadOS /
+          Android) or download it directly (Mac / Windows / Linux desktops).
+        </p>
+        <StepList items={[
+          { title: "From a completed production batch", body: "When the batch is marked Done, two buttons appear (depending on what's in the batch): Save product labels and Save filling labels. The first prints one PNG per PlanProduct with that product's ingredients, allergens, and weight; the second prints one per filling jar with the filling's recipe and total batch grams. Pick a template in the picker, confirm, and your downloads folder (or share sheet) fills up with stickers." },
+          { title: "From the shop's Ready to sell tab", body: "Each prepared box on the Ready tab has a 🖨 Label button next to + Note / Sell. Clicking it prints one PNG for that specific box, with the ingredient list and allergens computed from the actual per-cavity product distribution — so a box with 3 yuzu + 2 caramel + 4 praline gets accurate proportions, not a one-of-each guess. Print N copies through your label printer for N identical boxes." },
+          { title: "Across any label printer", body: "The output is a high-DPI PNG (300 DPI by default — good for thermal printers and photo export alike). Save to Photos, AirDrop to a workstation, open in your label printer's app — whatever workflow you already have. Nothing in the app is tied to a specific printer brand." },
+        ]} />
+        <Callout kind="tip" title="iOS share sheet vs. desktop downloads">
+          On iPad and iPhone, clicking Save Labels opens the native share sheet so you can drop
+          straight into Photos or AirDrop. On Mac, Windows, and Linux desktops it triggers direct
+          downloads instead — the macOS share sheet doesn&apos;t offer useful save-to-disk
+          actions for PNGs, so the file lands in your Downloads folder where you actually want it.
+        </Callout>
+
+        <h3>What ends up on the label, exactly</h3>
+        <p>
+          Once you place an auto-bound field, the renderer pulls real data at print time:
+        </p>
+        <ul>
+          <li>
+            <strong>Ingredients</strong> walks the product&apos;s filling tree (including nested
+            fillings), flattens to leaf ingredients with per-piece grams, rolls up duplicates, and
+            sorts descending by mass for EU FIC ordering. Allergen-tagged ingredients render bold.
+          </li>
+          <li>
+            <strong>Allergens</strong> is the union of every allergen tagged on every ingredient
+            that ended up in the list above. The mandatory regulatory bold weight is on by default.
+          </li>
+          <li>
+            <strong>Nutrition</strong> renders the per-100g table for your <em>Target Market</em>
+            (Settings → Target Market) — EU/UK shows kJ + kcal + salt, US shows Calories + sodium
+            + vitamins, AU shows kJ + sodium. Values come from your ingredient data, weighted by
+            mass.
+          </li>
+          <li>
+            <strong>Best-before</strong> is computed from the batch&apos;s completion date plus the
+            product&apos;s (or filling&apos;s) shelf-life weeks. No shelf life set → em-dash. The
+            date format follows the pattern you picked in the inspector.
+          </li>
+          <li>
+            <strong>Net weight</strong> for a production batch label is <em>per-cavity weight × pieces per label</em>
+            (set <em>Pieces per label</em> in the template metadata for box labels — e.g. 9 for a
+            9-piece box). For filling jars, it&apos;s the total batch grams. For shop boxes, it&apos;s
+            the actual sum across all pieces in the cavity layout.
+          </li>
+        </ul>
+
+        <h3>Where templates live, and roaming with them</h3>
+        <p>
+          Templates are stored in IndexedDB on your device alongside everything else. If you use
+          Dexie Cloud sync (section 18), they roam to every device you sign in from. They&apos;re
+          included in every backup file (section 17) so a workshop with five label designs can
+          export them once and import them onto a new machine in seconds.
+        </p>
+
+        <Shot label="Label editor — field rail, canvas, inspector" note="Replace with a screenshot of /labels/[id] showing a populated 50×40mm template." />
+      </>
+    ),
+  },
+  {
+    id: "observatory",
+    num: "15",
     title: "The Observatory — your numbers in one place",
     teaser: "Pricing health, production trends, product-cost breakdowns, and shop sales.",
     render: () => (
@@ -837,7 +1005,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "allergens",
-    num: "15",
+    num: "16",
     title: "Allergens and nutrition",
     teaser: "Enter once at the ingredient level. The app does the rest.",
     render: () => (
@@ -865,7 +1033,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "backup",
-    num: "16",
+    num: "17",
     title: "Backup, restore, and cloud sync",
     teaser: "Your data is yours. Treat it that way.",
     render: () => (
@@ -924,7 +1092,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "dexie-cloud",
-    num: "17",
+    num: "18",
     title: "Setting up Dexie Cloud sync (step by step)",
     teaser: "The bit that lets your iPad and laptop see the same data. Twenty minutes, no code.",
     render: () => (
@@ -1262,7 +1430,7 @@ jobs:
   },
   {
     id: "shortcuts",
-    num: "18",
+    num: "19",
     title: "Keyboard shortcuts",
     teaser: "Small, but they add up.",
     render: () => (
@@ -1291,7 +1459,7 @@ jobs:
   },
   {
     id: "faq",
-    num: "19",
+    num: "20",
     title: "Troubleshooting and FAQ",
     teaser: "The things I've been asked most.",
     render: () => (
@@ -1541,7 +1709,7 @@ jobs:
             </li>
             <li>
               <strong>Backups are your responsibility.</strong> The app offers exports and
-              auto-snapshots (see section 16), but I can&apos;t recover data for you. If your
+              auto-snapshots (see section 17), but I can&apos;t recover data for you. If your
               iPad dies and you never exported, the data is gone. Treat a weekly backup like
               closing the till.
             </li>
@@ -1577,14 +1745,14 @@ const HUB_GROUPS = [
   { title: "Get set up", ids: ["welcome", "hosted-or-local", "install", "demo", "preferences"] },
   { title: "Day to day", ids: ["dashboard"] },
   { title: "Build your pantry", ids: ["ingredient", "filling", "product"] },
-  { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "observatory"] },
-  { title: "Labels, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },
+  { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "labels", "observatory"] },
+  { title: "Allergens, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },
 ];
 
 const HUB_ACCENTS: Record<string, string> = {
   welcome: "cocoa", "hosted-or-local": "mint", install: "blue", demo: "butter", dashboard: "lilac", preferences: "taupe",
   ingredient: "sage", filling: "peach", product: "cocoa",
-  production: "terracotta", stock: "taupe", collections: "butter", shop: "peach", observatory: "sage",
+  production: "terracotta", stock: "taupe", collections: "butter", shop: "peach", labels: "taupe", observatory: "sage",
   allergens: "mint", backup: "lilac", "dexie-cloud": "mint", shortcuts: "taupe", faq: "blue",
 };
 
@@ -1602,6 +1770,7 @@ const HUB_ICONS: Record<string, ReactNode> = {
   stock:       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M3 7l9-4 9 4-9 4zM3 7v10l9 4M21 7v10l-9 4"/></svg>,
   collections: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
   shop:        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/></svg>,
+  labels:      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M6 8h12M6 12h8M6 16h10"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>,
   observatory: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M4 20h16M6 20V10M10 20V6M14 20v-8M18 20V4"/></svg>,
   allergens:   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M10.3 3.9 1.8 18.2A2 2 0 0 0 3.5 21h17a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg>,
   backup:      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8M21 3v5h-5"/></svg>,

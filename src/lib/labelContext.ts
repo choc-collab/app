@@ -38,6 +38,8 @@ import {
 } from "@/lib/costCalculation";
 import { aggregateNutrition, calculateProductNutrition } from "@/lib/nutrition";
 import type {
+  Collection,
+  CollectionProduct,
   Filling,
   FillingComponent,
   FillingIngredient,
@@ -46,6 +48,7 @@ import type {
   LabelContextIngredient,
   LabelSource,
   Mould,
+  Packaging,
   PlanFilling,
   PlanProduct,
   Product,
@@ -330,6 +333,232 @@ export function buildFillingBatchContext(input: FillingBatchContextInput): Label
 }
 
 // ---------------------------------------------------------------------------
+// Pure builder — collection-package
+// ---------------------------------------------------------------------------
+
+export interface CollectionPackageContextInput {
+  source: Extract<LabelSource, { kind: "collection-package" }>;
+  collection: Collection;
+  packaging: Packaging;
+  /** Ordered list of products in the collection. */
+  collectionProducts: CollectionProduct[];
+  /** Lookup of every product referenced by `collectionProducts.productId`. */
+  productMap: ReadonlyMap<string, Product>;
+  /** Default moulds keyed by `Product.defaultMouldId`. Optional rows. */
+  mouldMap: ReadonlyMap<string, Mould>;
+  /** Per-product filling rows (recipe attachments), keyed by `productId`. */
+  productFillingsByProduct: ReadonlyMap<string, ProductFilling[]>;
+  fillingIngredientsMap: ReadonlyMap<string, FillingIngredient[]>;
+  fillingComponentsMap: ReadonlyMap<string, FillingComponent[]>;
+  ingredientMap: ReadonlyMap<string, Ingredient>;
+  facilityMayContain: string[];
+  /**
+   * Optional per-cavity product distribution from `Sale.cells` (one productId
+   * or null per cavity, length = packaging.capacity). When provided, the
+   * label reflects the exact number of each product type in this specific
+   * box — ingredient totals and box weight are summed by the real count
+   * rather than assuming one of each.
+   *
+   * Omit for the design-time preview where no specific sale is selected; the
+   * resolver falls back to one piece of each product in the collection.
+   */
+  cells?: ReadonlyArray<string | null>;
+}
+
+/**
+ * Build a `LabelContext` for the `collection-package` source kind — the
+ * retail bonbon-box label sold via the shop.
+ *
+ * Aggregation model: a Collection + Packaging combination doesn't store an
+ * explicit "X pieces of product A, Y of product B" slot distribution. We
+ * treat the box as containing one of each product in the collection for
+ * ingredient/allergen union (qualitatively correct — the box can hold any
+ * of these chocolates) and compute total box weight as
+ * `packaging.capacity × average-bonbon-weight-across-products`.
+ *
+ * Best-before is the *earliest* shelf-life among products (any expired
+ * piece would taint the whole box). Batch number / production date stay
+ * blank — there's no single batch behind a retail collection; the user
+ * adds free-text fields if they want to stamp a packing date.
+ *
+ * Pure — caller supplies pre-loaded rows.
+ */
+export function buildCollectionPackageContext(input: CollectionPackageContextInput): LabelContext {
+  const {
+    source, collection, packaging, collectionProducts,
+    productMap, mouldMap, productFillingsByProduct,
+    fillingIngredientsMap, fillingComponentsMap, ingredientMap, facilityMayContain, cells,
+  } = input;
+
+  const warnings: string[] = [];
+
+  // Per-product quantity in this box. When `cells` is supplied (the print
+  // path always passes it; only the design-time preview omits it), count the
+  // exact per-product occurrences. Otherwise fall back to one of each — a
+  // sensible default for previewing a template against an abstract Collection
+  // × Packaging combination.
+  const productCount = new Map<string, number>();
+  if (cells && cells.length > 0) {
+    for (const cell of cells) {
+      if (!cell) continue;
+      productCount.set(cell, (productCount.get(cell) ?? 0) + 1);
+    }
+  } else {
+    for (const cp of collectionProducts) productCount.set(cp.productId, 1);
+  }
+
+  // Per-product per-piece weight — drives the box-total and is multiplied by
+  // each product's count. A product without a default mould has unknown
+  // weight and is skipped from the weight total; its ingredients still
+  // aggregate (no quantity dependency on having a mould).
+  const perProductPieceG = new Map<string, number>();
+  // Aggregated grams per ingredient across every piece in the box.
+  const perIngredientGrams = new Map<string, number>();
+  const allergenSet = new Set<string>();
+
+  for (const cp of collectionProducts) {
+    const product = productMap.get(cp.productId);
+    if (!product?.id) continue;
+    const count = productCount.get(product.id) ?? 0;
+    if (count === 0) continue; // product is in the collection but not in this specific box
+    const mould = product.defaultMouldId ? mouldMap.get(product.defaultMouldId) ?? null : null;
+    const productFillings = productFillingsByProduct.get(product.id) ?? [];
+
+    // Per-cavity ingredient breakdown for one piece of this product, using the
+    // same math as `buildProductionBatchContext` but flat (no Plan rescaling).
+    const fillMode = product.fillMode ?? "percentage";
+    const totalFillFraction = productFillings.reduce((s, rl) => s + (rl.fillFraction ?? 0), 0);
+    const shellPercentage = fillMode === "grams"
+      ? deriveShellPercentageFromFractions(totalFillFraction)
+      : (product.shellPercentage ?? DEFAULT_SHELL_PERCENTAGE);
+
+    if (!mould) {
+      warnings.push(`Product "${product.name}" has no default mould — its weight contribution is unknown.`);
+    }
+
+    let productPieceG = 0;
+    if (mould) {
+      for (const rl of productFillings) {
+        const flatRows = rollUpAmounts(
+          flattenFillingToIngredients(rl.fillingId, fillingIngredientsMap, fillingComponentsMap),
+        );
+        const fillingTotalG = flatRows.reduce((s, r) => s + r.amount, 0);
+        if (fillingTotalG <= 0) continue;
+        const fillingWeightG = fillMode === "grams" && rl.fillFraction != null
+          ? fillFractionToGrams(rl.fillFraction, mould.cavityWeightG)
+          : calculateFillingWeightPerCavityG(mould, rl.fillPercentage, shellPercentage);
+        productPieceG += fillingWeightG;
+        // Multiply by `count` so a box with 3 yuzu + 1 caramel sees the yuzu
+        // filling's grams contribute three times to the ingredient list.
+        for (const row of flatRows) {
+          const ingredientGrams = fillingWeightG * (row.amount / fillingTotalG) * count;
+          perIngredientGrams.set(
+            row.ingredientId,
+            (perIngredientGrams.get(row.ingredientId) ?? 0) + ingredientGrams,
+          );
+        }
+      }
+      // Shell ingredient — scaled by the same per-product count.
+      if (product.shellIngredientId) {
+        const shellG = calculateShellWeightG(mould, shellPercentage);
+        productPieceG += shellG;
+        perIngredientGrams.set(
+          product.shellIngredientId,
+          (perIngredientGrams.get(product.shellIngredientId) ?? 0) + shellG * count,
+        );
+      }
+    }
+    if (productPieceG > 0) perProductPieceG.set(product.id, productPieceG);
+    // Per-product allergen aggregation flows through the ingredient walk
+    // below — `Product` itself doesn't store an allergen list (it's derived
+    // from its filling tree + shell ingredient at render time).
+  }
+
+  // Project the per-ingredient grams to LabelContextIngredient list, sorted
+  // descending by mass for EU FIC ordering.
+  const ingredients: LabelContextIngredient[] = [...perIngredientGrams.entries()]
+    .map(([ingredientId, grams]) => {
+      const ing = ingredientMap.get(ingredientId);
+      if (!ing) return null;
+      for (const a of ing.allergens ?? []) allergenSet.add(a);
+      return {
+        name: ing.commercialName ?? ing.name,
+        allergens: ing.allergens ?? [],
+        amountG: Math.round(grams * 1000) / 1000,
+      };
+    })
+    .filter((x): x is LabelContextIngredient => x !== null)
+    .sort((a, b) => b.amountG - a.amountG);
+
+  // Per-100g nutrition, weighted by each ingredient's grams in the actual
+  // box composition.
+  const nutritionResult = aggregateNutrition(
+    ingredients.map((ing) => {
+      const id = [...perIngredientGrams.keys()].find((k) => {
+        const i = ingredientMap.get(k);
+        return i && (i.commercialName ?? i.name) === ing.name;
+      });
+      return {
+        amountG: ing.amountG,
+        nutrition: (id ? ingredientMap.get(id)?.nutrition : undefined) ?? {},
+      };
+    }),
+  );
+
+  // Total box weight = sum over each product of (piece weight × count).
+  // perCavityWeightG is the *average* per-piece weight (total / pieces) so
+  // the existing `weight` renderer (perCavityWeightG × piecesPerLabel) still
+  // works the same way as it does for production-batch labels.
+  let totalBoxG = 0;
+  let totalPieces = 0;
+  for (const [productId, pieceG] of perProductPieceG.entries()) {
+    const n = productCount.get(productId) ?? 0;
+    totalBoxG += pieceG * n;
+    totalPieces += n;
+  }
+  const avgPieceG = totalPieces > 0 ? totalBoxG / totalPieces : 0;
+  const perPieceWeightG = Math.round(avgPieceG * 1000) / 1000;
+  if (perPieceWeightG <= 0) warnings.push("Total box weight is unknown.");
+
+  // Earliest BBE across all products — any expired piece taints the whole box.
+  let earliestWeeks: number | null = null;
+  for (const cp of collectionProducts) {
+    const product = productMap.get(cp.productId);
+    const weeksStr = product?.shelfLifeWeeks;
+    const weeks = weeksStr ? parseInt(weeksStr, 10) : NaN;
+    if (Number.isFinite(weeks) && weeks > 0) {
+      earliestWeeks = earliestWeeks == null ? weeks : Math.min(earliestWeeks, weeks);
+    }
+  }
+  // BBE only meaningful relative to a *packing date*, which a Collection
+  // doesn't have. Leave null; the user adds a free-text "packed on" field if
+  // they want a date on the label. Note the shelf-life ceiling in warnings
+  // so it surfaces in the editor.
+  if (earliestWeeks != null) {
+    warnings.push(`Earliest product shelf life: ${earliestWeeks} weeks (add a free-text "packed on" field if you want a BBE date).`);
+  }
+
+  return {
+    source,
+    name: collection.name,
+    perCavityWeightG: perPieceWeightG,
+    // When cells are known, totalCavityCount reflects the number of actually
+    // filled cavities (skipping nulls); otherwise we fall back to the
+    // packaging's nominal capacity.
+    totalCavityCount: totalPieces > 0 ? totalPieces : packaging.capacity,
+    ingredients,
+    allergens: [...allergenSet].sort(),
+    mayContain: [...facilityMayContain],
+    nutritionPer100g: nutritionResult.per100g,
+    bestBefore: null,
+    batchNumber: "",
+    producedAt: null,
+    origin: "",
+    warnings,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // DB-loading reactive hook
 // ---------------------------------------------------------------------------
 
@@ -435,12 +664,11 @@ export function useLabelContext(source: LabelSource | null | undefined): LabelCo
       });
     }
 
-    if (source.kind !== "production-batch") {
-      return unresolvedContext(
-        source,
-        `Resolver for "${source.kind}" not implemented yet — Phase 2.`,
-      );
+    if (source.kind === "collection-package") {
+      return await loadCollectionPackageContext(source.collectionId, source.packagingId);
     }
+
+    // Only `production-batch` remains after the explicit branches above.
 
     const [plan, planProduct] = await Promise.all([
       db.productionPlans.get(source.planId),
@@ -761,6 +989,139 @@ export async function loadFillingBatchContexts(planId: string): Promise<LabelCon
       ingredientMap,
       facilityMayContain,
     });
+  });
+}
+
+/**
+ * Load a single `LabelContext` for the retail bonbon-box label identified by
+ * `(collectionId, packagingId)`. Mirrors the per-batch loaders but returns
+ * one context (boxes aren't enumerated; the user prints N copies of the same
+ * PNG through their label printer rather than receiving N files).
+ *
+ * When `cells` is supplied (typically `Sale.cells` from the shop's prepared
+ * sale the user is labelling), the resolver counts exact per-product
+ * occurrences and renders the ingredient list / weight / nutrition against
+ * the real box composition. When omitted, falls back to one-of-each for the
+ * design-time preview.
+ *
+ * Returns a stub context with a warning when the collection or packaging row
+ * is missing so the caller can still render an empty-state preview.
+ */
+export async function loadCollectionPackageContext(
+  collectionId: string,
+  packagingId: string,
+  cells?: ReadonlyArray<string | null>,
+): Promise<LabelContext> {
+  const source: Extract<LabelSource, { kind: "collection-package" }> = {
+    kind: "collection-package", collectionId, packagingId,
+  };
+
+  const [collection, packaging] = await Promise.all([
+    db.collections.get(collectionId),
+    db.packaging.get(packagingId),
+  ]);
+  if (!collection || !packaging) {
+    return unresolvedContext(source, "Collection or packaging not found.");
+  }
+
+  const collectionProducts = await db.collectionProducts
+    .where("collectionId").equals(collectionId)
+    .toArray();
+  collectionProducts.sort((a, b) => a.sortOrder - b.sortOrder);
+  if (collectionProducts.length === 0) {
+    return unresolvedContext(source, "Collection has no products.");
+  }
+
+  const productIds = [...new Set(collectionProducts.map((cp) => cp.productId))];
+  const products = productIds.length > 0
+    ? await db.products.where("id").anyOf(productIds).toArray()
+    : [];
+  const productMap = new Map(products.filter((p) => !!p.id).map((p) => [p.id!, p]));
+
+  const mouldIds = [...new Set(products
+    .map((p) => p.defaultMouldId)
+    .filter((id): id is string => !!id))];
+  const moulds = mouldIds.length > 0
+    ? await db.moulds.where("id").anyOf(mouldIds).toArray()
+    : [];
+  const mouldMap = new Map(moulds.filter((m) => !!m.id).map((m) => [m.id!, m]));
+
+  const productFillings = productIds.length > 0
+    ? await db.productFillings.where("productId").anyOf(productIds).toArray()
+    : [];
+  const productFillingsByProduct = new Map<string, ProductFilling[]>();
+  for (const pf of productFillings) {
+    const arr = productFillingsByProduct.get(pf.productId) ?? [];
+    arr.push(pf);
+    productFillingsByProduct.set(pf.productId, arr);
+  }
+  for (const arr of productFillingsByProduct.values()) {
+    arr.sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+
+  // Walk filling-component graph from every host filling so descendants load.
+  const allFillingIds = new Set<string>(productFillings.map((pf) => pf.fillingId));
+  let frontier = new Set<string>(allFillingIds);
+  while (frontier.size > 0) {
+    const components = await db.fillingComponents
+      .where("fillingId").anyOf([...frontier])
+      .toArray();
+    const next = new Set<string>();
+    for (const c of components) {
+      if (!allFillingIds.has(c.childFillingId)) {
+        allFillingIds.add(c.childFillingId);
+        next.add(c.childFillingId);
+      }
+    }
+    frontier = next;
+  }
+
+  const fillingIdArr = [...allFillingIds];
+  const [ingredientRows, componentRows] = await Promise.all([
+    fillingIdArr.length > 0
+      ? db.fillingIngredients.where("fillingId").anyOf(fillingIdArr).toArray()
+      : Promise.resolve([] as FillingIngredient[]),
+    fillingIdArr.length > 0
+      ? db.fillingComponents.where("fillingId").anyOf(fillingIdArr).toArray()
+      : Promise.resolve([] as FillingComponent[]),
+  ]);
+
+  const fillingIngredientsMap = new Map<string, FillingIngredient[]>();
+  for (const li of ingredientRows) {
+    const arr = fillingIngredientsMap.get(li.fillingId) ?? [];
+    arr.push(li);
+    fillingIngredientsMap.set(li.fillingId, arr);
+  }
+  const fillingComponentsMap = new Map<string, FillingComponent[]>();
+  for (const fc of componentRows) {
+    const arr = fillingComponentsMap.get(fc.fillingId) ?? [];
+    arr.push(fc);
+    fillingComponentsMap.set(fc.fillingId, arr);
+  }
+
+  const ingredientIds = new Set<string>(ingredientRows.map((r) => r.ingredientId));
+  for (const p of products) if (p.shellIngredientId) ingredientIds.add(p.shellIngredientId);
+  const ingredients = ingredientIds.size > 0
+    ? await db.ingredients.where("id").anyOf([...ingredientIds]).toArray()
+    : [];
+  const ingredientMap = new Map(ingredients.filter((i) => !!i.id).map((i) => [i.id!, i]));
+
+  const prefs = (await db.userPreferences.toArray())[0];
+  const facilityMayContain = prefs?.facilityMayContain ?? [];
+
+  return buildCollectionPackageContext({
+    source,
+    collection,
+    packaging,
+    collectionProducts,
+    productMap,
+    mouldMap,
+    productFillingsByProduct,
+    fillingIngredientsMap,
+    fillingComponentsMap,
+    ingredientMap,
+    facilityMayContain,
+    cells,
   });
 }
 

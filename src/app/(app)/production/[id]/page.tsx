@@ -26,6 +26,7 @@ import { useRouter } from "next/navigation";
 import { LowStockFlagButton } from "@/components/pantry";
 import { printLabels } from "@/lib/labelPrint";
 import { loadFillingBatchContexts, loadProductionBatchContexts } from "@/lib/labelContext";
+import { PrintTemplatePicker } from "@/components/print-template-picker";
 import type { LabelTemplate } from "@/types";
 import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
@@ -1512,7 +1513,10 @@ function PlanContent({
           Settings → Printing). When no templates exist, links to the editor. */}
       {printerPickerMode && (
         <PrintTemplatePicker
-          mode={printerPickerMode}
+          title={printerPickerMode === "products" ? "Save product labels" : "Save filling labels"}
+          description={printerPickerMode === "products"
+            ? "One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app."
+            : "One PNG per filling in this batch — share to AirDrop, Photos, or your label-printer app."}
           templates={labelTemplates}
           defaultId={defaultLabelTemplateId}
           onConfirm={handleConfirmPrint}
@@ -1925,110 +1929,3 @@ function formatGrams(g: number): string {
   return rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 === 0 ? 0 : 2)} kg` : `${rounded} g`;
 }
 
-/**
- * Modal that lets the user pick a label template for a print run. Pre-selects
- * the user's configured default (from Settings → Printing) when one exists,
- * otherwise leaves the selection unset. Surfaces a link to the editor when no
- * templates are available yet rather than leaving the user stuck.
- */
-function PrintTemplatePicker({
-  mode,
-  templates,
-  defaultId,
-  onConfirm,
-  onCancel,
-}: {
-  mode: "products" | "fillings";
-  templates: LabelTemplate[];
-  defaultId: string;
-  onConfirm: (template: LabelTemplate) => void;
-  onCancel: () => void;
-}) {
-  const initial = defaultId && templates.some((t) => t.id === defaultId)
-    ? defaultId
-    : templates[0]?.id ?? "";
-  const [selectedId, setSelectedId] = useState(initial);
-
-  function onSave() {
-    const t = templates.find((x) => x.id === selectedId);
-    if (t) onConfirm(t);
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
-    >
-      <div className="w-full max-w-sm rounded-lg bg-card border border-border shadow-lg p-4 space-y-3">
-        <h2 className="text-sm font-semibold">{mode === "products" ? "Save product labels" : "Save filling labels"}</h2>
-        {templates.length === 0 ? (
-          <>
-            <p className="text-sm text-muted-foreground">
-              No label templates yet. Design one in the editor first.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={onCancel}
-                className="rounded-md px-3 py-1.5 text-sm hover:bg-muted"
-              >
-                Close
-              </button>
-              <Link
-                href="/labels"
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
-              >
-                Open editor
-              </Link>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="text-xs text-muted-foreground">
-              {mode === "products"
-                ? "One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app."
-                : "One PNG per filling in this batch — share to AirDrop, Photos, or your label-printer app."}
-            </p>
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {templates.map((t) => (
-                <label
-                  key={t.id}
-                  className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer transition-colors ${selectedId === t.id ? "border-primary bg-accent" : "border-border hover:bg-muted/40"}`}
-                >
-                  <input
-                    type="radio"
-                    name="label-template"
-                    value={t.id}
-                    checked={selectedId === t.id}
-                    onChange={() => setSelectedId(t.id!)}
-                    className="mt-0.5"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{t.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t.width}×{t.height}mm · {t.fields.length} field{t.fields.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                </label>
-              ))}
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={onCancel}
-                className="rounded-md px-3 py-1.5 text-sm hover:bg-muted"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={onSave}
-                disabled={!selectedId}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                Save labels
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
