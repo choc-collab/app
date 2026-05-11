@@ -27,7 +27,7 @@ const SAMPLE_CONTEXT: LabelContext = {
     { name: "Cocoa", allergens: [], amountG: 2 },
   ],
   allergens: ["milk"],
-  mayContain: ["soy"],
+  mayContain: ["soybeans"],
   nutritionPer100g: { energyKj: 2280, energyKcal: 545, fat: 38, saturatedFat: 22, carbohydrate: 42, sugars: 38, protein: 6, salt: 0.1 },
   bestBefore: new Date("2026-05-21T10:00:00Z"),
   batchNumber: "B22",
@@ -43,12 +43,50 @@ function field(type: LabelField["type"], props?: LabelField["props"]): LabelFiel
 // ── helpers ────────────────────────────────────────────────────────────────
 
 describe("formatLabelDate", () => {
-  it("formats a date in en-GB short style", () => {
-    expect(formatLabelDate(new Date("2026-05-21T10:00:00Z"))).toBe("21 May 2026");
+  const SAMPLE = new Date("2026-05-21T10:00:00Z");
+
+  it("defaults to ISO YYYY-MM-DD when no pattern is supplied", () => {
+    expect(formatLabelDate(SAMPLE)).toBe("2026-05-21");
   });
+
+  it("substitutes the YYYY / YY / MM / M / DD / D tokens", () => {
+    expect(formatLabelDate(SAMPLE, "YYYY-MM-DD")).toBe("2026-05-21");
+    expect(formatLabelDate(SAMPLE, "DD/MM/YYYY")).toBe("21/05/2026");
+    expect(formatLabelDate(SAMPLE, "MM/DD/YYYY")).toBe("05/21/2026");
+    expect(formatLabelDate(SAMPLE, "DD.MM.YYYY")).toBe("21.05.2026");
+    expect(formatLabelDate(SAMPLE, "DD-MM-YYYY")).toBe("21-05-2026");
+  });
+
+  it("supports the short 2-digit year and unpadded month/day tokens", () => {
+    expect(formatLabelDate(SAMPLE, "DD MM YY")).toBe("21 05 26");
+    expect(formatLabelDate(new Date("2026-01-05T10:00:00Z"), "D/M/YY")).toBe("5/1/26");
+  });
+
+  it("prints any non-token characters verbatim (custom separators are free-form)", () => {
+    expect(formatLabelDate(SAMPLE, "YYYY.MM.DD")).toBe("2026.05.21");
+    expect(formatLabelDate(SAMPLE, "DD~MM~YYYY")).toBe("21~05~2026");
+    expect(formatLabelDate(SAMPLE, "YYYYMMDD")).toBe("20260521");
+  });
+
+  it("pads single-digit days and months for the 2-digit tokens", () => {
+    expect(formatLabelDate(new Date("2026-01-05T10:00:00Z"), "DD/MM/YYYY")).toBe("05/01/2026");
+    expect(formatLabelDate(new Date("2026-01-05T10:00:00Z"), "YYYY-MM-DD")).toBe("2026-01-05");
+  });
+
+  it("migrates the pre-pattern enum values transparently", () => {
+    // Templates saved before the pattern rewrite carry these strings; the
+    // formatter resolves them to the matching pattern.
+    expect(formatLabelDate(SAMPLE, "iso")).toBe("2026-05-21");
+    expect(formatLabelDate(SAMPLE, "dmy-slash")).toBe("21/05/2026");
+    expect(formatLabelDate(SAMPLE, "mdy-slash")).toBe("05/21/2026");
+    expect(formatLabelDate(SAMPLE, "dmy-dot")).toBe("21.05.2026");
+    expect(formatLabelDate(SAMPLE, "dmy-dash")).toBe("21-05-2026");
+  });
+
   it("returns an em-dash when the date is missing", () => {
     expect(formatLabelDate(null)).toBe("—");
     expect(formatLabelDate(undefined)).toBe("—");
+    expect(formatLabelDate(null, "DD/MM/YYYY")).toBe("—");
   });
 });
 
@@ -144,46 +182,48 @@ describe("renderField", () => {
     expect(renderToHtml(field("name"))).toContain("Yuzu domes");
   });
 
-  it("subtitle composes pieces × weight using piecesPerLabel", () => {
-    const html = renderToHtml(field("subtitle"), SAMPLE_CONTEXT, EMPTY_BRAND, { piecesPerLabel: 9 });
-    expect(html).toContain("9 pieces");
-    expect(html).toContain("90g");
-  });
-
-  it("subtitle with explicit text overrides the auto-derived line", () => {
+  it("subtitle is a styled free-text slot — renders the user's text without auto-derivation", () => {
     const html = renderToHtml(field("subtitle", { text: "Custom subtitle" }));
     expect(html).toContain("Custom subtitle");
+    // No English auto-derived prose like "pieces".
     expect(html).not.toContain("pieces");
+  });
+
+  it("subtitle without text renders an em-dash placeholder (no English prose)", () => {
+    expect(renderToHtml(field("subtitle"))).toContain("—");
   });
 
   it("weight multiplies per-cavity weight by piecesPerLabel", () => {
     expect(renderToHtml(field("weight"), SAMPLE_CONTEXT, EMPTY_BRAND, { piecesPerLabel: 9 })).toContain("90g");
   });
 
-  it("ingr renders the ingredients block with allergen emphasis on by default", () => {
+  it("ingr renders the ingredients list without an English heading", () => {
     const html = renderToHtml(field("ingr"));
-    expect(html).toContain("Ingredients");
-    expect(html).toContain("<b>Milk</b>");
+    expect(html).toContain("<b>Milk</b>"); // allergens still bolded
+    expect(html).toContain("Sugar");
+    expect(html).not.toContain("Ingredients");
   });
 
-  it("ingr without showLabel hides the heading", () => {
-    expect(renderToHtml(field("ingr", { showLabel: false }))).not.toContain("Ingredients");
-  });
-
-  it("aller block renders allergen list and may-contain advisories", () => {
+  it("aller renders the allergen list without any 'Allergens' / 'May contain' prose", () => {
     const html = renderToHtml(field("aller"));
     expect(html).toMatch(/Milk/i);
-    expect(html.toLowerCase()).toContain("may contain");
+    expect(html.toLowerCase()).not.toContain("may contain");
+    expect(html).not.toContain("Allergens");
+    expect(html).not.toContain("None declared");
+    // The may-contain entry still appears, just without a prefix.
+    expect(html).toContain("Soybeans");
   });
 
-  it("aller with no allergens shows 'None declared'", () => {
+  it("aller with no allergens shows an em-dash placeholder (no English prose)", () => {
     const ctx: LabelContext = { ...SAMPLE_CONTEXT, allergens: [], mayContain: [] };
-    expect(renderToHtml(field("aller"), ctx)).toContain("None declared");
+    const html = renderToHtml(field("aller"), ctx);
+    expect(html).toContain("—");
+    expect(html).not.toContain("None declared");
   });
 
-  it("nutri renders the per-100g block in EU/UK format with kJ + kcal + salt", () => {
+  it("nutri renders the per-100g table in EU/UK format without a 'Per 100g' heading", () => {
     const html = renderToHtml(field("nutri"));
-    expect(html).toContain("Per 100g");
+    expect(html).not.toContain("Per 100g");
     expect(html).toContain("Energy");
     expect(html).toContain("2280");
     expect(html).toContain("545");
@@ -199,20 +239,38 @@ describe("renderField", () => {
     expect(html).not.toContain("Salt");
   });
 
-  it("bbe formats the best-before date", () => {
-    expect(renderToHtml(field("bbe"))).toContain("21 May 2026");
+  it("bbe renders the best-before date in ISO form without a 'BBE' prefix", () => {
+    const html = renderToHtml(field("bbe"));
+    expect(html).toContain("2026-05-21");
+    expect(html).not.toContain("BBE");
   });
 
-  it("batch shows the batch number", () => {
-    expect(renderToHtml(field("batch"))).toContain("B22");
+  it("bbe honours a per-field dateFormat pattern", () => {
+    expect(renderToHtml(field("bbe", { dateFormat: "DD/MM/YYYY" }))).toContain("21/05/2026");
+    expect(renderToHtml(field("bbe", { dateFormat: "MM/DD/YYYY" }))).toContain("05/21/2026");
+    expect(renderToHtml(field("bbe", { dateFormat: "DD.MM.YY" }))).toContain("21.05.26");
+    expect(renderToHtml(field("bbe", { dateFormat: "DD MM YY" }))).toContain("21 05 26");
+  });
+
+  it("batch shows the batch number without a 'Batch' prefix", () => {
+    const html = renderToHtml(field("batch"));
+    expect(html).toContain("B22");
+    expect(html).not.toContain("Batch");
+  });
+
+  it("prodate renders the production date in ISO form without a 'Made' prefix", () => {
+    const html = renderToHtml(field("prodate"));
+    expect(html).toContain("2026-04-23");
+    expect(html).not.toMatch(/\bMade\b/);
   });
 
   it("origin shows the shell origin string", () => {
     expect(renderToHtml(field("origin"))).toContain("Madagascar 70%");
   });
 
-  it("logo with brand.logo unset shows the dashed placeholder", () => {
-    expect(renderToHtml(field("logo"))).toContain("logo");
+  it("logo with brand.logo unset renders a neutral placeholder (no English text)", () => {
+    const html = renderToHtml(field("logo"));
+    expect(html.toLowerCase()).not.toContain(">logo<");
   });
 
   it("logo with brand.logo set renders an img element", () => {
@@ -249,16 +307,19 @@ describe("renderField", () => {
     expect(renderToHtml(field("text", { text: "Store cool & dry." }))).toContain("Store cool &amp; dry.");
   });
 
-  it("text falls back to a placeholder when empty", () => {
-    expect(renderToHtml(field("text"))).toContain("Tap to edit text");
+  it("text falls back to an em-dash placeholder when empty (no English prose)", () => {
+    const html = renderToHtml(field("text"));
+    expect(html).toContain("—");
+    expect(html).not.toContain("Tap to edit text");
   });
 
   it("divider renders a single hairline rule", () => {
     expect(renderToHtml(field("divider"))).toContain("border-top:1px solid #111");
   });
 
-  it("image with no source shows the dashed placeholder", () => {
-    expect(renderToHtml(field("image"))).toContain("image");
+  it("image with no source renders a neutral placeholder (no English text)", () => {
+    const html = renderToHtml(field("image"));
+    expect(html.toLowerCase()).not.toContain(">image<");
   });
 
   it("image with a base64 source renders an img element", () => {

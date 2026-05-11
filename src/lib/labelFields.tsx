@@ -26,6 +26,7 @@ import type {
   Brand,
   LabelContext,
   LabelContextIngredient,
+  LabelDateFormat,
   LabelField,
   LabelFieldProps,
   LabelFieldType,
@@ -50,42 +51,109 @@ export interface FieldDefinition {
   defaultW: number;
   /** Default height in millimetres when the field is dropped onto the canvas. */
   defaultH: number;
+  /** Default font size in points. Used by the renderer when `props.size` is
+   *  unset, and by the inspector to pre-fill / reset the size control.
+   *  Omitted for fields without text (logo, qr, divider, image). */
+  defaultSizePt?: number;
 }
 
 export const FIELD_DEFINITIONS: Record<LabelFieldType, FieldDefinition> = {
   // product / batch (auto)
-  name:     { type: "name",     group: "product", label: "Product name",    defaultW: 50, defaultH: 8 },
-  subtitle: { type: "subtitle", group: "product", label: "Subtitle / line", defaultW: 50, defaultH: 4 },
-  weight:   { type: "weight",   group: "product", label: "Net weight",      defaultW: 14, defaultH: 4 },
-  ingr:     { type: "ingr",     group: "product", label: "Ingredients",     defaultW: 50, defaultH: 14 },
-  aller:    { type: "aller",    group: "product", label: "Allergens",       defaultW: 28, defaultH: 8 },
-  nutri:    { type: "nutri",    group: "product", label: "Nutrition table", defaultW: 32, defaultH: 12 },
-  bbe:      { type: "bbe",      group: "product", label: "Best-before",     defaultW: 22, defaultH: 4 },
-  batch:    { type: "batch",    group: "product", label: "Batch number",    defaultW: 18, defaultH: 4 },
-  prodate:  { type: "prodate",  group: "product", label: "Production date", defaultW: 22, defaultH: 4 },
-  origin:   { type: "origin",   group: "product", label: "Origin / cocoa %",defaultW: 28, defaultH: 4 },
+  name:     { type: "name",     group: "product", label: "Product name",    defaultW: 50, defaultH: 8,  defaultSizePt: 22 },
+  subtitle: { type: "subtitle", group: "product", label: "Subtitle / line", defaultW: 50, defaultH: 4,  defaultSizePt: 10 },
+  weight:   { type: "weight",   group: "product", label: "Net weight",      defaultW: 14, defaultH: 4,  defaultSizePt: 10 },
+  ingr:     { type: "ingr",     group: "product", label: "Ingredients",     defaultW: 50, defaultH: 14, defaultSizePt: 9 },
+  aller:    { type: "aller",    group: "product", label: "Allergens",       defaultW: 28, defaultH: 8,  defaultSizePt: 9 },
+  nutri:    { type: "nutri",    group: "product", label: "Nutrition table", defaultW: 32, defaultH: 12, defaultSizePt: 7 },
+  bbe:      { type: "bbe",      group: "product", label: "Best-before",     defaultW: 22, defaultH: 4,  defaultSizePt: 9 },
+  batch:    { type: "batch",    group: "product", label: "Batch number",    defaultW: 18, defaultH: 4,  defaultSizePt: 9 },
+  prodate:  { type: "prodate",  group: "product", label: "Production date", defaultW: 22, defaultH: 4,  defaultSizePt: 9 },
+  origin:   { type: "origin",   group: "product", label: "Origin / cocoa %",defaultW: 28, defaultH: 4,  defaultSizePt: 9 },
   // brand / business (auto)
   logo:     { type: "logo",     group: "brand",   label: "Logo",            defaultW: 14, defaultH: 14 },
-  company:  { type: "company",  group: "brand",   label: "Company info",    defaultW: 50, defaultH: 6 },
-  contact:  { type: "contact",  group: "brand",   label: "Contact",         defaultW: 40, defaultH: 4 },
-  socials:  { type: "socials",  group: "brand",   label: "Links",           defaultW: 40, defaultH: 6 },
+  company:  { type: "company",  group: "brand",   label: "Company info",    defaultW: 50, defaultH: 6,  defaultSizePt: 7.5 },
+  contact:  { type: "contact",  group: "brand",   label: "Contact",         defaultW: 40, defaultH: 4,  defaultSizePt: 7.5 },
+  socials:  { type: "socials",  group: "brand",   label: "Links",           defaultW: 40, defaultH: 6,  defaultSizePt: 7 },
   qr:       { type: "qr",       group: "brand",   label: "QR code",         defaultW: 14, defaultH: 14 },
   // custom (manual)
-  text:     { type: "text",     group: "custom",  label: "Free text",       defaultW: 30, defaultH: 4 },
+  text:     { type: "text",     group: "custom",  label: "Free text",       defaultW: 30, defaultH: 4,  defaultSizePt: 9 },
   divider:  { type: "divider",  group: "custom",  label: "Divider line",    defaultW: 50, defaultH: 1 },
   image:    { type: "image",    group: "custom",  label: "Image",           defaultW: 18, defaultH: 18 },
 };
+
+/** Resolve the effective font size for a field — `props.size` when set,
+ *  otherwise the field type's `defaultSizePt`, otherwise a 9pt fallback for
+ *  any field that might somehow lack a default. Pure. */
+export function effectiveFieldSizePt(type: LabelFieldType, propsSize: number | undefined): number {
+  if (Number.isFinite(propsSize) && (propsSize as number) > 0) return propsSize as number;
+  return FIELD_DEFINITIONS[type].defaultSizePt ?? 9;
+}
 
 // ---------------------------------------------------------------------------
 // Pure helpers — exported so the linter and tests can reach them
 // ---------------------------------------------------------------------------
 
-/** Format a date in en-GB short style (e.g. "21 May 2026"). Locale is fixed
- *  so SSR and CSR produce identical strings — required by the hydration
- *  contract documented in AGENT.md. */
-export function formatLabelDate(date: Date | null | undefined): string {
+/** Default date pattern (ISO 8601) when no `dateFormat` prop is set. */
+export const DEFAULT_DATE_FORMAT = "YYYY-MM-DD";
+
+/** A handful of presets the inspector exposes as one-click chips. The user can
+ *  type any pattern they like into the input — these are just shortcuts. */
+export const DATE_FORMAT_PRESETS: ReadonlyArray<{ pattern: string; hint: string }> = [
+  { pattern: "YYYY-MM-DD", hint: "ISO" },
+  { pattern: "DD/MM/YYYY", hint: "EU" },
+  { pattern: "MM/DD/YYYY", hint: "US" },
+  { pattern: "DD.MM.YYYY", hint: "DE" },
+  { pattern: "DD-MM-YYYY", hint: "NL" },
+  { pattern: "DD MM YY",   hint: "short" },
+];
+
+/** Migration map for the pre-pattern enum values. Templates saved before the
+ *  switch carry strings like "iso" / "dmy-slash" which aren't valid patterns
+ *  on their own; transparently rewrite them so old templates keep working. */
+const LEGACY_FORMAT_MIGRATION: Record<string, string> = {
+  "iso":       "YYYY-MM-DD",
+  "dmy-slash": "DD/MM/YYYY",
+  "mdy-slash": "MM/DD/YYYY",
+  "dmy-dot":   "DD.MM.YYYY",
+  "dmy-dash":  "DD-MM-YYYY",
+};
+
+// Token alternation has the longer alternatives first so "YYYY" wins over
+// "YY" at the same position (JS regex left-to-right alternation), and so on.
+const TOKEN_RE = /YYYY|YY|MM|M|DD|D/g;
+
+/**
+ * Format a date by substituting `YYYY` / `YY` / `MM` / `M` / `DD` / `D`
+ * tokens inside the supplied pattern. Anything else in the pattern is printed
+ * verbatim, so the user can mix any separator they want.
+ *
+ * - No localised month names → SSR/CSR identical, language-neutral.
+ * - Date components read in UTC so timezone drift doesn't bump the day
+ *   between server-rendered and client-rendered output.
+ * - Returns an em-dash when the date is missing.
+ * - Old pre-pattern enum values ("iso", "dmy-slash", …) are migrated on the
+ *   fly so templates saved before this change keep printing the right date.
+ */
+export function formatLabelDate(date: Date | null | undefined, format: LabelDateFormat = DEFAULT_DATE_FORMAT): string {
   if (!date) return "—";
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const pattern = LEGACY_FORMAT_MIGRATION[format] ?? format;
+  const yyyy = String(date.getUTCFullYear()).padStart(4, "0");
+  const yy   = yyyy.slice(-2);
+  const m    = String(date.getUTCMonth() + 1);
+  const mm   = m.padStart(2, "0");
+  const d    = String(date.getUTCDate());
+  const dd   = d.padStart(2, "0");
+  return pattern.replace(TOKEN_RE, (token) => {
+    switch (token) {
+      case "YYYY": return yyyy;
+      case "YY":   return yy;
+      case "MM":   return mm;
+      case "M":    return m;
+      case "DD":   return dd;
+      case "D":    return d;
+      default:     return token;
+    }
+  });
 }
 
 /** Returns the effective pieces-per-label for a template. Defaults to 1 when
@@ -125,22 +193,6 @@ export function renderIngredientList(
 }
 
 // ---------------------------------------------------------------------------
-// Style fragments
-// ---------------------------------------------------------------------------
-
-const HEADING_STYLE: React.CSSProperties = {
-  fontFamily: "ui-monospace, Menlo, monospace",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  color: "#666",
-  marginBottom: 1,
-};
-
-function headingStyle(baseSize: number): React.CSSProperties {
-  return { ...HEADING_STYLE, fontSize: `${baseSize * 0.78}pt` };
-}
-
-// ---------------------------------------------------------------------------
 // Renderer registry
 // ---------------------------------------------------------------------------
 
@@ -167,30 +219,32 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
   // ────────────────────── product / batch ──────────────────────
   name: ({ field, context }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("name", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 22}pt`, fontWeight: p.weight ?? 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>
+      <div style={{ fontSize: `${size}pt`, fontWeight: p.weight ?? 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>
         {context?.name || PLACEHOLDER}
       </div>
     );
   },
 
-  subtitle: ({ field, context, template }) => {
+  subtitle: ({ field }) => {
+    // A styled free-text slot — typically used for a tagline or product
+    // descriptor. No auto-derivation so the field stays language-neutral; the
+    // user types whatever wording fits their market.
     const p = field.props ?? {};
-    if (p.text) {
-      return <div style={{ fontSize: `${p.size ?? 10}pt`, color: "#444" }}>{p.text}</div>;
-    }
-    const pieces = effectivePiecesPerLabel(template);
-    const weightG = effectiveLabelWeightG(context, template);
-    const parts: string[] = [];
-    if (pieces > 1) parts.push(`${pieces} pieces`);
-    if (weightG > 0) parts.push(formatNetWeight(weightG));
-    return <div style={{ fontSize: `${p.size ?? 10}pt`, color: "#444" }}>{parts.length > 0 ? parts.join(" · ") : PLACEHOLDER}</div>;
+    const size = effectiveFieldSizePt("subtitle", p.size);
+    return (
+      <div style={{ fontSize: `${size}pt`, color: "#444", whiteSpace: "pre-line" }}>
+        {p.text || PLACEHOLDER}
+      </div>
+    );
   },
 
   weight: ({ field, context, template }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("weight", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 10}pt` }}>
+      <div style={{ fontSize: `${size}pt` }}>
         {formatNetWeight(effectiveLabelWeightG(context, template))}
       </div>
     );
@@ -198,10 +252,11 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
 
   ingr: ({ field, context }) => {
     const p = field.props ?? {};
-    const size = p.size ?? 9;
+    const size = effectiveFieldSizePt("ingr", p.size);
+    // No heading — add a free-text field above this one to label it in your
+    // language (e.g. "Ingrediënten:", "Zutaten:", "Ingredients:").
     return (
       <div style={{ fontSize: `${size}pt`, lineHeight: 1.42, color: "#222" }}>
-        {p.showLabel !== false && <div style={headingStyle(size)}>Ingredients</div>}
         {renderIngredientList(context?.ingredients ?? [], p.boldAllergens !== false)}
       </div>
     );
@@ -209,18 +264,19 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
 
   aller: ({ field, context }) => {
     const p = field.props ?? {};
-    const size = p.size ?? 9;
+    const size = effectiveFieldSizePt("aller", p.size);
     const allergens = context?.allergens ?? [];
     const mayContain = context?.mayContain ?? [];
+    // No prose — add free-text fields next to this one for "Contains:" /
+    // "May contain:" labels in your language.
     return (
       <div style={{ fontSize: `${size}pt`, lineHeight: 1.42 }}>
-        {p.showLabel !== false && <div style={headingStyle(size)}>Allergens</div>}
         {allergens.length > 0
           ? <div><b>{allergens.map(allergenLabel).join(" · ")}</b></div>
-          : <div style={{ color: "#666" }}>None declared.</div>}
+          : <div style={{ color: "#888" }}>{PLACEHOLDER}</div>}
         {mayContain.length > 0 && (
-          <div style={{ color: "#666" }}>
-            May contain {mayContain.map((id) => allergenLabel(id).toLowerCase()).join(", ")}.
+          <div style={{ color: "#666", fontStyle: "italic" }}>
+            {mayContain.map(allergenLabel).join(" · ")}
           </div>
         )}
       </div>
@@ -229,12 +285,14 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
 
   nutri: ({ field, context, marketRegion }) => {
     const p = field.props ?? {};
-    const size = p.size ?? 7;
+    const size = effectiveFieldSizePt("nutri", p.size);
     const n = context?.nutritionPer100g ?? {};
     const nutrients = getNutrientsByMarket(marketRegion ?? "EU");
+    // No "Per 100g" prose — add a free-text field above to caption the table
+    // in your language. Nutrient names themselves stay (they're structural to
+    // the table) and will get a translation pass with the rest of the app.
     return (
       <div style={{ fontSize: `${size}pt`, lineHeight: 1.32, color: "#222" }}>
-        <div style={{ fontWeight: 600 }}>Per 100g</div>
         {nutrients.map((nut) => {
           const val = n[nut.key];
           return (
@@ -249,58 +307,60 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
 
   bbe: ({ field, context }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("bbe", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 9}pt` }}>
-        <b>BBE</b> {formatLabelDate(context?.bestBefore ?? null)}
+      <div style={{ fontSize: `${size}pt` }}>
+        {formatLabelDate(context?.bestBefore ?? null, p.dateFormat)}
       </div>
     );
   },
 
   batch: ({ field, context }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("batch", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 9}pt` }}>
-        <b>Batch</b> {context?.batchNumber || PLACEHOLDER}
+      <div style={{ fontSize: `${size}pt` }}>
+        {context?.batchNumber || PLACEHOLDER}
       </div>
     );
   },
 
   prodate: ({ field, context }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("prodate", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 9}pt` }}>
-        Made {formatLabelDate(context?.producedAt ?? null)}
+      <div style={{ fontSize: `${size}pt` }}>
+        {formatLabelDate(context?.producedAt ?? null, p.dateFormat)}
       </div>
     );
   },
 
   origin: ({ field, context }) => {
     const p = field.props ?? {};
-    return <div style={{ fontSize: `${p.size ?? 9}pt`, color: "#222" }}>{context?.origin || PLACEHOLDER}</div>;
+    const size = effectiveFieldSizePt("origin", p.size);
+    return <div style={{ fontSize: `${size}pt`, color: "#222" }}>{context?.origin || PLACEHOLDER}</div>;
   },
 
   // ────────────────────── brand / business ──────────────────────
   logo: ({ brand }) => {
     if (brand.logo) {
       // eslint-disable-next-line @next/next/no-img-element
-      return <img src={brand.logo} alt="Brand logo" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />;
+      return <img src={brand.logo} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />;
     }
+    // Empty state: a neutral framed box. No English text.
     return (
       <div style={{
         border: "1px dashed #111", borderRadius: 2, width: "100%", height: "100%",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontFamily: "ui-monospace, Menlo, monospace", fontSize: "30%",
-        color: "#888", textTransform: "uppercase", letterSpacing: "0.1em", background: "#fafafa",
-      }}>
-        logo
-      </div>
+        background: "repeating-linear-gradient(45deg, #fafafa 0 4px, #f0f0f0 4px 8px)",
+      }} />
     );
   },
 
   company: ({ field, brand }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("company", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 7.5}pt`, lineHeight: 1.35, color: "#222", whiteSpace: "pre-line" }}>
+      <div style={{ fontSize: `${size}pt`, lineHeight: 1.35, color: "#222", whiteSpace: "pre-line" }}>
         {brand.name && <div><b>{brand.name}</b></div>}
         {brand.address && <div>{brand.address}</div>}
         {!brand.name && !brand.address && <span style={{ color: "#888" }}>{PLACEHOLDER}</span>}
@@ -310,8 +370,9 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
 
   contact: ({ field, brand }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("contact", p.size);
     return (
-      <div style={{ fontSize: `${p.size ?? 7.5}pt`, color: "#444" }}>
+      <div style={{ fontSize: `${size}pt`, color: "#444" }}>
         {brand.contact || PLACEHOLDER}
       </div>
     );
@@ -319,10 +380,11 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
 
   socials: ({ field, brand }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("socials", p.size);
     const socials = brand.socials ?? [];
-    if (socials.length === 0) return <div style={{ fontSize: `${p.size ?? 7}pt`, color: "#888" }}>{PLACEHOLDER}</div>;
+    if (socials.length === 0) return <div style={{ fontSize: `${size}pt`, color: "#888" }}>{PLACEHOLDER}</div>;
     return (
-      <div style={{ fontSize: `${p.size ?? 7}pt`, lineHeight: 1.4, color: "#222" }}>
+      <div style={{ fontSize: `${size}pt`, lineHeight: 1.4, color: "#222" }}>
         {socials.map((s, i) => (
           <div key={i}>
             <span style={{ color: "#666", marginRight: 4 }}>{s.label}</span>
@@ -356,14 +418,15 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
   // ────────────────────── custom ──────────────────────
   text: ({ field }) => {
     const p = field.props ?? {};
+    const size = effectiveFieldSizePt("text", p.size);
     return (
       <div style={{
-        fontSize: `${p.size ?? 9}pt`,
+        fontSize: `${size}pt`,
         fontStyle: p.italic ? "italic" : "normal",
         color: "#222",
         whiteSpace: "pre-line",
       }}>
-        {p.text || "Tap to edit text"}
+        {p.text || PLACEHOLDER}
       </div>
     );
   },
@@ -376,17 +439,14 @@ const RENDERERS: Record<LabelFieldType, FieldRenderer> = {
     const p = field.props ?? {};
     if (p.image) {
       // eslint-disable-next-line @next/next/no-img-element
-      return <img src={p.image} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />;
+      return <img src={p.image} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />;
     }
+    // Empty state: a neutral framed box. No English text.
     return (
       <div style={{
-        width: "100%", height: "100%", background: "#fafafa", border: "1px dashed #888",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: "30%", color: "#888",
-        fontFamily: "ui-monospace, Menlo, monospace", textTransform: "uppercase", letterSpacing: "0.1em",
-      }}>
-        image
-      </div>
+        width: "100%", height: "100%", border: "1px dashed #888",
+        background: "repeating-linear-gradient(45deg, #fafafa 0 4px, #f0f0f0 4px 8px)",
+      }} />
     );
   },
 };

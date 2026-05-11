@@ -1341,6 +1341,23 @@ export type LabelFieldType =
  * the shape used in the canvas-editor prototype, kept loose so adding a new
  * formatting knob is one optional field plus a renderer change.
  */
+/**
+ * User-supplied date pattern for `bbe` and `prodate` renderers. The pattern
+ * is plain text with these case-sensitive tokens substituted at render time:
+ *
+ *   - `YYYY`  4-digit year       (2026)
+ *   - `YY`    2-digit year       (26)
+ *   - `MM`    2-digit month      (05)
+ *   - `M`     month, no padding  (5)
+ *   - `DD`    2-digit day        (21)
+ *   - `D`     day, no padding    (21)
+ *
+ * Everything else in the string is printed verbatim, so the user picks any
+ * separator they like — `DD/MM/YYYY`, `DD.MM.YY`, `YYYY-MM-DD`, even
+ * `DD MM YY` (with spaces) all work. Default is `YYYY-MM-DD` (ISO).
+ */
+export type LabelDateFormat = string;
+
 export interface LabelFieldProps {
   /** Font size in pt. Defaults are per field type. */
   size?: number;
@@ -1359,6 +1376,8 @@ export interface LabelFieldProps {
   /** Override URL encoded into the QR code. Used by `qr`. When unset, falls
    *  back to the brand's first social/web link, then to an empty placeholder. */
   qrUrl?: string;
+  /** Date format used by `bbe` and `prodate`. Defaults to `iso`. */
+  dateFormat?: LabelDateFormat;
 }
 
 /**

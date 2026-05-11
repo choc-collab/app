@@ -14,7 +14,7 @@ import {
   useMarketRegion,
 } from "@/lib/hooks";
 import { useLabelContext } from "@/lib/labelContext";
-import { renderField, FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, type LabelFieldGroup } from "@/lib/labelFields";
+import { renderField, FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, type LabelFieldGroup } from "@/lib/labelFields";
 import { lintTemplate, summariseLint, type LintWarning } from "@/lib/labelLinter";
 import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelFieldProps } from "@/types";
 
@@ -73,6 +73,14 @@ function Editor({ initial }: { initial: LabelTemplate }) {
   const [showWarnings, setShowWarnings] = useState(true);
   const [showTabletWarning, setShowTabletWarning] = useState(false);
 
+  // The drag-end handler that's wired into a `pointerup` *native* listener
+  // closes over the render in which it was attached, so it reads `tpl` from
+  // that render even after dozens of pointermove-triggered re-renders. Refs
+  // dodge the closure by mutating through the same identity across renders,
+  // so `commitCurrent` always saves the post-drag state instead of pre-drag.
+  const tplRef = useRef(tpl);
+  tplRef.current = tpl;
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const isCoarseAndNarrow = window.matchMedia("(pointer: coarse) and (max-width: 1100px)").matches;
@@ -82,6 +90,7 @@ function Editor({ initial }: { initial: LabelTemplate }) {
   // Persist + send to Dexie. Always operates on the latest local draft.
   function commit(next: LabelTemplate) {
     setTpl(next);
+    tplRef.current = next;
     saveLabelTemplate(next).catch((err) => {
       console.error("saveLabelTemplate failed", err);
     });
@@ -89,20 +98,25 @@ function Editor({ initial }: { initial: LabelTemplate }) {
 
   // Mutators used by inspector + drag handlers.
   function setMetadata(patch: Partial<LabelTemplate>) {
-    commit({ ...tpl, ...patch, updatedAt: new Date() });
+    commit({ ...tplRef.current, ...patch, updatedAt: new Date() });
   }
   function updateFieldLocal(fieldId: string, patch: Partial<LabelField>) {
-    setTpl((cur) => ({
-      ...cur,
-      fields: cur.fields.map((f) => f.id === fieldId
-        ? { ...f, ...patch, props: patch.props ? { ...f.props, ...patch.props } : f.props }
-        : f),
-    }));
+    setTpl((cur) => {
+      const next = {
+        ...cur,
+        fields: cur.fields.map((f) => f.id === fieldId
+          ? { ...f, ...patch, props: patch.props ? { ...f.props, ...patch.props } : f.props }
+          : f),
+      };
+      tplRef.current = next;
+      return next;
+    });
   }
   function updateAndCommitField(fieldId: string, patch: Partial<LabelField>) {
+    const cur = tplRef.current;
     const next: LabelTemplate = {
-      ...tpl,
-      fields: tpl.fields.map((f) => f.id === fieldId
+      ...cur,
+      fields: cur.fields.map((f) => f.id === fieldId
         ? { ...f, ...patch, props: patch.props ? { ...f.props, ...patch.props } : f.props }
         : f),
       updatedAt: new Date(),
@@ -110,24 +124,26 @@ function Editor({ initial }: { initial: LabelTemplate }) {
     commit(next);
   }
   function commitCurrent() {
-    commit({ ...tpl, updatedAt: new Date() });
+    commit({ ...tplRef.current, updatedAt: new Date() });
   }
   function addField(type: LabelFieldType, atMm?: { x: number; y: number }) {
     const def = FIELD_DEFINITIONS[type];
+    const cur = tplRef.current;
     const newF: LabelField = {
       id: newFieldId(),
       type,
-      x: clamp(atMm?.x ?? 4, 0, Math.max(0, tpl.width - def.defaultW)),
-      y: clamp(atMm?.y ?? 4, 0, Math.max(0, tpl.height - def.defaultH)),
+      x: clamp(atMm?.x ?? 4, 0, Math.max(0, cur.width - def.defaultW)),
+      y: clamp(atMm?.y ?? 4, 0, Math.max(0, cur.height - def.defaultH)),
       w: def.defaultW,
       h: def.defaultH,
       props: {},
     };
-    commit({ ...tpl, fields: [...tpl.fields, newF], updatedAt: new Date() });
+    commit({ ...cur, fields: [...cur.fields, newF], updatedAt: new Date() });
     setSel(newF.id);
   }
   function removeField(fieldId: string) {
-    commit({ ...tpl, fields: tpl.fields.filter((f) => f.id !== fieldId), updatedAt: new Date() });
+    const cur = tplRef.current;
+    commit({ ...cur, fields: cur.fields.filter((f) => f.id !== fieldId), updatedAt: new Date() });
     if (sel === fieldId) setSel(null);
   }
 
@@ -163,7 +179,7 @@ function Editor({ initial }: { initial: LabelTemplate }) {
       />
 
       <div className="flex-1 grid grid-cols-[240px_1fr_320px] min-h-0">
-        <FieldRail onAdd={(type) => addField(type)} />
+        <FieldRail fields={tpl.fields} onAdd={(type) => addField(type)} />
         <Canvas
           tpl={tpl}
           zoom={zoom}
@@ -277,8 +293,13 @@ function SourcePicker({
       <select
         value={selectedKey}
         onChange={(e) => {
-          if (!e.target.value) { onChange(null); return; }
-          const opt = options.find((o) => o.value === e.target.value);
+          const value = e.target.value;
+          // Drop focus before propagating state — keeps the keyboard / pointer
+          // focus from lingering on the dropdown and stealing interactions
+          // from the canvas after a source is chosen.
+          e.target.blur();
+          if (!value) { onChange(null); return; }
+          const opt = options.find((o) => o.value === value);
           onChange(opt?.source ?? null);
         }}
         className="text-xs border border-border rounded px-2 py-1 bg-card"
@@ -296,8 +317,21 @@ function SourcePicker({
 // Field rail (left)
 // ---------------------------------------------------------------------------
 
-function FieldRail({ onAdd }: { onAdd: (type: LabelFieldType) => void }) {
+function FieldRail({
+  fields, onAdd,
+}: {
+  fields: ReadonlyArray<LabelField>;
+  onAdd: (type: LabelFieldType) => void;
+}) {
   const groups: LabelFieldGroup[] = ["product", "brand", "custom"];
+  // Count occurrences per field type so the rail can mark which types are
+  // already on the canvas (and how many times).
+  const countByType = useMemo(() => {
+    const m = new Map<LabelFieldType, number>();
+    for (const f of fields) m.set(f.type, (m.get(f.type) ?? 0) + 1);
+    return m;
+  }, [fields]);
+
   return (
     <div className="border-r border-border p-3 overflow-auto bg-card flex flex-col gap-3">
       <div>
@@ -309,6 +343,8 @@ function FieldRail({ onAdd }: { onAdd: (type: LabelFieldType) => void }) {
           <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{GROUP_LABEL[g]}</div>
           {FIELD_TYPES_BY_GROUP[g].map((type) => {
             const def = FIELD_DEFINITIONS[type];
+            const count = countByType.get(type) ?? 0;
+            const placed = count > 0;
             return (
               <div
                 key={type}
@@ -318,11 +354,22 @@ function FieldRail({ onAdd }: { onAdd: (type: LabelFieldType) => void }) {
                   e.dataTransfer.setData("application/x-field", type);
                 }}
                 onClick={() => onAdd(type)}
-                className="flex items-center gap-2 px-2 py-1.5 border border-dashed border-border rounded text-xs cursor-grab hover:bg-muted/40 select-none"
+                className={`flex items-center gap-2 px-2 py-1.5 border rounded text-xs cursor-grab select-none transition-colors ${
+                  placed
+                    ? "border-solid border-primary/40 bg-accent text-accent-foreground hover:bg-accent/80"
+                    : "border-dashed border-border hover:bg-muted/40"
+                }`}
+                title={placed ? `${count} on canvas — click to add another` : "Click to add"}
               >
-                <span className="w-2 h-2 rounded-sm bg-muted shrink-0" />
-                <span className="flex-1">{def.label}</span>
-                <span className="text-[9px] font-mono text-muted-foreground">+</span>
+                <span className={`w-2 h-2 rounded-sm shrink-0 ${placed ? "bg-primary" : "bg-muted"}`} />
+                <span className={`flex-1 ${placed ? "font-medium" : ""}`}>{def.label}</span>
+                {placed ? (
+                  <span className="text-[10px] font-mono px-1.5 rounded-full bg-primary/15 text-primary tabular-nums">
+                    ×{count}
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-mono text-muted-foreground">+</span>
+                )}
               </div>
             );
           })}
@@ -422,13 +469,25 @@ function FieldNode({
   updateLocal: (id: string, patch: Partial<LabelField>) => void;
   commitCurrent: () => void;
 }) {
-  function startInteraction(e: React.PointerEvent, mode: "move" | "resize") {
+  function startInteraction(e: React.PointerEvent<HTMLElement>, mode: "move" | "resize") {
+    // Only react to the primary mouse button / pen / single touch.
+    if (e.button !== undefined && e.button !== 0) return;
     e.stopPropagation();
+    e.preventDefault(); // suppress native image drag, text selection, etc.
     if (mode === "move") onSelect();
+
+    const target = e.currentTarget;
+    const pointerId = e.pointerId;
     const startX = e.clientX, startY = e.clientY;
     const startF = { ...field };
 
+    // `setPointerCapture` routes every subsequent pointermove/pointerup for
+    // this pointerId back to `target`, even when the cursor leaves the field.
+    // Without it, fast drags off the small canvas silently stop tracking.
+    try { target.setPointerCapture(pointerId); } catch { /* not supported — fall back to bubbling */ }
+
     function onMove(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return;
       const dxMm = (ev.clientX - startX) / px;
       const dyMm = (ev.clientY - startY) / px;
       if (mode === "move") {
@@ -443,14 +502,18 @@ function FieldNode({
         });
       }
     }
-    function onUp() {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+    function onUp(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return;
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
+      try { target.releasePointerCapture(pointerId); } catch { /* already released */ }
       // Persist the final position once the gesture ends.
       commitCurrent();
     }
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
   }
 
   return (
@@ -462,12 +525,16 @@ function FieldNode({
         width: field.w * px, height: field.h * px,
         cursor: "move",
         userSelect: "none",
+        // `touch-action: none` is required for setPointerCapture to track
+        // touch drags reliably — otherwise the browser steals the gesture for
+        // scroll. Harmless on mouse pointers.
+        touchAction: "none",
         outline: selected ? "1.5px solid #1f6feb" : undefined,
         outlineOffset: selected ? 3 : undefined,
         padding: 1,
       }}
     >
-      <div style={{ width: "100%", height: "100%", overflow: "hidden" }}>
+      <div style={{ width: "100%", height: "100%", overflow: "hidden", pointerEvents: "none" }}>
         {renderField({ field, context, brand, template: tpl, marketRegion })}
       </div>
       {selected && (
@@ -477,6 +544,7 @@ function FieldNode({
             position: "absolute", right: -6, bottom: -6,
             width: 12, height: 12, background: "#1f6feb", border: "1.5px solid #fff",
             borderRadius: 2, cursor: "nwse-resize",
+            touchAction: "none",
           }}
         />
       )}
@@ -545,7 +613,9 @@ function FieldInspector({
   const setProp = <K extends keyof LabelFieldProps>(key: K, value: LabelFieldProps[K]) => {
     updateField(field.id, { props: { [key]: value } as Partial<LabelFieldProps> });
   };
-  const showSize = ["name", "subtitle", "ingr", "aller", "nutri", "bbe", "batch", "company", "contact", "weight", "origin", "prodate", "text", "socials"].includes(field.type);
+  // A field has a size control if its type has a configured default (logo,
+  // qr, divider, image are sizeless image / visual fields).
+  const hasSizeControl = def.defaultSizePt !== undefined;
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -569,18 +639,21 @@ function FieldInspector({
       </Section>
 
       <Section title="Format">
-        {showSize && (
+        {hasSizeControl && (
           <Row label="Size (pt)">
-            <NumInput value={props.size ?? 0} onChange={(v) => setProp("size", v || undefined)} />
+            <SizeStepper
+              value={effectiveFieldSizePt(field.type, props.size)}
+              defaultValue={def.defaultSizePt!}
+              isOverridden={props.size !== undefined}
+              onChange={(v) => setProp("size", v)}
+              onReset={() => setProp("size", undefined)}
+            />
           </Row>
-        )}
-        {(field.type === "ingr" || field.type === "aller") && (
-          <Toggle label="Show heading label" value={props.showLabel !== false} onChange={(v) => setProp("showLabel", v)} />
         )}
         {field.type === "ingr" && (
           <Toggle label="Bold allergen tokens" value={props.boldAllergens !== false} onChange={(v) => setProp("boldAllergens", v)} />
         )}
-        {field.type === "text" && (
+        {(field.type === "text" || field.type === "subtitle") && (
           <>
             <textarea
               value={props.text ?? ""}
@@ -589,8 +662,16 @@ function FieldInspector({
               placeholder="Free text…"
               className="w-full text-xs border border-border rounded px-2 py-1.5 bg-card resize-y"
             />
-            <Toggle label="Italic" value={!!props.italic} onChange={(v) => setProp("italic", v)} />
+            {field.type === "text" && (
+              <Toggle label="Italic" value={!!props.italic} onChange={(v) => setProp("italic", v)} />
+            )}
           </>
+        )}
+        {(field.type === "bbe" || field.type === "prodate") && (
+          <DateFormatControl
+            value={props.dateFormat}
+            onChange={(v) => setProp("dateFormat", v)}
+          />
         )}
         {field.type === "qr" && (
           <Row label="QR URL">
@@ -642,6 +723,140 @@ function NumInput({ value, onChange }: { value: number; onChange: (v: number) =>
       onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
       className="w-16 text-xs font-mono border border-border rounded px-1.5 py-1 bg-card"
     />
+  );
+}
+
+/**
+ * Tactile stepper for font size. Always shows the *effective* size (the
+ * field's override when set, or the type's default otherwise) so the displayed
+ * number matches what's actually rendered. Click − / + to nudge in 0.5pt
+ * steps; the value can also be typed directly. When the size has been
+ * overridden, a "Reset" link appears that clears the override and goes back to
+ * the type default.
+ */
+function SizeStepper({
+  value, defaultValue, isOverridden, onChange, onReset,
+}: {
+  value: number;
+  defaultValue: number;
+  isOverridden: boolean;
+  onChange: (v: number) => void;
+  onReset: () => void;
+}) {
+  const STEP = 0.5;
+  const MIN = 1;
+  const MAX = 72;
+  const clampSize = (v: number) => Math.max(MIN, Math.min(MAX, Math.round(v * 2) / 2));
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="inline-flex items-center border border-border rounded overflow-hidden bg-card">
+        <button
+          type="button"
+          onClick={() => onChange(clampSize(value - STEP))}
+          aria-label="Decrease size"
+          className="px-2 py-1 text-sm hover:bg-muted/40 disabled:opacity-40"
+          disabled={value <= MIN}
+        >
+          −
+        </button>
+        <input
+          type="number"
+          step={STEP}
+          min={MIN}
+          max={MAX}
+          value={value}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value);
+            if (!Number.isFinite(n) || n <= 0) return;
+            onChange(clampSize(n));
+          }}
+          className="w-12 text-xs font-mono text-center px-1 py-1 bg-card border-x border-border focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => onChange(clampSize(value + STEP))}
+          aria-label="Increase size"
+          className="px-2 py-1 text-sm hover:bg-muted/40 disabled:opacity-40"
+          disabled={value >= MAX}
+        >
+          +
+        </button>
+      </div>
+      {isOverridden ? (
+        <button
+          type="button"
+          onClick={onReset}
+          className="text-[10px] text-muted-foreground hover:text-foreground underline"
+          title={`Reset to default (${defaultValue}pt)`}
+        >
+          ↺ {defaultValue}pt
+        </button>
+      ) : (
+        <span className="text-[10px] text-muted-foreground/70" title="Default for this field type">
+          default
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Pattern-based date-format editor for `bbe` and `prodate` fields. The user
+ * types a pattern (`DD MM YY`, `YYYY/MM/DD`, whatever they want); tokens are
+ * substituted at render time. A live preview shows the result for today's
+ * date, and one-click chips fill in common patterns.
+ */
+const DATE_PREVIEW = new Date();
+function DateFormatControl({
+  value, onChange,
+}: {
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+}) {
+  const effective = value ?? DEFAULT_DATE_FORMAT;
+  const preview = formatLabelDate(DATE_PREVIEW, effective);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Row label="Date format">
+        <input
+          type="text"
+          value={effective}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange(next === DEFAULT_DATE_FORMAT ? undefined : next);
+          }}
+          spellCheck={false}
+          className="flex-1 text-xs font-mono border border-border rounded px-2 py-1 bg-card tracking-wider"
+        />
+      </Row>
+      <div className="flex items-center justify-between gap-2 pl-[5.5rem]">
+        <span className="text-[10px] font-mono text-muted-foreground tabular-nums">→ {preview}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 pl-[5.5rem]">
+        {DATE_FORMAT_PRESETS.map((p) => {
+          const active = effective === p.pattern;
+          return (
+            <button
+              key={p.pattern}
+              type="button"
+              onClick={() => onChange(p.pattern === DEFAULT_DATE_FORMAT ? undefined : p.pattern)}
+              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                active
+                  ? "border-primary/40 bg-accent text-accent-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted/40"
+              }`}
+              title={p.pattern}
+            >
+              {p.hint}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-muted-foreground/80 pl-[5.5rem] leading-snug">
+        Tokens: <code>YYYY</code>, <code>YY</code>, <code>MM</code>, <code>M</code>, <code>DD</code>, <code>D</code>. Everything else prints as-is.
+      </p>
+    </div>
   );
 }
 
