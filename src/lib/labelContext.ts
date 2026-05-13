@@ -285,7 +285,7 @@ export function buildFillingBatchContext(input: FillingBatchContextInput): Label
       if (!ing) return null;
       for (const a of ing.allergens ?? []) allergenSet.add(a);
       return {
-        name: ing.commercialName ?? ing.name,
+        name: ing.name,
         allergens: ing.allergens ?? [],
         amountG: Math.round(grams * 1000) / 1000,
       };
@@ -298,7 +298,7 @@ export function buildFillingBatchContext(input: FillingBatchContextInput): Label
     ingredients.map((ing) => {
       const id = [...perIngredientGrams.keys()].find((k) => {
         const i = ingredientMap.get(k);
-        return i && (i.commercialName ?? i.name) === ing.name;
+        return i?.name === ing.name;
       });
       return {
         amountG: ing.amountG,
@@ -482,7 +482,7 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
       if (!ing) return null;
       for (const a of ing.allergens ?? []) allergenSet.add(a);
       return {
-        name: ing.commercialName ?? ing.name,
+        name: ing.name,
         allergens: ing.allergens ?? [],
         amountG: Math.round(grams * 1000) / 1000,
       };
@@ -496,7 +496,7 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
     ingredients.map((ing) => {
       const id = [...perIngredientGrams.keys()].find((k) => {
         const i = ingredientMap.get(k);
-        return i && (i.commercialName ?? i.name) === ing.name;
+        return i?.name === ing.name;
       });
       return {
         amountG: ing.amountG,

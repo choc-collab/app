@@ -533,7 +533,7 @@ function SourcePicker({
     if (kind === "production-batch") {
       const recentPlans = plans
         .filter((p) => p.status === "done" && p.id)
-        .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+        .sort((a, b) => (b.completedAt ? new Date(b.completedAt).getTime() : 0) - (a.completedAt ? new Date(a.completedAt).getTime() : 0))
         .slice(0, 30);
       for (const plan of recentPlans) {
         for (const pp of allPlanProducts.filter((x) => x.planId === plan.id)) {
@@ -549,7 +549,7 @@ function SourcePicker({
     } else if (kind === "filling-batch") {
       const recentPlans = plans
         .filter((p) => p.status === "done" && p.id)
-        .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+        .sort((a, b) => (b.completedAt ? new Date(b.completedAt).getTime() : 0) - (a.completedAt ? new Date(a.completedAt).getTime() : 0))
         .slice(0, 30);
       for (const plan of recentPlans) {
         for (const pf of allPlanFillings.filter((x) => x.planId === plan.id)) {
