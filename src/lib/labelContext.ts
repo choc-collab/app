@@ -690,7 +690,27 @@ export function useLabelContext(source: LabelSource | null | undefined): LabelCo
     }
 
     if (source.kind === "collection-package") {
-      return await loadCollectionPackageContext(source.collectionId, source.packagingId);
+      // For the editor preview, anchor against the most recent real Sale for
+      // this (collectionId, packagingId). Without that, the resolver falls
+      // back to "one of each from collectionProducts" — which (a) shows the
+      // wrong piece count for single-product boxes (1 piece instead of 9),
+      // and (b) shows zero data when the actual sales use products that
+      // aren't in `collectionProducts` (bars, snacks, or products removed
+      // from the assortment after the sale was packed). Picking the latest
+      // matching sale makes the preview reflect what the user will really
+      // print.
+      const recentSales = await db.sales
+        .where("collectionId").equals(source.collectionId)
+        .toArray();
+      const matchingSale = recentSales
+        .filter((s) => s.packagingId === source.packagingId)
+        .sort((a, b) => new Date(b.preparedAt).getTime() - new Date(a.preparedAt).getTime())[0];
+      return await loadCollectionPackageContext(
+        source.collectionId,
+        source.packagingId,
+        matchingSale?.cells,
+        matchingSale?.preparedAt ? new Date(matchingSale.preparedAt) : null,
+      );
     }
 
     // Only `production-batch` remains after the explicit branches above.
