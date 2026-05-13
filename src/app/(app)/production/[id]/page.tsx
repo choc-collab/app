@@ -10,7 +10,7 @@ import {
   useProductCategoryMap, useCollections, usePackagingList, useAllCollectionPackagings, useCurrencySymbol,
   packagePlanProductAsSales,
   useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
-  useLabelTemplates, useDefaultBatchLabelTemplateId, useBrand, useMarketRegion,
+  useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
 } from "@/lib/hooks";
 import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
@@ -27,6 +27,7 @@ import { LowStockFlagButton } from "@/components/pantry";
 import { printLabels } from "@/lib/labelPrint";
 import { loadFillingBatchContexts, loadProductionBatchContexts } from "@/lib/labelContext";
 import { PrintTemplatePicker } from "@/components/print-template-picker";
+import { labelTemplateKind } from "@/types";
 import type { LabelTemplate } from "@/types";
 import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
@@ -214,12 +215,24 @@ function PlanContent({
   // Label printing — opens a template-picker on click. State is local so the
   // modal can be cancelled without touching the underlying batch.
   const labelTemplates = useLabelTemplates();
-  const defaultLabelTemplateId = useDefaultBatchLabelTemplateId();
+  const defaultBatchTemplateId = useDefaultLabelTemplateId("production-batch");
+  const defaultFillingTemplateId = useDefaultLabelTemplateId("filling-batch");
   const brand = useBrand();
   const marketRegion = useMarketRegion();
   // `null` = picker closed; "products" / "fillings" = which entity kind the
   // user clicked. Lets one picker UI serve both flows on mixed batches.
   const [printerPickerMode, setPrinterPickerMode] = useState<"products" | "fillings" | null>(null);
+
+  // Filter templates by kind so each picker only offers compatible designs.
+  // Legacy templates without a kind are treated as production-batch.
+  const productLabelTemplates = useMemo(
+    () => labelTemplates.filter((t) => labelTemplateKind(t) === "production-batch"),
+    [labelTemplates],
+  );
+  const fillingLabelTemplates = useMemo(
+    () => labelTemplates.filter((t) => labelTemplateKind(t) === "filling-batch"),
+    [labelTemplates],
+  );
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -1517,8 +1530,8 @@ function PlanContent({
           description={printerPickerMode === "products"
             ? "One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app."
             : "One PNG per filling in this batch — share to AirDrop, Photos, or your label-printer app."}
-          templates={labelTemplates}
-          defaultId={defaultLabelTemplateId}
+          templates={printerPickerMode === "products" ? productLabelTemplates : fillingLabelTemplates}
+          defaultId={printerPickerMode === "products" ? defaultBatchTemplateId : defaultFillingTemplateId}
           onConfirm={handleConfirmPrint}
           onCancel={() => setPrinterPickerMode(null)}
         />

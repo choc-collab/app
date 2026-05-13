@@ -3,8 +3,9 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/page-header";
 import { exportBackup, importBackup, clearAllData } from "@/lib/backup";
-import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames, useBrand, setBrand, useLabelTemplates, useDefaultBatchLabelTemplateId, setDefaultBatchLabelTemplateId } from "@/lib/hooks";
-import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, type CurrencyCode, type MarketRegion, type FillMode, type Brand, type BrandSocial } from "@/types";
+import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames, useBrand, setBrand, useLabelTemplates, useDefaultLabelTemplateId, setDefaultLabelTemplateId } from "@/lib/hooks";
+import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, labelTemplateKind, type CurrencyCode, type MarketRegion, type FillMode, type Brand, type BrandSocial, type LabelTemplate, type LabelTemplateKind } from "@/types";
+import { SOCIAL_NETWORKS, findSocialNetwork } from "@/lib/socials";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
 import { isCloudConfigured } from "@/lib/db";
@@ -535,44 +536,90 @@ function LabelTemplatesLink() {
 
 function DefaultBatchLabelTemplateSection() {
   const templates = useLabelTemplates();
-  const defaultId = useDefaultBatchLabelTemplateId();
+
+  // One row per kind so users can pin a default for each entry point. The
+  // empty-state copy and section heading stay the same — only the picker
+  // splits by kind underneath.
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-primary">Default label templates</h2>
+      <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+        {templates.length === 0 ? (
+          <div className="flex items-start gap-3">
+            <Printer className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">No templates yet</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Design one in <Link href="/labels" className="underline">Label templates</Link>.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <DefaultTemplateRow
+              kind="production-batch"
+              label="Production batches"
+              hint="Pre-selected when you tap “Save labels” on a finished moulding batch."
+              templates={templates}
+            />
+            <DefaultTemplateRow
+              kind="filling-batch"
+              label="Filling batches"
+              hint="Pre-selected when you tap “Save labels” on a finished filling-only batch."
+              templates={templates}
+            />
+            <DefaultTemplateRow
+              kind="collection-package"
+              label="Boxes (shop)"
+              hint="Pre-selected when you print a box label from Shop → Ready to sell."
+              templates={templates}
+            />
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DefaultTemplateRow({
+  kind, label, hint, templates,
+}: {
+  kind: LabelTemplateKind;
+  label: string;
+  hint: string;
+  templates: LabelTemplate[];
+}) {
+  const defaultId = useDefaultLabelTemplateId(kind);
+  const eligible = useMemo(() => templates.filter((t) => labelTemplateKind(t) === kind), [templates, kind]);
 
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    setDefaultBatchLabelTemplateId(e.target.value);
+    setDefaultLabelTemplateId(kind, e.target.value);
   }
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-primary">Production batch labels</h2>
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-        <div className="flex items-start gap-3">
-          <Printer className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Default label template</p>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
-              When you tap &ldquo;Save labels&rdquo; on a finished batch, this template is pre-selected
-              in the picker. You can still change it per-batch before printing.
-            </p>
-            {templates.length === 0 ? (
-              <p className="text-xs italic text-muted-foreground">
-                No templates yet — design one in <Link href="/labels" className="underline">Label templates</Link>.
-              </p>
-            ) : (
-              <select
-                value={defaultId}
-                onChange={onChange}
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">— Pick at print time —</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name} ({t.width}×{t.height}mm)</option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
+    <div className="flex items-start gap-3">
+      <Printer className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-xs text-muted-foreground mt-0.5 mb-2">{hint}</p>
+        {eligible.length === 0 ? (
+          <p className="text-xs italic text-muted-foreground">
+            No templates of this type yet — choose “{label}” when creating one.
+          </p>
+        ) : (
+          <select
+            value={defaultId}
+            onChange={onChange}
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="">— Pick at print time —</option>
+            {eligible.map((t) => (
+              <option key={t.id} value={t.id}>{t.name} ({t.width}×{t.height}mm)</option>
+            ))}
+          </select>
+        )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -1310,30 +1357,12 @@ function BrandTab({
             <p className="text-sm text-muted-foreground">No links yet.</p>
           )}
           {draftSocials.map((s, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={s.label}
-                onChange={(e) => updateSocial(i, { label: e.target.value })}
-                placeholder="Label (e.g. Instagram)"
-                className="w-1/3 rounded-md border border-border bg-card px-3 py-2 text-sm"
-              />
-              <input
-                type="text"
-                value={s.url}
-                onChange={(e) => updateSocial(i, { url: e.target.value })}
-                placeholder="URL or @handle"
-                className="flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => removeSocial(i)}
-                aria-label="Remove link"
-                className="shrink-0 rounded-full border border-border p-2 text-muted-foreground hover:text-status-warn hover:bg-muted"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <SocialLinkRow
+              key={i}
+              social={s}
+              onChange={(patch) => updateSocial(i, patch)}
+              onRemove={() => removeSocial(i)}
+            />
           ))}
           <button
             type="button"
@@ -1359,6 +1388,88 @@ function BrandTab({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * One row in the Brand → Links editor. The label is a dropdown of curated
+ * social networks (so the renderer always finds a matching icon) plus a
+ * "Custom…" escape hatch that reveals a free-text input for niche networks
+ * we haven't pre-listed. Switching back to a curated entry clears the custom
+ * text so the picker stays predictable.
+ */
+const CUSTOM_LABEL_SENTINEL = "__custom__";
+
+function SocialLinkRow({
+  social,
+  onChange,
+  onRemove,
+}: {
+  social: BrandSocial;
+  onChange: (patch: Partial<BrandSocial>) => void;
+  onRemove: () => void;
+}) {
+  const matched = findSocialNetwork(social.label);
+  const isCustom = !matched && social.label.length > 0;
+  // Sentinel chosen so newly-added (empty label) rows default to the first
+  // curated option's label — saves a click for the common case while still
+  // letting the user pick "Custom…" right away.
+  const selectValue = matched ? matched.id : isCustom ? CUSTOM_LABEL_SENTINEL : "";
+
+  function onSelect(e: React.ChangeEvent<HTMLSelectElement>) {
+    const v = e.target.value;
+    if (v === "") { onChange({ label: "" }); return; }
+    if (v === CUSTOM_LABEL_SENTINEL) {
+      // Preserve any custom label the user already typed; otherwise leave it
+      // blank so the input shows its placeholder.
+      if (!isCustom) onChange({ label: "" });
+      return;
+    }
+    const def = SOCIAL_NETWORKS.find((n) => n.id === v);
+    if (def) onChange({ label: def.label });
+  }
+
+  const urlPlaceholder = matched?.placeholder ?? "URL or @handle";
+
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <select
+        value={selectValue}
+        onChange={onSelect}
+        className="w-full sm:w-44 rounded-md border border-border bg-card px-3 py-2 text-sm"
+      >
+        <option value="">— Pick a network —</option>
+        {SOCIAL_NETWORKS.map((n) => (
+          <option key={n.id} value={n.id}>{n.label}</option>
+        ))}
+        <option value={CUSTOM_LABEL_SENTINEL}>Custom…</option>
+      </select>
+      {selectValue === CUSTOM_LABEL_SENTINEL && (
+        <input
+          type="text"
+          value={social.label}
+          onChange={(e) => onChange({ label: e.target.value })}
+          placeholder="Network name (e.g. Pinterest)"
+          className="w-full sm:w-44 rounded-md border border-border bg-card px-3 py-2 text-sm"
+          autoFocus
+        />
+      )}
+      <input
+        type="text"
+        value={social.url}
+        onChange={(e) => onChange({ url: e.target.value })}
+        placeholder={urlPlaceholder}
+        className="flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm"
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove link"
+        className="shrink-0 rounded-full border border-border p-2 text-muted-foreground hover:text-status-warn hover:bg-muted"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

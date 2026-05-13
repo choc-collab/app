@@ -6,7 +6,14 @@ import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { Plus, Pencil, Copy, Trash2, Tags } from "lucide-react";
 import { useLabelTemplates, saveLabelTemplate, deleteLabelTemplate } from "@/lib/hooks";
-import type { LabelTemplate } from "@/types";
+import { labelTemplateKind } from "@/types";
+import type { LabelTemplate, LabelTemplateKind } from "@/types";
+
+const KIND_BADGE: Record<LabelTemplateKind, string> = {
+  "production-batch": "Batch",
+  "filling-batch": "Filling",
+  "collection-package": "Box",
+};
 
 function formatRelativeDate(d: Date | string | undefined): string {
   if (!d) return "";
@@ -23,6 +30,7 @@ export default function LabelsGalleryPage() {
     const now = new Date();
     const copy: Omit<LabelTemplate, "id"> = {
       name: `${t.name} (copy)`,
+      kind: labelTemplateKind(t),
       width: t.width,
       height: t.height,
       piecesPerLabel: t.piecesPerLabel,
@@ -82,6 +90,9 @@ export default function LabelsGalleryPage() {
                     >
                       {t.name}
                     </Link>
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded bg-muted shrink-0">
+                      {KIND_BADGE[labelTemplateKind(t)]}
+                    </span>
                     <span className="text-xs text-muted-foreground shrink-0">
                       {t.width}×{t.height}mm
                     </span>

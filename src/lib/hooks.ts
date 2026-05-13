@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -1771,18 +1771,32 @@ export async function setBrand(brand: Brand): Promise<void> {
   await updatePreference({ brand });
 }
 
-/** Reactive read of the user-configured default batch label template id.
- *  Empty string means "no default configured" — the production page falls
- *  back to picking the first template alphabetically. */
-export function useDefaultBatchLabelTemplateId(): string {
-  return useLiveQuery(async () => (await getPreferences()).defaultBatchLabelTemplateId ?? "", [], "");
+/** Reactive read of the user-configured default label template id for a given
+ *  kind. Empty string means "no default configured" — each entry point falls
+ *  back to picking the first compatible template alphabetically.
+ *
+ *  Migration: pre-kind users had a single `defaultBatchLabelTemplateId`. When
+ *  the new per-kind map has no entry for "production-batch", we fall back to
+ *  that legacy value so existing setups keep working without a manual reset. */
+export function useDefaultLabelTemplateId(kind: LabelTemplateKind): string {
+  return useLiveQuery(async () => {
+    const prefs = await getPreferences();
+    const fromMap = prefs.defaultLabelTemplateIds?.[kind];
+    if (fromMap) return fromMap;
+    if (kind === "production-batch") return prefs.defaultBatchLabelTemplateId ?? "";
+    return "";
+  }, [kind], "");
 }
 
-/** Persist the user's default batch label template choice. Empty string means
- *  "no default configured" and is stored verbatim so Dexie's `update` doesn't
- *  treat it as a "leave unchanged" hint. */
-export async function setDefaultBatchLabelTemplateId(id: string): Promise<void> {
-  await updatePreference({ defaultBatchLabelTemplateId: id });
+/** Persist the user's default template choice for a given kind. Empty string
+ *  clears the slot. Writes always go to the per-kind map; the legacy field is
+ *  left untouched so a rollback to an older build would still find a value. */
+export async function setDefaultLabelTemplateId(kind: LabelTemplateKind, id: string): Promise<void> {
+  const prefs = await getPreferences();
+  const map = { ...(prefs.defaultLabelTemplateIds ?? {}) };
+  if (id) map[kind] = id;
+  else delete map[kind];
+  await updatePreference({ defaultLabelTemplateIds: map });
 }
 
 /**

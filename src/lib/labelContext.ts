@@ -1125,3 +1125,43 @@ export async function loadCollectionPackageContext(
   });
 }
 
+/**
+ * Resolve a single `LabelContext` for the stock-page relabel flow. Wraps the
+ * existing per-plan loaders and filters down to one row — callers want to
+ * print exactly one sticker for a specific PlanProduct or FillingStock row,
+ * not the whole batch.
+ *
+ * Returns null when the underlying plan/row can't be found (e.g. a manually
+ * added filling-stock row that was never tied to a production plan).
+ */
+export async function loadProductionBatchContextForRow(
+  planId: string,
+  planProductId: string,
+): Promise<LabelContext | null> {
+  const contexts = await loadProductionBatchContexts(planId);
+  return contexts.find(
+    (ctx) => ctx.source.kind === "production-batch" && ctx.source.planProductId === planProductId,
+  ) ?? null;
+}
+
+/**
+ * Resolve a single filling-batch `LabelContext` from a `FillingStock` row.
+ * Filling stock rows don't store the planFillingId directly — only planId and
+ * fillingId — so we walk the plan's PlanFillings to find the matching pair.
+ *
+ * Manual / non-production stock rows (no `planId`) return null; the caller
+ * should hide the relabel affordance in that case.
+ */
+export async function loadFillingBatchContextForStock(
+  stockRow: { planId?: string; fillingId: string },
+): Promise<LabelContext | null> {
+  if (!stockRow.planId) return null;
+  const planFillings = await db.planFillings.where("planId").equals(stockRow.planId).toArray();
+  const pf = planFillings.find((p) => p.fillingId === stockRow.fillingId);
+  if (!pf?.id) return null;
+  const contexts = await loadFillingBatchContexts(stockRow.planId);
+  return contexts.find(
+    (ctx) => ctx.source.kind === "filling-batch" && ctx.source.planFillingId === pf.id,
+  ) ?? null;
+}
+

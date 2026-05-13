@@ -17,6 +17,7 @@
  * exists only so tests can run without a DOM.
  */
 
+import QRCode from "qrcode";
 import type {
   Brand,
   LabelContext,
@@ -27,6 +28,7 @@ import type {
   MarketRegion,
 } from "@/types";
 import { allergenLabel } from "@/types";
+import { findSocialNetwork } from "@/lib/socials";
 import { getNutrientsByMarket } from "@/lib/nutrition";
 import {
   DEFAULT_FONT_FAMILY,
@@ -111,6 +113,93 @@ export const defaultMeasurer: TextMeasurer =
   typeof document !== "undefined" ? browserMeasurer : heuristicMeasurer;
 
 // ---------------------------------------------------------------------------
+// Social icons
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal Lucide-style icons for the `socials` field. Each entry is the inner
+ * markup for a 24×24 viewBox — the renderer wraps it in a transform that
+ * scales to the field's font size in millimetres and places it on the
+ * baseline of the URL text. Unknown labels fall through to a plain text
+ * prefix so users can still add e.g. "Pinterest" without a missing icon.
+ *
+ * Stroke icons rely on `currentColor` so they inherit the field's text fill.
+ * Filled icons set fill explicitly.
+ */
+const SOCIAL_ICONS: Record<string, string> = {
+  instagram:
+    '<rect x="3" y="3" width="18" height="18" rx="5" fill="none" stroke="currentColor" stroke-width="2"/>' +
+    '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/>' +
+    '<circle cx="17.5" cy="6.5" r="1.2" fill="currentColor"/>',
+  facebook:
+    '<path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" fill="currentColor"/>',
+  x:
+    '<path d="M3 3 L 21 21 M 21 3 L 3 21" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>',
+  twitter:
+    '<path d="M22 4 c -1 1 -2 1 -3 1 c -1 -1 -3 -1 -4 -1 c -3 0 -5 2 -5 5 c 0 0 0 1 0 1 c -4 0 -7 -2 -10 -5 c -1 2 0 4 2 5 c -1 0 -2 0 -3 -1 c 0 2 1 4 4 4 c -1 0 -1 0 -2 0 c 1 2 3 3 5 3 c -1 1 -4 2 -6 2 c 2 1 5 2 7 2 c 9 0 14 -8 14 -14 c 1 -1 2 -1 3 -2 z" fill="currentColor"/>',
+  tiktok:
+    '<path d="M16 4 c 0 3 2 5 5 5 V 13 c -2 0 -4 -1 -5 -2 v 6 a 5 5 0 1 1 -5 -5 v 3 a 2 2 0 1 0 2 2 V 4 z" fill="currentColor"/>',
+  youtube:
+    '<rect x="2" y="6" width="20" height="12" rx="3" fill="currentColor"/>' +
+    '<path d="M10 9 L 16 12 L 10 15 Z" fill="white"/>',
+  linkedin:
+    '<rect x="3" y="3" width="18" height="18" rx="2" fill="currentColor"/>' +
+    '<rect x="6" y="10" width="2.5" height="8" fill="white"/>' +
+    '<circle cx="7.25" cy="7.25" r="1.5" fill="white"/>' +
+    '<path d="M11 10 v 8 h 2.5 v -4 a 1.5 1.5 0 0 1 3 0 v 4 H 19 v -4.5 c 0 -2 -1.5 -3.5 -3.5 -3.5 c -1 0 -1.8 0.5 -2 1 v -1 z" fill="white"/>',
+  email:
+    '<rect x="2" y="5" width="20" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>' +
+    '<path d="M2 7 L 12 14 L 22 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  phone:
+    '<path d="M5 3 h 4 l 2 5 l -3 2 c 1 3 3 5 6 6 l 2 -3 l 5 2 v 4 c 0 1 -1 2 -2 2 c -10 0 -18 -8 -18 -18 c 0 -1 1 -2 2 -2 z" fill="currentColor"/>',
+  whatsapp:
+    '<path d="M3.5 20.5 L 4.7 16.5 a 9 9 0 1 1 3.3 3.3 z" fill="currentColor"/>' +
+    '<path d="M9 9 c 0 4 3 7 6 7 l 1 -1 l -2 -1 l -1 0.5 c -1 -0.5 -2 -1.5 -2.5 -2.5 l 0.5 -1 l -1 -2 z" fill="white"/>',
+  globe:
+    '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>' +
+    '<ellipse cx="12" cy="12" rx="4" ry="9" fill="none" stroke="currentColor" stroke-width="2"/>' +
+    '<path d="M3 12 H 21" fill="none" stroke="currentColor" stroke-width="2"/>',
+};
+
+/** Common label spellings that resolve to the same icon. */
+const SOCIAL_ICON_ALIASES: Record<string, string> = {
+  insta: "instagram",
+  ig: "instagram",
+  fb: "facebook",
+  meta: "facebook",
+  yt: "youtube",
+  "x.com": "x",
+  twitter: "twitter",
+  tiktok: "tiktok",
+  mail: "email",
+  "e-mail": "email",
+  tel: "phone",
+  call: "phone",
+  mobile: "phone",
+  wa: "whatsapp",
+  website: "globe",
+  site: "globe",
+  www: "globe",
+  web: "globe",
+  url: "globe",
+  link: "globe",
+  homepage: "globe",
+};
+
+function resolveSocialIcon(label: string): string | null {
+  const key = label.trim().toLowerCase();
+  if (!key) return null;
+  // Try the catalog first so curated display labels like "Website" resolve to
+  // the canonical id ("globe") which keys the icon map.
+  const def = findSocialNetwork(key);
+  if (def && SOCIAL_ICONS[def.id]) return SOCIAL_ICONS[def.id];
+  if (SOCIAL_ICONS[key]) return SOCIAL_ICONS[key];
+  const aliased = SOCIAL_ICON_ALIASES[key];
+  if (aliased) return SOCIAL_ICONS[aliased] ?? null;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // String helpers
 // ---------------------------------------------------------------------------
 
@@ -165,6 +254,66 @@ export function wrapLines(
     if (current) out.push(current);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// QR rendering
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a QR code as a grid of black squares scaled to fit the field box.
+ * Falls back to a hatched placeholder when `text` is empty or generation fails
+ * (e.g. extremely long input that exceeds the chosen error-correction level).
+ *
+ * Output is pure SVG markup with no foreign objects, so it rasterizes cleanly
+ * through the same canvas pipeline as everything else.
+ */
+function renderQrSvg(text: string, w: number, h: number): string {
+  if (!text) return placeholderQr(w, h);
+  let matrix: { size: number; data: Uint8Array };
+  try {
+    const code = QRCode.create(text, { errorCorrectionLevel: "M" });
+    matrix = { size: code.modules.size, data: code.modules.data as Uint8Array };
+  } catch {
+    return placeholderQr(w, h);
+  }
+
+  const side = Math.min(w, h);
+  const cell = side / matrix.size;
+  const offX = (w - side) / 2;
+  const offY = (h - side) / 2;
+
+  const rects: string[] = [];
+  for (let y = 0; y < matrix.size; y++) {
+    let x = 0;
+    while (x < matrix.size) {
+      if (matrix.data[y * matrix.size + x]) {
+        let run = 1;
+        while (x + run < matrix.size && matrix.data[y * matrix.size + x + run]) run++;
+        rects.push(
+          `<rect x="${fmt(offX + x * cell)}" y="${fmt(offY + y * cell)}" width="${fmt(run * cell)}" height="${fmt(cell)}" />`,
+        );
+        x += run;
+      } else {
+        x++;
+      }
+    }
+  }
+  return (
+    `<rect x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#ffffff" />` +
+    `<g fill="${COLOR_BORDER}" shape-rendering="crispEdges">${rects.join("")}</g>`
+  );
+}
+
+function placeholderQr(w: number, h: number): string {
+  const m = Math.min(w, h);
+  const c = m * 0.18;
+  return (
+    `<rect x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#ffffff" stroke="${COLOR_BORDER}" stroke-width="0.15" />` +
+    `<rect x="${fmt(m * 0.1)}" y="${fmt(m * 0.1)}" width="${fmt(c)}" height="${fmt(c)}" fill="${COLOR_BORDER}" />` +
+    `<rect x="${fmt(w - m * 0.1 - c)}" y="${fmt(m * 0.1)}" width="${fmt(c)}" height="${fmt(c)}" fill="${COLOR_BORDER}" />` +
+    `<rect x="${fmt(m * 0.1)}" y="${fmt(h - m * 0.1 - c)}" width="${fmt(c)}" height="${fmt(c)}" fill="${COLOR_BORDER}" />`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +490,7 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
     // lists break across lines instead of overflowing. Each line emits its
     // own `<text>` so the bold weight applies uniformly.
     if (allergens.length > 0) {
-      const declaration = allergens.map(allergenLabel).join(" · ");
+      const declaration = allergens.map(allergenLabel).join(", ");
       const declLines = wrapLines(declaration, field.w, fontMm, weight, measure, fontFamily);
       for (const line of declLines) {
         parts.push(textEl(line, 0, yCursor, { fontMm, fontFamily, weight, italic: !!p.italic }));
@@ -354,7 +503,7 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
     // May-contain line stays italic + muted by convention (advisory tone);
     // also wraps by width so it can span multiple lines below the declaration.
     if (mayContain.length > 0) {
-      const mc = mayContain.map(allergenLabel).join(" · ");
+      const mc = mayContain.map(allergenLabel).join(", ");
       const mcLines = wrapLines(mc, field.w, fontMm, 400, measure, fontFamily);
       for (const line of mcLines) {
         parts.push(textEl(line, 0, yCursor, {
@@ -510,13 +659,27 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
         fill: COLOR_TEXT_PLACEHOLDER,
       });
     }
+    // Icon footprint: a square slightly larger than the cap height so the
+    // glyph and the icon share an optical baseline. The text follows with a
+    // small gap so it reads as "icon + value" rather than "icon, then value".
+    const iconBox = fontMm * 1.05;
+    const iconGap = fontMm * 0.35;
     return socials
       .map((s, i) => {
         const y = i * lineHeight;
+        const icon = resolveSocialIcon(s.label);
+        if (icon) {
+          // Wrap icon in a group: translate to the row's top-left, scale 24→iconBox,
+          // and set `color` so `currentColor` strokes inherit the body fill.
+          const scale = iconBox / 24;
+          const iconSvg = `<g transform="translate(0 ${fmt(y)}) scale(${fmt(scale)})" color="${COLOR_TEXT}">${icon}</g>`;
+          const urlX = iconBox + iconGap;
+          return iconSvg + textEl(s.url, urlX, y, { fontMm, fontFamily, weight, italic, fill: COLOR_TEXT });
+        }
+        // Fallback for labels with no matching icon — keep the original
+        // "label url" layout so users can still surface arbitrary networks.
         const labelStr = `${s.label} `;
         const labelW = measure(labelStr, fontMm, weight, fontFamily);
-        // Emit label (muted) and url (body) as two adjacent <text> elements —
-        // simpler than tspan alignment, perfectly fine for left-anchored rows.
         return (
           textEl(labelStr, 0, y, { fontMm, fontFamily, weight, italic, fill: COLOR_TEXT_MUTED }) +
           textEl(s.url, labelW, y, { fontMm, fontFamily, weight, italic, fill: COLOR_TEXT })
@@ -528,20 +691,11 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   qr: ({ field, brand }) => {
     const p = field.props ?? {};
     const url = p.qrUrl || brand.socials?.[0]?.url || "";
-    // Real QR rendering is deferred — the editor and print preview show a
-    // 3-corner-marker placeholder so positioning + sizing can be designed
-    // today. The intended target URL is exposed via `data-qr-url` so the
-    // print pipeline can swap in a real vector QR without changing layouts.
     const w = field.w;
     const h = field.h;
-    const m = Math.min(w, h);
-    const c = m * 0.18;
     return (
       `<g data-qr-url="${esc(url)}">` +
-      `<rect x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#ffffff" stroke="${COLOR_BORDER}" stroke-width="0.15" />` +
-      `<rect x="${fmt(m * 0.1)}" y="${fmt(m * 0.1)}" width="${fmt(c)}" height="${fmt(c)}" fill="${COLOR_BORDER}" />` +
-      `<rect x="${fmt(w - m * 0.1 - c)}" y="${fmt(m * 0.1)}" width="${fmt(c)}" height="${fmt(c)}" fill="${COLOR_BORDER}" />` +
-      `<rect x="${fmt(m * 0.1)}" y="${fmt(h - m * 0.1 - c)}" width="${fmt(c)}" height="${fmt(c)}" fill="${COLOR_BORDER}" />` +
+      renderQrSvg(url, w, h) +
       `</g>`
     );
   },

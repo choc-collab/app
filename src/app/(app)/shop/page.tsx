@@ -15,7 +15,7 @@ import {
   useBrand,
   useCollections,
   useCurrencySymbol,
-  useDefaultBatchLabelTemplateId,
+  useDefaultLabelTemplateId,
   useGiveawayMonthTallies,
   useLabelTemplates,
   useMarketRegion,
@@ -33,7 +33,7 @@ import { loadCollectionPackageContext } from "@/lib/labelContext";
 import { printLabels } from "@/lib/labelPrint";
 import { PrintTemplatePicker } from "@/components/print-template-picker";
 import type { ShopProductInfo } from "@/lib/shopColor";
-import { GIVE_AWAY_REASONS } from "@/types";
+import { GIVE_AWAY_REASONS, labelTemplateKind } from "@/types";
 import type { GiveAwayRecord, LabelTemplate, Packaging, Sale } from "@/types";
 import { Printer } from "lucide-react";
 
@@ -142,8 +142,12 @@ export default function ShopPage() {
   // a Collection × Packaging on its own is a recipe, a prepared sale is the
   // physical box (with a known per-cavity product distribution) that needs
   // a sticker.
-  const labelTemplates = useLabelTemplates();
-  const defaultLabelTemplateId = useDefaultBatchLabelTemplateId();
+  const allLabelTemplates = useLabelTemplates();
+  const labelTemplates = useMemo(
+    () => allLabelTemplates.filter((t) => labelTemplateKind(t) === "collection-package"),
+    [allLabelTemplates],
+  );
+  const defaultLabelTemplateId = useDefaultLabelTemplateId("collection-package");
   const brand = useBrand();
   const marketRegion = useMarketRegion();
   const [printTarget, setPrintTarget] = useState<Sale | null>(null);

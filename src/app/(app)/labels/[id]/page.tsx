@@ -10,19 +10,29 @@ import {
   useBrand,
   useProductionPlans,
   useAllPlanProducts,
+  useAllPlanFillings,
   useProductsList,
+  useFillings,
+  useCollections,
+  useAllCollectionPackagings,
+  usePackagingList,
   useMarketRegion,
 } from "@/lib/hooks";
 import { useLabelContext } from "@/lib/labelContext";
 import { FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, FONT_OPTIONS_BY_CATEGORY, type LabelFieldGroup } from "@/lib/labelFields";
 import { renderTemplateSvg } from "@/lib/labelSvg";
 import { lintTemplate, summariseLint, type LintWarning } from "@/lib/labelLinter";
-import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelFieldProps } from "@/types";
+import { labelTemplateKind } from "@/types";
+import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelTemplateKind, LabelFieldProps } from "@/types";
 
 const MM_BASE = 4; // px per mm at zoom = 1
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
 const SOURCE_STORAGE_KEY = "choc-collab.labels.lastSource";
+const HISTORY_LIMIT = 50;
+const NUDGE_STEP_MM = 1;
+const NUDGE_LARGE_STEP_MM = 5;
+const PASTE_OFFSET_MM = 2;
 
 const GROUP_LABEL: Record<LabelFieldGroup, string> = {
   product: "Product / batch (auto)",
@@ -75,6 +85,17 @@ function Editor({ initial }: { initial: LabelTemplate }) {
   // (every click without shift replaces the selection with one field).
   const [sel, setSel] = useState<string[]>([]);
 
+  // Undo/redo stacks. Every committed template state (pre-mutation) lands on
+  // `past`; redo replays from `future`. Capped at HISTORY_LIMIT to keep memory
+  // bounded — older entries roll off the bottom of the stack.
+  const [past, setPast] = useState<LabelTemplate[]>([]);
+  const [future, setFuture] = useState<LabelTemplate[]>([]);
+
+  // In-editor clipboard — separate from the OS clipboard so paste behaves
+  // deterministically regardless of what the system clipboard holds. Holds a
+  // snapshot of fields at copy time; paste re-ids them and adds a small offset.
+  const [clipboard, setClipboard] = useState<LabelField[]>([]);
+
   /** Replace the selection with a single field, or extend/toggle it with shift. */
   function selectField(id: string, additive: boolean) {
     if (!additive) { setSel([id]); return; }
@@ -97,12 +118,114 @@ function Editor({ initial }: { initial: LabelTemplate }) {
     if (isCoarseAndNarrow) setShowTabletWarning(true);
   }, []);
 
+  // Editor keyboard shortcuts. Skipped while the user is typing in an input,
+  // textarea, or contentEditable element — those handle their own undo/copy/
+  // paste through the browser. The handler is attached to `window` so the
+  // shortcuts work regardless of which editor pane has focus.
+  useEffect(() => {
+    function isEditableTarget(t: EventTarget | null): boolean {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (el.isContentEditable) return true;
+      return false;
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (isEditableTarget(e.target)) return;
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      // Both Cmd+Shift+Z (Mac convention) and Cmd+Y (Windows convention) redo.
+      if ((mod && e.key.toLowerCase() === "z" && e.shiftKey) || (mod && e.key.toLowerCase() === "y")) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "c") {
+        if (sel.length === 0) return;
+        e.preventDefault();
+        copySelection();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "v") {
+        if (clipboard.length === 0) return;
+        e.preventDefault();
+        pasteFromClipboard();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "d") {
+        if (sel.length === 0) return;
+        e.preventDefault();
+        duplicateSelection();
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && sel.length > 0) {
+        e.preventDefault();
+        removeSelection();
+        return;
+      }
+      if (sel.length > 0 && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        const step = e.shiftKey ? NUDGE_LARGE_STEP_MM : NUDGE_STEP_MM;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        nudgeSelection(dx, dy);
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- functions read tplRef + sel/clipboard captured at call time
+  }, [sel, clipboard]);
+
   // Persist + send to Dexie. Always operates on the latest local draft.
+  // Captures the prior state for undo before writing the new one. Redo stack
+  // is cleared because any explicit commit makes the previous redo timeline
+  // unreachable.
   function commit(next: LabelTemplate) {
+    setPast((p) => {
+      const prev = tplRef.current;
+      const trimmed = p.length >= HISTORY_LIMIT ? p.slice(p.length - HISTORY_LIMIT + 1) : p;
+      return [...trimmed, prev];
+    });
+    setFuture([]);
     setTpl(next);
     tplRef.current = next;
     saveLabelTemplate(next).catch((err) => {
       console.error("saveLabelTemplate failed", err);
+    });
+  }
+
+  /** Pop the most recent template state off `past`, push current onto `future`. */
+  function undo() {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prev = p[p.length - 1];
+      setFuture((f) => [...f, tplRef.current]);
+      tplRef.current = prev;
+      setTpl(prev);
+      saveLabelTemplate(prev).catch((err) => console.error("saveLabelTemplate failed", err));
+      return p.slice(0, -1);
+    });
+  }
+
+  /** Mirror of `undo` walking the other direction. */
+  function redo() {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[f.length - 1];
+      setPast((p) => [...p, tplRef.current]);
+      tplRef.current = next;
+      setTpl(next);
+      saveLabelTemplate(next).catch((err) => console.error("saveLabelTemplate failed", err));
+      return f.slice(0, -1);
     });
   }
 
@@ -157,6 +280,79 @@ function Editor({ initial }: { initial: LabelTemplate }) {
     setSel((s) => s.filter((id) => id !== fieldId));
   }
 
+  /** Snapshot the currently-selected fields into the in-editor clipboard so a
+   *  later paste can drop fresh copies onto the canvas. No commit needed —
+   *  copying only changes the clipboard, not the template. */
+  function copySelection() {
+    if (sel.length === 0) return;
+    const fields = tplRef.current.fields.filter((f) => sel.includes(f.id));
+    if (fields.length === 0) return;
+    setClipboard(fields.map((f) => ({ ...f, props: { ...(f.props ?? {}) } })));
+  }
+
+  /** Add clipboard contents to the template with new ids and a small offset so
+   *  the pasted copies don't sit exactly on top of the originals. Selection
+   *  follows the paste so the user can immediately move/style the new fields. */
+  function pasteFromClipboard() {
+    if (clipboard.length === 0) return;
+    const cur = tplRef.current;
+    const newFields: LabelField[] = clipboard.map((f) => ({
+      ...f,
+      id: newFieldId(),
+      x: clamp(f.x + PASTE_OFFSET_MM, 0, Math.max(0, cur.width - f.w)),
+      y: clamp(f.y + PASTE_OFFSET_MM, 0, Math.max(0, cur.height - f.h)),
+      props: { ...(f.props ?? {}) },
+    }));
+    commit({ ...cur, fields: [...cur.fields, ...newFields], updatedAt: new Date() });
+    setSel(newFields.map((f) => f.id));
+  }
+
+  /** Cmd+D — duplicate selection without touching the clipboard. Equivalent
+   *  to copy + paste but cleaner UX (and doesn't clobber whatever's on the
+   *  clipboard from an earlier copy). */
+  function duplicateSelection() {
+    if (sel.length === 0) return;
+    const cur = tplRef.current;
+    const selected = cur.fields.filter((f) => sel.includes(f.id));
+    if (selected.length === 0) return;
+    const newFields: LabelField[] = selected.map((f) => ({
+      ...f,
+      id: newFieldId(),
+      x: clamp(f.x + PASTE_OFFSET_MM, 0, Math.max(0, cur.width - f.w)),
+      y: clamp(f.y + PASTE_OFFSET_MM, 0, Math.max(0, cur.height - f.h)),
+      props: { ...(f.props ?? {}) },
+    }));
+    commit({ ...cur, fields: [...cur.fields, ...newFields], updatedAt: new Date() });
+    setSel(newFields.map((f) => f.id));
+  }
+
+  /** Nudge all selected fields by (dx, dy) millimetres, clamped to canvas. */
+  function nudgeSelection(dx: number, dy: number) {
+    if (sel.length === 0) return;
+    const cur = tplRef.current;
+    const next: LabelTemplate = {
+      ...cur,
+      fields: cur.fields.map((f) => {
+        if (!sel.includes(f.id)) return f;
+        return {
+          ...f,
+          x: clamp(f.x + dx, 0, Math.max(0, cur.width - f.w)),
+          y: clamp(f.y + dy, 0, Math.max(0, cur.height - f.h)),
+        };
+      }),
+      updatedAt: new Date(),
+    };
+    commit(next);
+  }
+
+  /** Delete every currently-selected field. */
+  function removeSelection() {
+    if (sel.length === 0) return;
+    const cur = tplRef.current;
+    commit({ ...cur, fields: cur.fields.filter((f) => !sel.includes(f.id)), updatedAt: new Date() });
+    setSel([]);
+  }
+
   /** Batch update: apply `patch` to every selected field's position/size, commit
    *  the result in a single save. Used by the alignment + distribute toolbar. */
   function updateSelectedFields(patcher: (field: LabelField, all: LabelField[]) => Partial<LabelField>) {
@@ -180,8 +376,16 @@ function Editor({ initial }: { initial: LabelTemplate }) {
   // multiple objects share state.
   const selectedField = selectedFields.length === 1 ? selectedFields[0] : null;
 
-  // Source picker — drives the live preview.
-  const [source, setSource] = useState<LabelSource | null>(() => readPersistedSource(tpl.id));
+  // Source picker — drives the live preview. The persisted source is only
+  // honoured when its kind matches the template's kind; otherwise we reset to
+  // null so the preview falls back to placeholders rather than mis-rendering
+  // against an incompatible source.
+  const templateKind = labelTemplateKind(tpl);
+  const [source, setSource] = useState<LabelSource | null>(() => {
+    const persisted = readPersistedSource(tpl.id);
+    if (persisted && persisted.kind !== templateKind) return null;
+    return persisted;
+  });
   useEffect(() => { writePersistedSource(tpl.id, source); }, [tpl.id, source]);
   const context = useLabelContext(source);
   const brand = useBrand();
@@ -258,6 +462,7 @@ function TopBar({
   source: LabelSource | null;
   setSource: (s: LabelSource | null) => void;
 }) {
+  const kind = labelTemplateKind(tpl);
   return (
     <div className="border-b border-border px-4 py-2 flex items-center gap-3 bg-card">
       <Link href="/labels" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
@@ -272,12 +477,21 @@ function TopBar({
       <span className="text-xs font-mono text-muted-foreground">
         {tpl.width}×{tpl.height}mm
       </span>
+      <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded bg-muted">
+        {LABEL_KIND_BADGE[kind]}
+      </span>
       <div className="flex-1" />
-      <SourcePicker value={source} onChange={setSource} />
+      <SourcePicker value={source} onChange={setSource} kind={kind} />
       <ZoomControl zoom={zoom} setZoom={setZoom} />
     </div>
   );
 }
+
+const LABEL_KIND_BADGE: Record<LabelTemplateKind, string> = {
+  "production-batch": "Batch",
+  "filling-batch": "Filling",
+  "collection-package": "Box",
+};
 
 function ZoomControl({ zoom, setZoom }: { zoom: number; setZoom: (z: number) => void }) {
   return (
@@ -290,58 +504,116 @@ function ZoomControl({ zoom, setZoom }: { zoom: number; setZoom: (z: number) => 
 }
 
 function SourcePicker({
-  value, onChange,
+  value, onChange, kind,
 }: {
   value: LabelSource | null;
   onChange: (s: LabelSource | null) => void;
+  kind: LabelTemplateKind;
 }) {
   const plans = useProductionPlans();
   const allPlanProducts = useAllPlanProducts();
+  const allPlanFillings = useAllPlanFillings();
   const products = useProductsList();
-  const productMap = useMemo(() => new Map(products.map((p) => [p.id!, p])), [products]);
+  const fillings = useFillings();
+  const collections = useCollections();
+  const allCollectionPackagings = useAllCollectionPackagings();
+  const packagings = usePackagingList(true);
 
-  // Production-batch is the only source kind whose resolver is implemented in
-  // Phase 1. The other kinds (filling-batch, collection-package) come online
-  // in Phase 2 alongside their entry points.
+  const productMap = useMemo(() => new Map(products.map((p) => [p.id!, p])), [products]);
+  const fillingMap = useMemo(() => new Map(fillings.map((f) => [f.id!, f])), [fillings]);
+  const collectionMap = useMemo(() => new Map(collections.map((c) => [c.id!, c])), [collections]);
+  const packagingMap = useMemo(() => new Map(packagings.map((p) => [p.id!, p])), [packagings]);
+
+  // Enumeration is kind-scoped so the dropdown only ever shows previews the
+  // template can actually be printed against. Dropping in a row from the
+  // wrong kind would just produce empty / fallback context — not useful.
   const options = useMemo(() => {
     const out: Array<{ value: string; label: string; source: LabelSource }> = [];
-    const recentPlans = plans
-      .filter((p) => p.status === "done" && p.id)
-      .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
-      .slice(0, 30);
-    for (const plan of recentPlans) {
-      for (const pp of allPlanProducts.filter((x) => x.planId === plan.id)) {
-        const product = productMap.get(pp.productId);
-        const name = product?.name ?? "Unknown product";
+
+    if (kind === "production-batch") {
+      const recentPlans = plans
+        .filter((p) => p.status === "done" && p.id)
+        .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+        .slice(0, 30);
+      for (const plan of recentPlans) {
+        for (const pp of allPlanProducts.filter((x) => x.planId === plan.id)) {
+          const product = productMap.get(pp.productId);
+          const name = product?.name ?? "Unknown product";
+          out.push({
+            value: `${plan.id}|${pp.id}`,
+            label: `${name} · ${plan.batchNumber ?? plan.name}`,
+            source: { kind: "production-batch", planId: plan.id!, planProductId: pp.id! },
+          });
+        }
+      }
+    } else if (kind === "filling-batch") {
+      const recentPlans = plans
+        .filter((p) => p.status === "done" && p.id)
+        .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+        .slice(0, 30);
+      for (const plan of recentPlans) {
+        for (const pf of allPlanFillings.filter((x) => x.planId === plan.id)) {
+          const filling = fillingMap.get(pf.fillingId);
+          const name = filling?.name ?? "Unknown filling";
+          out.push({
+            value: `${plan.id}|${pf.id}`,
+            label: `${name} · ${plan.batchNumber ?? plan.name}`,
+            source: { kind: "filling-batch", planId: plan.id!, planFillingId: pf.id! },
+          });
+        }
+      }
+    } else if (kind === "collection-package") {
+      // A single collection can ship in multiple packagings (box of 6, box of
+      // 9, etc.), so the option label must surface both the collection name
+      // and the packaging — otherwise the user sees the same name three times
+      // and has no way to tell which one they're previewing.
+      for (const cp of allCollectionPackagings) {
+        const collection = collectionMap.get(cp.collectionId);
+        const packaging = packagingMap.get(cp.packagingId);
+        if (!collection) continue;
+        const packagingLabel = packaging
+          ? `${packaging.name} (${packaging.capacity} pcs)`
+          : "Unknown packaging";
         out.push({
-          value: `${plan.id}|${pp.id}`,
-          label: `${name} · ${plan.batchNumber ?? plan.name}`,
-          source: { kind: "production-batch", planId: plan.id!, planProductId: pp.id! },
+          value: `${cp.collectionId}|${cp.packagingId}`,
+          label: `${collection.name} · ${packagingLabel}`,
+          source: { kind: "collection-package", collectionId: cp.collectionId, packagingId: cp.packagingId },
         });
       }
     }
     return out;
-  }, [plans, allPlanProducts, productMap]);
+  }, [kind, plans, allPlanProducts, allPlanFillings, allCollectionPackagings, productMap, fillingMap, collectionMap, packagingMap]);
 
-  const selectedKey = value && "planProductId" in value ? `${value.planId}|${value.planProductId}` : "";
+  const selectedKey = useMemo(() => {
+    if (!value) return "";
+    if (value.kind === "production-batch") return `${value.planId}|${value.planProductId}`;
+    if (value.kind === "filling-batch") return `${value.planId}|${value.planFillingId}`;
+    return `${value.collectionId}|${value.packagingId}`;
+  }, [value]);
+
+  const placeholder =
+    kind === "production-batch" ? "— Pick a recent batch —"
+    : kind === "filling-batch" ? "— Pick a recent filling batch —"
+    : "— Pick a box configuration —";
+
   return (
     <div className="inline-flex items-center gap-2">
       <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Preview</span>
       <select
         value={selectedKey}
         onChange={(e) => {
-          const value = e.target.value;
+          const v = e.target.value;
           // Drop focus before propagating state — keeps the keyboard / pointer
           // focus from lingering on the dropdown and stealing interactions
           // from the canvas after a source is chosen.
           e.target.blur();
-          if (!value) { onChange(null); return; }
-          const opt = options.find((o) => o.value === value);
+          if (!v) { onChange(null); return; }
+          const opt = options.find((o) => o.value === v);
           onChange(opt?.source ?? null);
         }}
         className="text-xs border border-border rounded px-2 py-1 bg-card"
       >
-        <option value="">— Pick a recent batch —</option>
+        <option value="">{placeholder}</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
@@ -1201,7 +1473,53 @@ function DateFormatControl({
  * data URL on `LabelFieldProps.image` so it travels with the template (Dexie
  * row, backup export, Dexie Cloud sync) and the renderer can emit it inline
  * as an `<image href>` without any external fetch at print time.
+ *
+ * Uploads larger than IMAGE_MAX_DIMENSION on their longest edge are downscaled
+ * through an offscreen canvas before being stored. A 12-megapixel phone photo
+ * easily reaches ~5MB of base64 — overkill for a 50×40mm label and a real
+ * problem for Dexie Cloud sync — so we cap at a print-friendly size first.
  */
+const IMAGE_MAX_DIMENSION = 1500;
+const IMAGE_DOWNSCALE_QUALITY = 0.92;
+
+async function downscaleImageIfNeeded(file: File): Promise<string> {
+  const originalDataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("FileReader returned non-string result"));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Image decode failed"));
+    image.src = originalDataUrl;
+  });
+
+  const longest = Math.max(img.naturalWidth, img.naturalHeight);
+  if (longest <= IMAGE_MAX_DIMENSION) return originalDataUrl;
+
+  const scale = IMAGE_MAX_DIMENSION / longest;
+  const targetW = Math.round(img.naturalWidth * scale);
+  const targetH = Math.round(img.naturalHeight * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return originalDataUrl;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+
+  // Keep PNGs lossless when alpha is likely; JPEG everything else so a 12MP
+  // photo doesn't bloat the template on disk.
+  const outputType = file.type === "image/png" ? "image/png" : "image/jpeg";
+  return canvas.toDataURL(outputType, outputType === "image/jpeg" ? IMAGE_DOWNSCALE_QUALITY : undefined);
+}
+
 function ImageUploadRow({
   value,
   onChange,
@@ -1213,11 +1531,11 @@ function ImageUploadRow({
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file later
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") onChange(reader.result);
-    };
-    reader.readAsDataURL(file);
+    downscaleImageIfNeeded(file)
+      .then((dataUrl) => onChange(dataUrl))
+      .catch((err) => {
+        console.error("image upload failed", err);
+      });
   }
   return (
     <div className="flex flex-col gap-2">

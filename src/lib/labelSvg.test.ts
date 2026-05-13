@@ -178,7 +178,7 @@ describe("renderTemplateSvg — allergens", () => {
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toMatch(/font-weight="700"[^>]*>Milk · Soybeans</);
+    expect(svg).toMatch(/font-weight="700"[^>]*>Milk, Soybeans</);
     expect(svg).toMatch(/font-style="italic"[^>]*fill="#666666"[^>]*>Tree nuts<|fill="#666666"[^>]*font-style="italic"[^>]*>Tree nuts</);
   });
 
@@ -367,17 +367,36 @@ describe("renderTemplateSvg — brand", () => {
     expect(svg).toContain(`data-qr-url="atelier.example"`);
   });
 
-  it("socials renders one row per link with muted label + body url", () => {
+  it("socials renders a known label as an icon + url", () => {
     const svg = renderTemplateSvg(
       tpl([{ id: "f", type: "socials", x: 0, y: 0, w: 40, h: 6 }]),
       CTX,
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toContain(">web </text>");
+    // Both "web" and "ig" resolve to icons — they're swapped for an inline
+    // <g transform="…"> wrapper instead of the muted text label.
+    expect(svg).toMatch(/<g transform="translate\(0 [^)]+\) scale\([^)]+\)" color="[^"]+">/);
+    expect(svg).not.toContain(">web </text>");
+    expect(svg).not.toContain(">ig </text>");
+    // URLs still render as plain text after the icon.
     expect(svg).toContain(">atelier.example</text>");
-    expect(svg).toContain(">ig </text>");
     expect(svg).toContain(">@atelierchoc</text>");
+  });
+
+  it("socials falls back to a muted text label for unknown social names", () => {
+    const brand: Brand = {
+      ...FULL_BRAND,
+      socials: [{ label: "Pinterest", url: "pinterest.example" }],
+    };
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "socials", x: 0, y: 0, w: 40, h: 6 }]),
+      CTX,
+      brand,
+      baseOpts,
+    );
+    expect(svg).toContain(">Pinterest </text>");
+    expect(svg).toContain(">pinterest.example</text>");
   });
 });
 
@@ -542,7 +561,7 @@ describe("renderTemplateSvg — bold / italic toggles", () => {
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toMatch(/font-weight="700"[^>]*>Milk · Soybeans</);
+    expect(svg).toMatch(/font-weight="700"[^>]*>Milk, Soybeans</);
   });
 
   it("ingr renders allergen tspans bold while the surrounding text honours props.bold", () => {

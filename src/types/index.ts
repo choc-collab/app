@@ -430,10 +430,14 @@ export interface UserPreferences {
   /** Brand identity used on labels, receipts, and other customer-facing surfaces.
    *  Optional — when unset, label fields that bind to brand info render placeholders. */
   brand?: Brand;
-  /** Template id pre-selected when the user prints labels for a completed
-   *  production batch. The production page still opens a picker so the user
-   *  can override per-batch; this just sets the picker's initial value. */
+  /** @deprecated Legacy single default — predates the per-kind map below.
+   *  Still read at the hook level so existing users don't lose their setting,
+   *  but new writes go to `defaultLabelTemplateIds["production-batch"]`. */
   defaultBatchLabelTemplateId?: string;
+  /** Per-kind default templates. Each label-print entry point (production
+   *  page, shop, stock) preselects the template for its kind, so the picker
+   *  opens with the right choice already highlighted. */
+  defaultLabelTemplateIds?: Partial<Record<LabelTemplateKind, string>>;
   /** Last app version for which the user saw (or was seeded past) the "What's new" banner. */
   lastSeenVersion?: string;
   updatedAt: Date;
@@ -1427,9 +1431,19 @@ export interface LabelField {
  * renders identically on screen, on the OS print dialog, and on a future
  * server-side PDF generator.
  */
+/** Which `LabelSource` kind a template is designed for. Drives template
+ *  filtering at print time so each entry point only offers compatible
+ *  templates. Optional on read for backwards compatibility — pre-existing
+ *  templates predate this field and are treated as production-batch. */
+export type LabelTemplateKind = "production-batch" | "filling-batch" | "collection-package";
+
 export interface LabelTemplate {
   id?: string;
   name: string;
+  /** The kind of source this template binds against. Set at creation time;
+   *  not switchable from the editor. Older templates may omit this and are
+   *  treated as `production-batch` at read time (see `labelTemplateKind`). */
+  kind?: LabelTemplateKind;
   /** Physical label dimensions in millimetres. */
   width: number;
   height: number;
@@ -1441,6 +1455,13 @@ export interface LabelTemplate {
   fields: LabelField[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Read a template's kind with a defensible default for legacy rows that
+ *  predate the kind field. Centralises the fallback so callers can compare
+ *  by value without sprinkling `?? "production-batch"` everywhere. */
+export function labelTemplateKind(t: LabelTemplate): LabelTemplateKind {
+  return t.kind ?? "production-batch";
 }
 
 /**
@@ -1527,11 +1548,13 @@ export function createBlankTemplate(input: {
   name: string;
   width: number;
   height: number;
+  kind: LabelTemplateKind;
   now?: Date;
 }): Omit<LabelTemplate, "id"> {
   const now = input.now ?? new Date();
   return {
     name: input.name,
+    kind: input.kind,
     width: input.width,
     height: input.height,
     fields: [],

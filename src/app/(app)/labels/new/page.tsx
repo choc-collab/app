@@ -6,7 +6,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { ArrowLeft } from "lucide-react";
 import { saveLabelTemplate } from "@/lib/hooks";
-import { createBlankTemplate } from "@/types";
+import { createBlankTemplate, type LabelTemplateKind } from "@/types";
 
 interface PresetSize { label: string; width: number; height: number }
 
@@ -23,6 +23,35 @@ const PRESETS: PresetSize[] = [
   { label: "89×62 mm", width: 89, height: 62 },
 ];
 
+interface KindOption {
+  kind: LabelTemplateKind;
+  label: string;
+  hint: string;
+}
+
+// The "kind" pins a template to one source shape — it determines which entry
+// point can pick it (production page, shop, stock rows) and what data the
+// editor preview enumerates. Set at creation, not changeable later — switching
+// kinds would silently invalidate field bindings that already depend on
+// kind-specific shape (e.g. box-total weight vs. per-piece weight).
+const KIND_OPTIONS: KindOption[] = [
+  {
+    kind: "production-batch",
+    label: "Production batch",
+    hint: "One label per product piece — printed at the end of a moulding batch.",
+  },
+  {
+    kind: "filling-batch",
+    label: "Filling batch",
+    hint: "One label per filling jar/container — printed at the end of a filling-only batch.",
+  },
+  {
+    kind: "collection-package",
+    label: "Box / package",
+    hint: "One label per assembled box — printed from a Shop sale.",
+  },
+];
+
 export default function NewLabelTemplatePage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -33,6 +62,7 @@ export default function NewLabelTemplatePage() {
   // them into "060". Parsed once at submit.
   const [width, setWidth] = useState("50");
   const [height, setHeight] = useState("40");
+  const [kind, setKind] = useState<LabelTemplateKind>("production-batch");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -65,7 +95,7 @@ export default function NewLabelTemplatePage() {
 
     setSubmitting(true);
     try {
-      const draft = createBlankTemplate({ name: trimmed, width: widthMm, height: heightMm });
+      const draft = createBlankTemplate({ name: trimmed, kind, width: widthMm, height: heightMm });
       const id = await saveLabelTemplate(draft);
       router.push(`/labels/${encodeURIComponent(id)}?new=1`);
     } catch (err) {
@@ -133,6 +163,34 @@ export default function NewLabelTemplatePage() {
                   max={500}
                 />
               </label>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <label className="block text-sm font-medium">Type</label>
+            <p className="text-xs text-muted-foreground">
+              Pins this template to one source. Determines where it shows up at print time and what the editor preview pulls in.
+            </p>
+            <div className="grid gap-2">
+              {KIND_OPTIONS.map((opt) => (
+                <label
+                  key={opt.kind}
+                  className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer transition-colors ${kind === opt.kind ? "border-primary bg-accent" : "border-border hover:bg-muted/40"}`}
+                >
+                  <input
+                    type="radio"
+                    name="template-kind"
+                    value={opt.kind}
+                    checked={kind === opt.kind}
+                    onChange={() => setKind(opt.kind)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">{opt.label}</p>
+                    <p className="text-xs text-muted-foreground">{opt.hint}</p>
+                  </div>
+                </label>
+              ))}
             </div>
           </section>
 

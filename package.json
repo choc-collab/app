@@ -48,6 +48,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^1.11.0",
     "next": "^16.2.4",
+    "qrcode": "^1.5.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "tailwind-merge": "^3.5.0"
@@ -59,6 +60,7 @@
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^25.6.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^10.3.0",

@@ -791,7 +791,7 @@ const SECTIONS: Section[] = [
 
         <h3>Step 1 — set up your Brand profile (do this first)</h3>
         <p>
-          Open <strong>Settings → Brand</strong> and fill in whatever is relevant: business name,
+          Open <strong>Settings → Brand </strong> and fill in whatever is relevant: business name,
           address, contact line (phone / email / website), VAT or business number, and a list of
           named links (Instagram, Web, etc.). You can upload a logo image too — it&apos;s stored
           alongside your data, no external hosting needed.
@@ -866,10 +866,17 @@ const SECTIONS: Section[] = [
           format inspector takes any pattern using <code>YYYY / YY / MM / M / DD / D</code> tokens.
         </Callout>
         <Callout kind="tip" title="The preview source dropdown">
-          The top bar of the editor has a <em>Preview against</em> dropdown — pick a recent
+          The top bar of the editor has a <em>Preview against </em> dropdown — pick a recent
           completed production batch and the auto-bound fields populate with that batch&apos;s
           actual product name, ingredients, allergens, and weight. Your template stays generic; the
           preview just shows how it&apos;ll look once it hits real data.
+        </Callout>
+        <Callout kind="tip" title="Keyboard shortcuts">
+          With one or more fields selected: arrow keys nudge by 1mm (Shift + arrows = 5mm),
+          <code>Delete</code> / <code>Backspace</code> removes them, <code>⌘C</code> /
+          <code>⌘V</code> copies and pastes (in-editor clipboard, doesn&apos;t touch the OS
+          clipboard), <code>⌘D</code> duplicates in place, and <code>⌘Z</code> /
+          <code>⌘⇧Z</code> step undo / redo across every edit you make.
         </Callout>
 
         <h3>Step 3 — set a default template (optional)</h3>
@@ -939,7 +946,7 @@ const SECTIONS: Section[] = [
           export them once and import them onto a new machine in seconds.
         </p>
 
-        <Shot label="Label editor — field rail, canvas, inspector" note="Replace with a screenshot of /labels/[id] showing a populated 50×40mm template." />
+        <Shot label="Label editor — field rail, canvas, inspector" note="Capture /labels/[id] with a populated 50×40mm template selected: one product/batch field on the canvas, the inspector showing bold/italic toggles + font picker, the preview source dropdown set to a recent batch so live data renders." />
       </>
     ),
   },

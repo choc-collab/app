@@ -411,11 +411,13 @@ describe("createBlankTemplate", () => {
     const now = new Date("2026-05-10T12:00:00Z");
     const tpl = createBlankTemplate({
       name: "Box of 9",
+      kind: "collection-package",
       width: 89,
       height: 36,
       now,
     });
     expect(tpl.name).toBe("Box of 9");
+    expect(tpl.kind).toBe("collection-package");
     expect(tpl.width).toBe(89);
     expect(tpl.height).toBe(36);
     expect(tpl.fields).toEqual([]);
@@ -424,8 +426,8 @@ describe("createBlankTemplate", () => {
   });
 
   it("returns a fresh fields array on each call (no shared reference)", () => {
-    const a = createBlankTemplate({ name: "a", width: 50, height: 30 });
-    const b = createBlankTemplate({ name: "b", width: 50, height: 30 });
+    const a = createBlankTemplate({ name: "a", kind: "production-batch", width: 50, height: 30 });
+    const b = createBlankTemplate({ name: "b", kind: "production-batch", width: 50, height: 30 });
     expect(a.fields).not.toBe(b.fields);
   });
 });
