@@ -202,9 +202,7 @@ export function buildProductionBatchContext(input: ProductionBatchContextInput):
     : null;
 
   // ---- Origin -------------------------------------------------------------
-  const origin = shellIngredient
-    ? (shellIngredient.commercialName ?? shellIngredient.name)
-    : "";
+  const origin = shellIngredient ? shellIngredient.name : "";
 
   return {
     source,
@@ -363,6 +361,16 @@ export interface CollectionPackageContextInput {
    * resolver falls back to one piece of each product in the collection.
    */
   cells?: ReadonlyArray<string | null>;
+  /**
+   * The date this specific box was packed. For a real sale that's
+   * `Sale.preparedAt`. When provided, drives the printed best-before date
+   * as `packedAt + earliest-product-shelf-life-weeks`.
+   *
+   * Omit at design-time (no specific sale yet); the label's BBE field will
+   * fall back to an em-dash instead of a synthetic date so previews don't
+   * mislead the user about what'll print.
+   */
+  packedAt?: Date | null;
 }
 
 /**
@@ -387,7 +395,7 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
   const {
     source, collection, packaging, collectionProducts,
     productMap, mouldMap, productFillingsByProduct,
-    fillingIngredientsMap, fillingComponentsMap, ingredientMap, facilityMayContain, cells,
+    fillingIngredientsMap, fillingComponentsMap, ingredientMap, facilityMayContain, cells, packedAt,
   } = input;
 
   const warnings: string[] = [];
@@ -416,11 +424,19 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
   const perIngredientGrams = new Map<string, number>();
   const allergenSet = new Set<string>();
 
-  for (const cp of collectionProducts) {
-    const product = productMap.get(cp.productId);
-    if (!product?.id) continue;
-    const count = productCount.get(product.id) ?? 0;
-    if (count === 0) continue; // product is in the collection but not in this specific box
+  // Drive the loop from the actual product distribution rather than the
+  // collection's `collectionProducts` list. Bar / snack sales reference
+  // products that aren't members of `collectionProducts` (those track only
+  // the bonbon assortment), so iterating the collection would skip them and
+  // render an empty label. Iterating `productCount` matches the cells the
+  // user actually packed.
+  for (const [productId, count] of productCount.entries()) {
+    if (count === 0) continue;
+    const product = productMap.get(productId);
+    if (!product?.id) {
+      warnings.push(`Product ${productId} from this sale was not found — its contribution is omitted.`);
+      continue;
+    }
     const mould = product.defaultMouldId ? mouldMap.get(product.defaultMouldId) ?? null : null;
     const productFillings = productFillingsByProduct.get(product.id) ?? [];
 
@@ -506,9 +522,12 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
   );
 
   // Total box weight = sum over each product of (piece weight × count).
-  // perCavityWeightG is the *average* per-piece weight (total / pieces) so
-  // the existing `weight` renderer (perCavityWeightG × piecesPerLabel) still
-  // works the same way as it does for production-batch labels.
+  // We store the total in `perCavityWeightG` so the existing `weight`
+  // renderer prints the whole-box weight without the template author having
+  // to set `piecesPerLabel` to the box capacity (which would couple the
+  // template to one specific packaging — wrong for collections that ship in
+  // multiple box sizes). Mirrors how filling-batch labels store total batch
+  // grams in the same slot.
   let totalBoxG = 0;
   let totalPieces = 0;
   for (const [productId, pieceG] of perProductPieceG.entries()) {
@@ -516,32 +535,38 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
     totalBoxG += pieceG * n;
     totalPieces += n;
   }
-  const avgPieceG = totalPieces > 0 ? totalBoxG / totalPieces : 0;
-  const perPieceWeightG = Math.round(avgPieceG * 1000) / 1000;
-  if (perPieceWeightG <= 0) warnings.push("Total box weight is unknown.");
+  const totalBoxWeightG = Math.round(totalBoxG * 1000) / 1000;
+  if (totalBoxWeightG <= 0) warnings.push("Total box weight is unknown.");
 
-  // Earliest BBE across all products — any expired piece taints the whole box.
+  // Earliest BBE across the *actual* products in the box — any expired piece
+  // would taint the whole assortment, so we anchor BBE to the shortest shelf
+  // life. We iterate the sale's `productCount` (rather than the collection's
+  // `collectionProducts`) so bar / snack sales — whose product isn't a member
+  // of the bonbon assortment — still get a correct value.
   let earliestWeeks: number | null = null;
-  for (const cp of collectionProducts) {
-    const product = productMap.get(cp.productId);
+  for (const productId of productCount.keys()) {
+    const product = productMap.get(productId);
     const weeksStr = product?.shelfLifeWeeks;
     const weeks = weeksStr ? parseInt(weeksStr, 10) : NaN;
     if (Number.isFinite(weeks) && weeks > 0) {
       earliestWeeks = earliestWeeks == null ? weeks : Math.min(earliestWeeks, weeks);
     }
   }
-  // BBE only meaningful relative to a *packing date*, which a Collection
-  // doesn't have. Leave null; the user adds a free-text "packed on" field if
-  // they want a date on the label. Note the shelf-life ceiling in warnings
-  // so it surfaces in the editor.
-  if (earliestWeeks != null) {
-    warnings.push(`Earliest product shelf life: ${earliestWeeks} weeks (add a free-text "packed on" field if you want a BBE date).`);
+  // BBE = packedAt + earliest shelf life. The shop print flow passes
+  // `Sale.preparedAt` as `packedAt`; the editor's design-time preview omits
+  // it (and the label correctly shows an em-dash) so users don't see a
+  // misleading synthetic date.
+  const bestBefore = packedAt && earliestWeeks != null
+    ? new Date(packedAt.getTime() + earliestWeeks * 7 * 86400000)
+    : null;
+  if (earliestWeeks != null && !packedAt) {
+    warnings.push(`Earliest product shelf life: ${earliestWeeks} weeks (BBE will populate from the sale's packing date at print time).`);
   }
 
   return {
     source,
     name: collection.name,
-    perCavityWeightG: perPieceWeightG,
+    perCavityWeightG: totalBoxWeightG,
     // When cells are known, totalCavityCount reflects the number of actually
     // filled cavities (skipping nulls); otherwise we fall back to the
     // packaging's nominal capacity.
@@ -550,9 +575,9 @@ export function buildCollectionPackageContext(input: CollectionPackageContextInp
     allergens: [...allergenSet].sort(),
     mayContain: [...facilityMayContain],
     nutritionPer100g: nutritionResult.per100g,
-    bestBefore: null,
+    bestBefore,
     batchNumber: "",
-    producedAt: null,
+    producedAt: packedAt ?? null,
     origin: "",
     warnings,
   };
@@ -1011,6 +1036,7 @@ export async function loadCollectionPackageContext(
   collectionId: string,
   packagingId: string,
   cells?: ReadonlyArray<string | null>,
+  packedAt?: Date | null,
 ): Promise<LabelContext> {
   const source: Extract<LabelSource, { kind: "collection-package" }> = {
     kind: "collection-package", collectionId, packagingId,
@@ -1028,11 +1054,21 @@ export async function loadCollectionPackageContext(
     .where("collectionId").equals(collectionId)
     .toArray();
   collectionProducts.sort((a, b) => a.sortOrder - b.sortOrder);
-  if (collectionProducts.length === 0) {
-    return unresolvedContext(source, "Collection has no products.");
-  }
 
-  const productIds = [...new Set(collectionProducts.map((cp) => cp.productId))];
+  // Union of every productId we need to resolve: the collection's defined
+  // assortment plus anything referenced by the sale's actual cells. Bars /
+  // snacks aren't members of `collectionProducts` (those only track the
+  // bonbon assortment) so iterating the collection alone would miss them.
+  const cellProductIds: string[] = cells
+    ? cells.filter((c): c is string => !!c)
+    : [];
+  const productIds = [...new Set([
+    ...collectionProducts.map((cp) => cp.productId),
+    ...cellProductIds,
+  ])];
+  if (productIds.length === 0) {
+    return unresolvedContext(source, "Collection has no products and no sale cells.");
+  }
   const products = productIds.length > 0
     ? await db.products.where("id").anyOf(productIds).toArray()
     : [];
@@ -1122,6 +1158,7 @@ export async function loadCollectionPackageContext(
     ingredientMap,
     facilityMayContain,
     cells,
+    packedAt,
   });
 }
 

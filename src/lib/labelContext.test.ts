@@ -156,20 +156,13 @@ describe("buildProductionBatchContext", () => {
     expect(ctx.bestBefore).toBeNull();
   });
 
-  it("uses shellIngredient.commercialName for origin, falling back to name", () => {
+  it("uses shellIngredient.name for origin (commercialName is ignored)", () => {
     const guanaja = makeIngredient({ id: "guanaja", name: "Dark 70%", commercialName: "Guanaja 70%" });
     const ctx = buildProductionBatchContext(baseInput({
       shellIngredient: guanaja,
       product: { ...baseInput().product, shellPercentage: 30, shellIngredientId: "guanaja" },
     }));
-    expect(ctx.origin).toBe("Guanaja 70%");
-
-    const noCommercial = makeIngredient({ id: "x", name: "Dark 70%" });
-    const ctx2 = buildProductionBatchContext(baseInput({
-      shellIngredient: noCommercial,
-      product: { ...baseInput().product, shellPercentage: 30, shellIngredientId: "x" },
-    }));
-    expect(ctx2.origin).toBe("Dark 70%");
+    expect(ctx.origin).toBe("Dark 70%");
   });
 
   it("includes the shell as a synthetic ingredient row when shellIngredient + shellPercentage are set", () => {

@@ -1148,6 +1148,13 @@ function TemplateInspector({
   tpl: LabelTemplate;
   setMetadata: (patch: Partial<LabelTemplate>) => void;
 }) {
+  // Pieces / label only meaningfully scales the weight on production-batch
+  // templates, where `perCavityWeightG` is one piece. For filling-batch and
+  // collection-package the resolver already stores the *total* weight in
+  // that field, so multiplying again would print a wildly wrong number
+  // (810g instead of 90g for a "box of 9" template). Hide the row for those
+  // kinds rather than letting it silently corrupt the output.
+  const showPiecesPerLabel = labelTemplateKind(tpl) === "production-batch";
   return (
     <div className="flex flex-col gap-4">
       <Section title="Template">
@@ -1155,9 +1162,11 @@ function TemplateInspector({
           <NumInput value={tpl.width} onChange={(v) => setMetadata({ width: v })} />
           <NumInput value={tpl.height} onChange={(v) => setMetadata({ height: v })} />
         </Row>
-        <Row label="Pieces / label">
-          <NumInput value={tpl.piecesPerLabel ?? 1} onChange={(v) => setMetadata({ piecesPerLabel: v || 1 })} />
-        </Row>
+        {showPiecesPerLabel && (
+          <Row label="Pieces / label">
+            <NumInput value={tpl.piecesPerLabel ?? 1} onChange={(v) => setMetadata({ piecesPerLabel: v || 1 })} />
+          </Row>
+        )}
         <p className="text-[11px] text-muted-foreground italic mt-1">Click a field to edit its position, type and binding. Nutrition formatting follows your target market in Settings.</p>
       </Section>
     </div>

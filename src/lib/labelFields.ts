@@ -144,10 +144,20 @@ export function effectivePiecesPerLabel(template: Pick<LabelTemplate, "piecesPer
   return Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1;
 }
 
-/** Net weight of one label, in grams. */
+/** Net weight of one label, in grams.
+ *
+ *  `piecesPerLabel` only scales the production-batch case where
+ *  `context.perCavityWeightG` is the weight of a single product piece. For
+ *  filling-batch (total batch grams) and collection-package (total box grams)
+ *  the resolver already stores the whole-unit weight there, so any value
+ *  stored on the template would corrupt the output — we hard-code the
+ *  multiplier to 1 for those kinds regardless of what the template carries. */
 export function effectiveLabelWeightG(context: LabelContext | null, template: Pick<LabelTemplate, "piecesPerLabel"> | null | undefined): number {
   if (!context) return 0;
-  return Math.round(context.perCavityWeightG * effectivePiecesPerLabel(template) * 10) / 10;
+  const multiplier = context.source.kind === "production-batch"
+    ? effectivePiecesPerLabel(template)
+    : 1;
+  return Math.round(context.perCavityWeightG * multiplier * 10) / 10;
 }
 
 /** Format the net weight as printed on a label (e.g. "90g"). Falls back to

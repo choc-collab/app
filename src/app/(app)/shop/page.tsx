@@ -155,12 +155,18 @@ export default function ShopPage() {
 
   async function handleConfirmPrint(template: LabelTemplate) {
     if (!printTarget) return;
-    const { collectionId, packagingId, cells } = printTarget;
+    const { collectionId, packagingId, cells, preparedAt } = printTarget;
     setPrintTarget(null);
     setPrintError("");
-    // Pass the actual per-cavity distribution so the resolver counts every
-    // product type's real occurrence instead of falling back to one-of-each.
-    const ctx = await loadCollectionPackageContext(collectionId, packagingId, cells);
+    // Pass the actual per-cavity distribution and packing date so the
+    // resolver computes ingredient totals from the real composition and
+    // anchors BBE to when this specific box was prepared.
+    const ctx = await loadCollectionPackageContext(
+      collectionId,
+      packagingId,
+      cells,
+      preparedAt ? new Date(preparedAt) : null,
+    );
     const result = await printLabels({
       template,
       contexts: [ctx],

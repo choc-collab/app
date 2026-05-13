@@ -1512,7 +1512,15 @@ export interface LabelContext {
   /** Customer-facing name (Product.name for production-batch, Filling.name for
    *  filling-batch, Collection.name for collection-package). */
   name: string;
-  /** Weight of one product unit in grams. */
+  /** Per-label weight in grams, ready to multiply by the template's
+   *  `piecesPerLabel`. Kind-specific semantics:
+   *   - production-batch: weight of one product piece (one cavity).
+   *   - filling-batch:    total batch grams (the renderer prints the whole jar).
+   *   - collection-package: total box grams (already accounts for cell counts).
+   *
+   *  The legacy name (`perCavityWeightG`) reflects the production-batch origin
+   *  of this field; the other kinds store totals here so a default template
+   *  with `piecesPerLabel = 1` prints the correct whole-unit weight. */
   perCavityWeightG: number;
   /** Total pieces in scope of this resolution. For production-batch this is
    *  `actualYield` (or `quantity × cavities` if the plan hasn't recorded a
@@ -1535,7 +1543,7 @@ export interface LabelContext {
   /** Production date — `ProductionPlan.completedAt` when the plan is done, else null. */
   producedAt: Date | null;
   /** Shell origin / cocoa percentage line, derived from
-   *  `Product.shellIngredientId → Ingredient.commercialName`. Empty when no shell. */
+   *  `Product.shellIngredientId → Ingredient.name`. Empty when no shell. */
   origin: string;
   /** Resolver-time warnings (e.g. "no default mould — weight unavailable").
    *  Surfaced by the editor preview and the linter. */
