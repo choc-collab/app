@@ -1528,8 +1528,8 @@ function PlanContent({
         <PrintTemplatePicker
           title={printerPickerMode === "products" ? "Save product labels" : "Save filling labels"}
           description={printerPickerMode === "products"
-            ? "One PNG per product in this batch — share to AirDrop, Photos, or your label-printer app."
-            : "One PNG per filling in this batch — share to AirDrop, Photos, or your label-printer app."}
+            ? "One label per product in this batch."
+            : "One label per filling in this batch."}
           templates={printerPickerMode === "products" ? productLabelTemplates : fillingLabelTemplates}
           defaultId={printerPickerMode === "products" ? defaultBatchTemplateId : defaultFillingTemplateId}
           onConfirm={handleConfirmPrint}

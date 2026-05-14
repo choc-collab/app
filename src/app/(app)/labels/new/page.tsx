@@ -6,7 +6,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { ArrowLeft } from "lucide-react";
 import { saveLabelTemplate } from "@/lib/hooks";
-import { createBlankTemplate, type LabelTemplateKind } from "@/types";
+import { createBlankTemplate, type LabelTemplateKind, type LabelTemplateFormat } from "@/types";
 
 interface PresetSize { label: string; width: number; height: number }
 
@@ -63,6 +63,11 @@ export default function NewLabelTemplatePage() {
   const [width, setWidth] = useState("50");
   const [height, setHeight] = useState("40");
   const [kind, setKind] = useState<LabelTemplateKind>("production-batch");
+  // Format defaults to PNG — most operators print to thermal label printers
+  // (Niimbot etc.) which expect bitmap input. PDF is for sheet-print
+  // workflows / archival; user can switch at creation or later in the
+  // editor's Template inspector.
+  const [format, setFormat] = useState<LabelTemplateFormat>("png");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -95,7 +100,7 @@ export default function NewLabelTemplatePage() {
 
     setSubmitting(true);
     try {
-      const draft = createBlankTemplate({ name: trimmed, kind, width: widthMm, height: heightMm });
+      const draft = createBlankTemplate({ name: trimmed, kind, format, width: widthMm, height: heightMm });
       const id = await saveLabelTemplate(draft);
       router.push(`/labels/${encodeURIComponent(id)}?new=1`);
     } catch (err) {
@@ -190,6 +195,27 @@ export default function NewLabelTemplatePage() {
                     <p className="text-xs text-muted-foreground">{opt.hint}</p>
                   </div>
                 </label>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-1.5">
+            <label className="block text-sm font-medium">Output format</label>
+            <div className="inline-flex rounded-md border border-border overflow-hidden">
+              {(["png", "pdf"] as const).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => setFormat(opt)}
+                  className={`px-4 py-1.5 text-sm font-medium uppercase tracking-wide transition-colors ${
+                    format === opt
+                      ? "bg-accent text-accent-foreground"
+                      : "bg-card text-muted-foreground hover:bg-muted/40"
+                  }`}
+                  aria-pressed={format === opt}
+                >
+                  {opt}
+                </button>
               ))}
             </div>
           </section>

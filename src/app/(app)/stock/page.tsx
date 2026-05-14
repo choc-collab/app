@@ -747,7 +747,7 @@ function ProductStockTab() {
       {printTarget && (
         <PrintTemplatePicker
           title={`Save label for ${printTarget.productName}`}
-          description="One PNG for this batch — share to AirDrop, Photos, or your label-printer app."
+          description="One label for this batch."
           templates={productLabelTemplates}
           defaultId={defaultLabelTemplateId}
           onConfirm={handleConfirmPrintLabel}
@@ -1302,7 +1302,7 @@ function FillingStockTab() {
       {printTarget && (
         <PrintTemplatePicker
           title={`Save label for ${printTarget.fillingName}`}
-          description="One PNG for this filling batch — share to AirDrop, Photos, or your label-printer app."
+          description="One label for this filling batch."
           templates={fillingLabelTemplates}
           defaultId={defaultFillingLabelTemplateId}
           onConfirm={handleConfirmPrintFillingLabel}

@@ -1437,6 +1437,15 @@ export interface LabelField {
  *  templates predate this field and are treated as production-batch. */
 export type LabelTemplateKind = "production-batch" | "filling-batch" | "collection-package";
 
+/** Output format the print pipeline produces for this template.
+ *  - `png` (default): a high-DPI raster per label, paired with the OS share
+ *    sheet on iOS/iPadOS/Android and per-file downloads elsewhere. Optimised
+ *    for thermal printers (Niimbot, Brother etc.) which expect bitmap input.
+ *  - `pdf`: a single vector multi-page PDF for the entire print run — one
+ *    page per label. Right for sheet-print services and archival workflows
+ *    where lossless scaling matters more than thermal-printer compatibility. */
+export type LabelTemplateFormat = "png" | "pdf";
+
 export interface LabelTemplate {
   id?: string;
   name: string;
@@ -1444,6 +1453,9 @@ export interface LabelTemplate {
    *  not switchable from the editor. Older templates may omit this and are
    *  treated as `production-batch` at read time (see `labelTemplateKind`). */
   kind?: LabelTemplateKind;
+  /** Output format — see `LabelTemplateFormat`. Defaults to `png` at read
+   *  time for legacy templates that predate this field. */
+  format?: LabelTemplateFormat;
   /** Physical label dimensions in millimetres. */
   width: number;
   height: number;
@@ -1462,6 +1474,11 @@ export interface LabelTemplate {
  *  by value without sprinkling `?? "production-batch"` everywhere. */
 export function labelTemplateKind(t: LabelTemplate): LabelTemplateKind {
   return t.kind ?? "production-batch";
+}
+
+/** Read a template's output format with the legacy default. */
+export function labelTemplateFormat(t: LabelTemplate): LabelTemplateFormat {
+  return t.format ?? "png";
 }
 
 /**
@@ -1557,12 +1574,15 @@ export function createBlankTemplate(input: {
   width: number;
   height: number;
   kind: LabelTemplateKind;
+  /** Output format — defaults to PNG (thermal-printer friendly). */
+  format?: LabelTemplateFormat;
   now?: Date;
 }): Omit<LabelTemplate, "id"> {
   const now = input.now ?? new Date();
   return {
     name: input.name,
     kind: input.kind,
+    format: input.format ?? "png",
     width: input.width,
     height: input.height,
     fields: [],

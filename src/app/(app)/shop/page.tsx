@@ -253,7 +253,7 @@ export default function ShopPage() {
       {printTarget && (
         <PrintTemplatePicker
           title="Save box label"
-          description="One PNG for this Collection × Packaging — print as many copies as you need from your label-printer app."
+          description="One label for this box — print as many copies as you need from your label-printer app."
           templates={labelTemplates}
           defaultId={defaultLabelTemplateId}
           onConfirm={handleConfirmPrint}

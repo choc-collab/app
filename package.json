@@ -45,12 +45,14 @@
     "dexie": "^4.4.2",
     "dexie-cloud-addon": "^4.4.11",
     "dexie-react-hooks": "^4.4.0",
+    "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.11.0",
     "next": "^16.2.4",
     "qrcode": "^1.5.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "svg2pdf.js": "^2.7.0",
     "tailwind-merge": "^3.5.0"
   },
   "overrides": {

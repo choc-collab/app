@@ -22,7 +22,7 @@ import { useLabelContext } from "@/lib/labelContext";
 import { FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, FONT_OPTIONS_BY_CATEGORY, type LabelFieldGroup } from "@/lib/labelFields";
 import { renderTemplateSvg } from "@/lib/labelSvg";
 import { lintTemplate, summariseLint, type LintWarning } from "@/lib/labelLinter";
-import { labelTemplateKind } from "@/types";
+import { labelTemplateKind, labelTemplateFormat } from "@/types";
 import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelTemplateKind, LabelFieldProps } from "@/types";
 
 const MM_BASE = 4; // px per mm at zoom = 1
@@ -1155,12 +1155,32 @@ function TemplateInspector({
   // (810g instead of 90g for a "box of 9" template). Hide the row for those
   // kinds rather than letting it silently corrupt the output.
   const showPiecesPerLabel = labelTemplateKind(tpl) === "production-batch";
+  const currentFormat = labelTemplateFormat(tpl);
   return (
     <div className="flex flex-col gap-4">
       <Section title="Template">
         <Row label="W × H (mm)">
           <NumInput value={tpl.width} onChange={(v) => setMetadata({ width: v })} />
           <NumInput value={tpl.height} onChange={(v) => setMetadata({ height: v })} />
+        </Row>
+        <Row label="Format">
+          <div className="inline-flex rounded-md border border-border overflow-hidden">
+            {(["png", "pdf"] as const).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setMetadata({ format: opt })}
+                className={`px-3 py-1 text-xs font-medium uppercase tracking-wide transition-colors ${
+                  currentFormat === opt
+                    ? "bg-accent text-accent-foreground"
+                    : "bg-card text-muted-foreground hover:bg-muted/40"
+                }`}
+                aria-pressed={currentFormat === opt}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
         </Row>
         {showPiecesPerLabel && (
           <Row label="Pieces / label">

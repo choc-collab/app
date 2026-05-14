@@ -14,6 +14,7 @@
  */
 
 import type { Brand, LabelContext, LabelTemplate, MarketRegion } from "@/types";
+import { labelTemplateFormat } from "@/types";
 import { renderTemplateSvg } from "@/lib/labelSvg";
 
 /** One label to print — a context paired with the user's chosen template. */
@@ -128,6 +129,52 @@ function buildFilename(prefix: string, ctx: LabelContext, index: number): string
 }
 
 /**
+ * Render every context into one PDF — one page per label. The vector path
+ * (svg2pdf.js → jsPDF) preserves scalable text and shapes; raster `<image>`
+ * fields embed as PNG by default. jsPDF maps SVG font-family to its 14 core
+ * fonts (Helvetica / Times / Courier) — display fonts will substitute, which
+ * is acceptable for v1 (font embedding would inflate the bundle by megabytes
+ * per typeface).
+ *
+ * Returns one PDF Blob covering every context, packaged as a single File so
+ * the share sheet / download handler treats the print run as one artifact.
+ */
+async function renderTemplatesToPdf(
+  template: LabelTemplate,
+  contexts: LabelContext[],
+  brand: Brand,
+  marketRegion: MarketRegion,
+): Promise<Blob> {
+  const { jsPDF } = await import("jspdf");
+  const { svg2pdf } = await import("svg2pdf.js");
+
+  // The first page sets the document dimensions; later pages are added with
+  // matching dimensions so every label keeps its mm-accurate size.
+  const pdf = new jsPDF({
+    unit: "mm",
+    format: [template.width, template.height],
+    orientation: template.width >= template.height ? "landscape" : "portrait",
+  });
+
+  for (let i = 0; i < contexts.length; i++) {
+    if (i > 0) pdf.addPage([template.width, template.height]);
+    const svgString = renderTemplateSvg(template, contexts[i], brand, { marketRegion, sizing: "mm" });
+    // svg2pdf needs a parsed SVG element, not a string.
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgString, "image/svg+xml");
+    const svgEl = doc.documentElement as unknown as SVGElement;
+    await svg2pdf(svgEl, pdf, {
+      x: 0,
+      y: 0,
+      width: template.width,
+      height: template.height,
+    });
+  }
+
+  return pdf.output("blob");
+}
+
+/**
  * Render every context against the template, rasterise to PNG, and hand the
  * resulting files to the user — share sheet when supported, downloads as the
  * fallback. The user dismissing a native share sheet counts as success
@@ -137,6 +184,7 @@ export async function printLabels(input: PrintLabelInput): Promise<PrintResult> 
   const { template, contexts, brand, marketRegion } = input;
   const dpi = input.dpi ?? DEFAULT_DPI;
   const filenamePrefix = input.filenamePrefix ?? "label";
+  const format = labelTemplateFormat(template);
 
   if (contexts.length === 0) {
     return { success: false, error: "No labels to print." };
@@ -146,15 +194,22 @@ export async function printLabels(input: PrintLabelInput): Promise<PrintResult> 
   }
 
   try {
-    const widthPx = mmToPx(template.width, dpi);
-    const heightPx = mmToPx(template.height, dpi);
-
     const files: File[] = [];
-    for (let i = 0; i < contexts.length; i++) {
-      const ctx = contexts[i];
-      const svg = renderTemplateSvg(template, ctx, brand, { marketRegion, sizing: "mm" });
-      const png = await rasterizeSvgToPng(svg, widthPx, heightPx);
-      files.push(new File([png], buildFilename(filenamePrefix, ctx, i), { type: "image/png" }));
+    if (format === "pdf") {
+      // One PDF for the whole print run — one page per label. Filename
+      // anchors on the template + first context so it stays informative.
+      const pdfBlob = await renderTemplatesToPdf(template, contexts, brand, marketRegion);
+      const pdfName = `${filenamePrefix}_${slugify(template.name)}_${contexts.length}.pdf`;
+      files.push(new File([pdfBlob], pdfName, { type: "application/pdf" }));
+    } else {
+      const widthPx = mmToPx(template.width, dpi);
+      const heightPx = mmToPx(template.height, dpi);
+      for (let i = 0; i < contexts.length; i++) {
+        const ctx = contexts[i];
+        const svg = renderTemplateSvg(template, ctx, brand, { marketRegion, sizing: "mm" });
+        const png = await rasterizeSvgToPng(svg, widthPx, heightPx);
+        files.push(new File([png], buildFilename(filenamePrefix, ctx, i), { type: "image/png" }));
+      }
     }
 
     // Only invoke the OS share sheet on touch-first devices (iOS/iPadOS,

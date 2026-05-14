@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { labelTemplateFormat } from "@/types";
 import type { LabelTemplate } from "@/types";
 
 /**
@@ -87,7 +88,12 @@ export function PrintTemplatePicker({
                     className="mt-0.5"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{t.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium truncate">{t.name}</p>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 rounded bg-muted shrink-0">
+                        {labelTemplateFormat(t)}
+                      </span>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {t.width}×{t.height}mm · {t.fields.length} field{t.fields.length === 1 ? "" : "s"}
                     </p>
