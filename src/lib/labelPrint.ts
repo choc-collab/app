@@ -27,11 +27,10 @@ export interface PrintLabelInput {
   /**
    * Target raster resolution in dots per inch. 203 covers Niimbot-class
    * thermal printers, 300 is the safe default for sharing/photo-export and
-   * for desktop label printers that resample on their own.
+   * for desktop label printers that resample on their own. Ignored for PDF
+   * output (PDF is vector — DPI is irrelevant).
    */
   dpi?: number;
-  /** Filename prefix used on the generated PNG files. Defaults to "label". */
-  filenamePrefix?: string;
 }
 
 export type PrintResult =
@@ -46,13 +45,80 @@ function mmToPx(mm: number, dpi: number): number {
   return Math.round((mm / MM_PER_INCH) * dpi);
 }
 
-/** Sanitise a free-text label into a filename-safe slug. */
-function slugify(input: string): string {
+/** Sanitise a free-text string into a filesystem-friendly filename component.
+ *  Keeps case and spaces (every desktop / mobile OS handles those fine);
+ *  only swaps characters that are illegal on Windows or that break common
+ *  shells. Length-caps at 80 chars so 50-product batches don't produce
+ *  filenames that exceed the 255-char path limit on some filesystems. */
+function sanitizeForFilename(input: string): string {
   return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 60) || "label";
+    .replace(/[/\\:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "label";
+}
+
+/** ISO YYYY-MM-DD in local time — sortable, locale-neutral, the natural
+ *  archival format. Local time (not UTC) so a batch finished at 11pm
+ *  doesn't land on the next day's filename. */
+function toIsoDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/** Pick the most informative identifier for one context: the batch number
+ *  if set, else the production / packing date, else today. */
+function pickIdentifier(ctx: LabelContext): string {
+  if (ctx.batchNumber) return sanitizeForFilename(ctx.batchNumber);
+  if (ctx.producedAt) return toIsoDate(ctx.producedAt);
+  return toIsoDate(new Date());
+}
+
+/** Builds the filename for one rendered label (PNG path). Shape:
+ *  `{ContextName}_{Identifier}.png`. The identifier picks batch-number first
+ *  so multiple batches of the same product stay distinguishable, then falls
+ *  back to date for archival sorting. */
+function buildLabelFilename(ctx: LabelContext, extension: string): string {
+  const name = sanitizeForFilename(ctx.name || "label");
+  return `${name}_${pickIdentifier(ctx)}.${extension}`;
+}
+
+/** Builds the filename for a multi-context PDF. When every context shares
+ *  one batch number (production / filling batch run), the PDF represents
+ *  the *batch* as a whole — name it after the batch, not the first
+ *  product. Single-context PDFs (shop, stock relabel) fall through to the
+ *  per-label convention. */
+function buildPdfFilename(contexts: LabelContext[]): string {
+  if (contexts.length === 0) return "labels.pdf";
+  const first = contexts[0];
+  const sharedBatch = contexts.length > 1
+    && first.batchNumber
+    && contexts.every((c) => c.batchNumber === first.batchNumber)
+    ? first.batchNumber
+    : null;
+  if (sharedBatch) {
+    const dateStr = first.producedAt ? toIsoDate(first.producedAt) : toIsoDate(new Date());
+    return `${sanitizeForFilename(sharedBatch)}_${dateStr}.pdf`;
+  }
+  return buildLabelFilename(first, "pdf");
+}
+
+/** Resolve in-print-run collisions ` (2)` / ` (3)` / … so two labels with
+ *  the same product name don't overwrite each other in the share-sheet
+ *  payload. The OS handles cross-run collisions on disk. */
+function deduplicateFilename(name: string, used: Set<string>): string {
+  if (!used.has(name)) { used.add(name); return name; }
+  const dot = name.lastIndexOf(".");
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${base} (${n})${ext}`;
+    if (!used.has(candidate)) { used.add(candidate); return candidate; }
+  }
+  used.add(name);
+  return name;
 }
 
 /**
@@ -117,15 +183,29 @@ function isShareSheetPreferred(): boolean {
   return false;
 }
 
-/** Builds a stable, filesystem-friendly name for one rendered label. */
-function buildFilename(prefix: string, ctx: LabelContext, index: number): string {
-  const namePart = slugify(ctx.name);
-  const idPart =
-    ctx.batchNumber ||
-    (ctx.source.kind === "filling-batch" ? ctx.source.planFillingId :
-     ctx.source.kind === "collection-package" ? `${ctx.source.collectionId}_${ctx.source.packagingId}` :
-     `${index + 1}`);
-  return `${prefix}_${namePart}_${slugify(String(idPart))}.png`;
+/**
+ * svg2pdf.js doesn't reliably honour `dominant-baseline="hanging"` — it
+ * tends to place the `<text>` y coordinate at the alphabetic baseline rather
+ * than the top of the glyph box, so any text drawn near y=0 has its
+ * ascenders clipped above the PDF page edge. The browser canvas (PNG path)
+ * renders the same SVG correctly because it honours `hanging` exactly.
+ *
+ * We pre-process the parsed SVG: strip the hanging attribute and shift y
+ * down by ~0.8 × font-size (the approximate cap-height for Latin fonts) so
+ * the PDF rendering matches the on-screen preview.
+ */
+const HANGING_BASELINE_SHIFT_RATIO = 0.8;
+
+function normalizeBaselineForPdf(svgEl: SVGElement): void {
+  const texts = svgEl.querySelectorAll('text[dominant-baseline="hanging"]');
+  for (const node of Array.from(texts)) {
+    const t = node as SVGTextElement;
+    const fontSize = parseFloat(t.getAttribute("font-size") || "0");
+    if (!Number.isFinite(fontSize) || fontSize <= 0) continue;
+    const y = parseFloat(t.getAttribute("y") || "0");
+    t.setAttribute("y", String(y + fontSize * HANGING_BASELINE_SHIFT_RATIO));
+    t.removeAttribute("dominant-baseline");
+  }
 }
 
 /**
@@ -163,6 +243,7 @@ async function renderTemplatesToPdf(
     const parser = new DOMParser();
     const doc = parser.parseFromString(svgString, "image/svg+xml");
     const svgEl = doc.documentElement as unknown as SVGElement;
+    normalizeBaselineForPdf(svgEl);
     await svg2pdf(svgEl, pdf, {
       x: 0,
       y: 0,
@@ -183,7 +264,6 @@ async function renderTemplatesToPdf(
 export async function printLabels(input: PrintLabelInput): Promise<PrintResult> {
   const { template, contexts, brand, marketRegion } = input;
   const dpi = input.dpi ?? DEFAULT_DPI;
-  const filenamePrefix = input.filenamePrefix ?? "label";
   const format = labelTemplateFormat(template);
 
   if (contexts.length === 0) {
@@ -196,19 +276,23 @@ export async function printLabels(input: PrintLabelInput): Promise<PrintResult> 
   try {
     const files: File[] = [];
     if (format === "pdf") {
-      // One PDF for the whole print run — one page per label. Filename
-      // anchors on the template + first context so it stays informative.
+      // One PDF for the whole print run — one page per label. The filename
+      // reflects what's *inside* (the batch or the box), so a Downloads
+      // folder with many runs stays scannable.
       const pdfBlob = await renderTemplatesToPdf(template, contexts, brand, marketRegion);
-      const pdfName = `${filenamePrefix}_${slugify(template.name)}_${contexts.length}.pdf`;
-      files.push(new File([pdfBlob], pdfName, { type: "application/pdf" }));
+      files.push(new File([pdfBlob], buildPdfFilename(contexts), { type: "application/pdf" }));
     } else {
       const widthPx = mmToPx(template.width, dpi);
       const heightPx = mmToPx(template.height, dpi);
-      for (let i = 0; i < contexts.length; i++) {
-        const ctx = contexts[i];
+      // Track collisions within this print run — two products with the same
+      // name on one batch (rare but possible) would otherwise overwrite each
+      // other in the share-sheet payload.
+      const usedNames = new Set<string>();
+      for (const ctx of contexts) {
         const svg = renderTemplateSvg(template, ctx, brand, { marketRegion, sizing: "mm" });
         const png = await rasterizeSvgToPng(svg, widthPx, heightPx);
-        files.push(new File([png], buildFilename(filenamePrefix, ctx, i), { type: "image/png" }));
+        const name = deduplicateFilename(buildLabelFilename(ctx, "png"), usedNames);
+        files.push(new File([png], name, { type: "image/png" }));
       }
     }
 
