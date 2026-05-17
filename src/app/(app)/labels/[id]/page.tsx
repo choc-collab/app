@@ -22,6 +22,7 @@ import { useLabelContext } from "@/lib/labelContext";
 import { FIELD_DEFINITIONS, FIELD_TYPES_BY_GROUP, effectiveFieldSizePt, formatLabelDate, DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT, FONT_OPTIONS_BY_CATEGORY, type LabelFieldGroup } from "@/lib/labelFields";
 import { renderTemplateSvg } from "@/lib/labelSvg";
 import { lintTemplate, summariseLint, type LintWarning } from "@/lib/labelLinter";
+import { downscaleImageIfNeeded } from "@/lib/image-downscale";
 import { labelTemplateKind, labelTemplateFormat } from "@/types";
 import type { LabelField, LabelFieldType, LabelSource, LabelTemplate, LabelTemplateKind, LabelFieldProps } from "@/types";
 
@@ -1501,54 +1502,9 @@ function DateFormatControl({
  * Picker + preview for the `image` field. Stores the chosen file as a base64
  * data URL on `LabelFieldProps.image` so it travels with the template (Dexie
  * row, backup export, Dexie Cloud sync) and the renderer can emit it inline
- * as an `<image href>` without any external fetch at print time.
- *
- * Uploads larger than IMAGE_MAX_DIMENSION on their longest edge are downscaled
- * through an offscreen canvas before being stored. A 12-megapixel phone photo
- * easily reaches ~5MB of base64 — overkill for a 50×40mm label and a real
- * problem for Dexie Cloud sync — so we cap at a print-friendly size first.
+ * as an `<image href>` without any external fetch at print time. Large
+ * uploads are downscaled first via `downscaleImageIfNeeded`.
  */
-const IMAGE_MAX_DIMENSION = 1500;
-const IMAGE_DOWNSCALE_QUALITY = 0.92;
-
-async function downscaleImageIfNeeded(file: File): Promise<string> {
-  const originalDataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("FileReader returned non-string result"));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
-    reader.readAsDataURL(file);
-  });
-
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Image decode failed"));
-    image.src = originalDataUrl;
-  });
-
-  const longest = Math.max(img.naturalWidth, img.naturalHeight);
-  if (longest <= IMAGE_MAX_DIMENSION) return originalDataUrl;
-
-  const scale = IMAGE_MAX_DIMENSION / longest;
-  const targetW = Math.round(img.naturalWidth * scale);
-  const targetH = Math.round(img.naturalHeight * scale);
-  const canvas = document.createElement("canvas");
-  canvas.width = targetW;
-  canvas.height = targetH;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return originalDataUrl;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, 0, 0, targetW, targetH);
-
-  // Keep PNGs lossless when alpha is likely; JPEG everything else so a 12MP
-  // photo doesn't bloat the template on disk.
-  const outputType = file.type === "image/png" ? "image/png" : "image/jpeg";
-  return canvas.toDataURL(outputType, outputType === "image/jpeg" ? IMAGE_DOWNSCALE_QUALITY : undefined);
-}
-
 function ImageUploadRow({
   value,
   onChange,

@@ -15,6 +15,7 @@ import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical
 import Link from "next/link";
 import { CSVImport } from "@/components/csv-import";
 import { makeIngredientImportConfig, getExistingIngredientIndex, exportIngredientsCSV } from "@/lib/csv-import-ingredients";
+import { downscaleImageIfNeeded } from "@/lib/image-downscale";
 import type { Ingredient } from "@/types";
 
 type ImportState = "idle" | "confirm" | "importing" | "done" | "error";
@@ -1102,18 +1103,25 @@ function BrandTab({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Brand>(brand);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [logoError, setLogoError] = useState("");
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const isDirty = editing && JSON.stringify(draft) !== JSON.stringify(brand);
   useEffect(() => { onDirtyChange(isDirty); }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function startEditing() {
     setDraft(brand);
+    setLogoError("");
+    setSaveError("");
     setEditing(true);
   }
 
   function handleCancel() {
     setEditing(false);
+    setLogoError("");
+    setSaveError("");
   }
 
   async function handleSave() {
@@ -1121,21 +1129,37 @@ function BrandTab({
       ...draft,
       socials: (draft.socials ?? []).filter(s => s.label.trim() || s.url.trim()),
     };
-    await onBrandChange(cleaned);
-    setEditing(false);
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onBrandChange(cleaned);
+      setEditing(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not save brand settings.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setDraft(d => ({ ...d, logo: reader.result as string }));
-    reader.readAsDataURL(file);
+    setLogoError("");
+    setLogoBusy(true);
+    try {
+      const dataUrl = await downscaleImageIfNeeded(file);
+      setDraft(d => ({ ...d, logo: dataUrl }));
+    } catch (err) {
+      setLogoError(err instanceof Error ? err.message : "Could not read that image.");
+    } finally {
+      setLogoBusy(false);
+    }
   }
 
   function removeLogo() {
     setDraft(d => ({ ...d, logo: undefined }));
+    setLogoError("");
   }
 
   function updateSocial(idx: number, patch: Partial<BrandSocial>) {
@@ -1253,7 +1277,7 @@ function BrandTab({
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-primary">Logo</h2>
         <p className="text-xs text-muted-foreground">
-          Uploaded as an image and embedded into labels. PNG with a transparent background works best.
+          Uploaded as an image and embedded into labels. PNG with a transparent background works best. Large images are resized to fit print sizes before being saved.
         </p>
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
           {draft.logo ? (
@@ -1261,13 +1285,16 @@ function BrandTab({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={draft.logo} alt="Brand logo preview" className="max-h-24 max-w-[12rem] object-contain border border-border rounded bg-white p-1" />
               <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  className="rounded-full border border-border px-3 py-1.5 text-sm hover:bg-muted"
-                >
-                  Replace
-                </button>
+                <label className={`cursor-pointer rounded-full border border-border px-3 py-1.5 text-sm text-center hover:bg-muted ${logoBusy ? "opacity-50 pointer-events-none" : ""}`}>
+                  {logoBusy ? "Reading…" : "Replace"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoFile}
+                    className="sr-only"
+                    disabled={logoBusy}
+                  />
+                </label>
                 <button
                   type="button"
                   onClick={removeLogo}
@@ -1279,22 +1306,24 @@ function BrandTab({
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="flex items-center gap-2 rounded-full border border-dashed border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
-            >
+            <label className={`inline-flex items-center gap-2 rounded-full border border-dashed border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted cursor-pointer w-fit ${logoBusy ? "opacity-50 pointer-events-none" : ""}`}>
               <Upload className="w-4 h-4" />
-              Upload logo
-            </button>
+              {logoBusy ? "Reading…" : "Upload logo"}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleLogoFile}
+                className="sr-only"
+                disabled={logoBusy}
+              />
+            </label>
           )}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            onChange={handleLogoFile}
-            className="hidden"
-          />
+          {logoError && (
+            <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+              <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+              <p className="text-xs text-destructive">{logoError}</p>
+            </div>
+          )}
         </div>
       </section>
 
@@ -1374,16 +1403,31 @@ function BrandTab({
         </div>
       </section>
 
+      {saveError && (
+        <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+          <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+          <div className="text-xs text-destructive space-y-1">
+            <p><strong>Could not save.</strong> {saveError}</p>
+            {draft.logo && (
+              <p>
+                If you just added a logo, the saved record may be too large for sync. Try a smaller image, or remove the logo and save the other fields first.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex gap-2">
         <button
           onClick={handleSave}
-          className="flex-1 rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium"
+          disabled={saving || logoBusy}
+          className="flex-1 rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium disabled:opacity-50"
         >
-          Save
+          {saving ? "Saving…" : "Save"}
         </button>
         <button
           onClick={handleCancel}
-          className="rounded-full border border-border px-4 py-2 text-sm"
+          disabled={saving}
+          className="rounded-full border border-border px-4 py-2 text-sm disabled:opacity-50"
         >
           Cancel
         </button>
