@@ -47,7 +47,7 @@ const SECTIONS: SectionDef[] = [
     label: "The Lab",
     routes: ["/lab", "/calculator"],
     items: [
-      { href: "/lab", label: "Product Lab", icon: FlaskIcon, disabled: true },
+      { href: "/lab", label: "Product Lab", icon: FlaskIcon },
     ],
   },
   {
@@ -73,7 +73,7 @@ const HOME_ITEMS: NavItem[] = [
   { href: "/today", label: "Today", icon: HomeIcon },
   { href: "/workshop", label: "Workshop", icon: WorkshopIcon },
   { href: "/pantry", label: "Pantry", icon: PantryIcon },
-  { href: "/lab", label: "Lab", icon: FlaskIcon, disabled: true },
+  { href: "/lab", label: "Lab", icon: FlaskIcon },
   { href: "/observatory", label: "Observatory", icon: ObservatoryIcon },
   { href: "/shop", label: "Shop", icon: ShopIcon },
 ];

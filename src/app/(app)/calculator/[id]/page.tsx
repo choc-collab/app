@@ -17,6 +17,7 @@ import {
   saveFillingIngredient,
 } from "@/lib/hooks";
 import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType } from "@/lib/ganacheBalance";
+import { estimateAw, shelfLifeFromEstimate, type AwEstimate } from "@/lib/ganacheAw";
 import type { Ingredient } from "@/types";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
@@ -85,6 +86,66 @@ function BalanceBar({
       <span className="w-16 text-xs text-muted-foreground shrink-0 hidden sm:block">
         {min}–{max}%
       </span>
+    </div>
+  );
+}
+
+// --- Water activity bar component ---
+//
+// Maps Aw values onto a 0.50–1.00 horizontal scale, with coloured background
+// segments showing the four shelf-life bands. A tick marks the central
+// estimate, and a translucent overlay shows the ±tolerance range.
+function awToPct(aw: number): number {
+  return Math.max(0, Math.min(100, ((aw - 0.5) / 0.5) * 100));
+}
+
+function AwBar({ estimate }: { estimate: AwEstimate }) {
+  const centralPct = awToPct(estimate.value);
+  const loPct = awToPct(estimate.lo);
+  const hiPct = awToPct(estimate.hi);
+  const rangePct = Math.max(0.5, hiPct - loPct);
+  const tolerance = (estimate.hi - estimate.lo) / 2;
+
+  return (
+    <div className="space-y-1">
+      {/* Bar row */}
+      <div className="flex items-center gap-3">
+        <span className="w-28 text-xs text-muted-foreground shrink-0">Water activity</span>
+        <div className="flex-1 relative h-4 bg-muted rounded-full overflow-hidden">
+          {/* Shelf-life band backgrounds.
+              0.50–0.60 very_long · 0.60–0.70 long · 0.70–0.85 medium · 0.85–1.00 short */}
+          <div className="absolute top-0 bottom-0 bg-primary/15"     style={{ left:  "0%", width: "20%" }} />
+          <div className="absolute top-0 bottom-0 bg-status-ok-bg"   style={{ left: "20%", width: "20%" }} />
+          <div className="absolute top-0 bottom-0 bg-stone-200/70"   style={{ left: "40%", width: "30%" }} />
+          <div className="absolute top-0 bottom-0 bg-status-warn-bg" style={{ left: "70%", width: "30%" }} />
+          {/* ±tolerance overlay */}
+          <div
+            className="absolute top-0 bottom-0 bg-foreground/15"
+            style={{ left: `${loPct}%`, width: `${rangePct}%` }}
+          />
+          {/* central-value tick */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-foreground"
+            style={{ left: `calc(${centralPct}% - 1px)` }}
+          />
+        </div>
+        <span className="w-20 text-xs text-right tabular-nums font-medium shrink-0 text-foreground">
+          {estimate.value.toFixed(2)} ± {tolerance.toFixed(2)}
+        </span>
+      </div>
+
+      {/* Tick-label row — mirrors the bar row's flex slots so ticks align */}
+      <div className="flex items-start gap-3">
+        <span className="w-28 shrink-0" aria-hidden />
+        <div className="flex-1 relative h-3 text-[10px] text-muted-foreground">
+          <span className="absolute" style={{ left:  "0%", transform: "translateX(-50%)" }}>0.50</span>
+          <span className="absolute" style={{ left: "20%", transform: "translateX(-50%)" }}>0.60</span>
+          <span className="absolute" style={{ left: "40%", transform: "translateX(-50%)" }}>0.70</span>
+          <span className="absolute" style={{ left: "70%", transform: "translateX(-50%)" }}>0.85</span>
+          <span className="absolute" style={{ right: "0%" }}>1.00</span>
+        </div>
+        <span className="w-20 shrink-0" aria-hidden />
+      </div>
     </div>
   );
 }
@@ -428,6 +489,15 @@ export default function ExperimentPage() {
     [balance, detectedType]
   );
 
+  const awEstimate = useMemo(
+    () => balance ? estimateAw(balance) : null,
+    [balance]
+  );
+  const shelfLife = useMemo(
+    () => awEstimate ? shelfLifeFromEstimate(awEstimate) : null,
+    [awEstimate]
+  );
+
   const totalWeight = balance?.totalWeight ?? 0;
 
   async function handleNewVersion() {
@@ -700,6 +770,42 @@ export default function ExperimentPage() {
           </div>
         )}
       </section>
+
+      {/* Shelf-life estimate (water activity heuristic) */}
+      {balance && awEstimate && shelfLife && (
+        <section className="mb-6">
+          <h2 className="text-sm font-semibold text-primary mb-3">Shelf life</h2>
+          <AwBar estimate={awEstimate} />
+          <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-muted-foreground">Estimated shelf life:</span>
+            <span className={`px-2 py-0.5 rounded-full font-medium ${
+              shelfLife.band === "short"     ? "bg-status-warn-bg text-status-warn" :
+              shelfLife.band === "medium"    ? "bg-stone-200 text-stone-700" :
+              shelfLife.band === "long"      ? "bg-status-ok-bg text-status-ok" :
+                                                "bg-primary/10 text-primary"
+            }`}>
+              {shelfLife.label}
+            </span>
+            <span className="text-muted-foreground/70 tabular-nums">
+              (refrigerated, properly packaged)
+            </span>
+          </div>
+          {awEstimate.confidence === "low" && awEstimate.caveats.length > 0 && (
+            <div className="mt-3 flex items-start gap-2 text-xs text-status-warn bg-status-warn-bg border border-status-warn-edge rounded-md px-3 py-2">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-medium">Low-confidence estimate</p>
+                <ul className="list-disc pl-4 space-y-0.5 text-stone-700">
+                  {awEstimate.caveats.map((c, i) => <li key={i}>{c}</li>)}
+                </ul>
+              </div>
+            </div>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Heuristic only. Real water activity requires a calibrated Aw meter — always test small batches before scaling, and store cool.
+          </p>
+        </section>
+      )}
 
       {/* Notes */}
       {check && check.warnings.length > 0 && (
