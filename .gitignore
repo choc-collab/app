@@ -48,3 +48,7 @@ test-results/
 
 # wrangler local cache (Cloudflare Worker dev state — do not commit)
 .wrangler/
+
+# internal-only calibration fixtures (third-party empirical data used for
+# local test calibration — must not be redistributed)
+*.private.json
