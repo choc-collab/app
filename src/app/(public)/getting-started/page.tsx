@@ -792,7 +792,7 @@ const SECTIONS: Section[] = [
         <h3>Step 1 — set up your Brand profile (do this first)</h3>
         <p>
           Open <strong>Settings → Brand </strong> and fill in whatever is relevant: business name,
-          address, contact line (phone / email / website), VAT or business number, and a list of
+          address, contact information (phone / email / website), VAT or business number, and a list of
           named links (Instagram, Web, etc.). You can upload a logo image too — it&apos;s stored
           alongside your data, no external hosting needed.
         </p>
@@ -804,7 +804,7 @@ const SECTIONS: Section[] = [
         </p>
         <Callout kind="tip" title="Optional but worth it">
           You can skip Brand and still design templates — placeholder dashes will show where your
-          brand info would go. But for printed customer-facing labels, the address and contact line
+          brand info would go. But for printed customer-facing labels, the address and contact information
           are usually legally required, so fill them in before your first real print run.
         </Callout>
 

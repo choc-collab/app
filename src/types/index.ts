@@ -458,7 +458,7 @@ export interface Brand {
   name?: string;
   /** Business address — free-form, may include multiple lines. */
   address?: string;
-  /** Contact line — free-form, typically phone/email/web on one line. */
+  /** Contact information — free-form, typically phone/email/web on one line. */
   contact?: string;
   /** Ordered list of named social/web links. */
   socials?: BrandSocial[];
