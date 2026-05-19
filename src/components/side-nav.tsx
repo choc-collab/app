@@ -23,10 +23,11 @@ type SectionDef = {
 const SECTIONS: SectionDef[] = [
   {
     label: "The Workshop",
-    routes: ["/workshop", "/production", "/stock"],
+    routes: ["/workshop", "/production", "/stock", "/lab", "/calculator"],
     items: [
       { href: "/production", label: "Production", icon: ProductionIcon },
       { href: "/stock", label: "Stock", icon: StockIcon },
+      { href: "/lab", label: "Product Lab", icon: FlaskIcon },
     ],
   },
   {
@@ -41,13 +42,6 @@ const SECTIONS: SectionDef[] = [
       { href: "/collections", label: "Collections", icon: CollectionsIcon },
       { href: "/pantry/decoration", label: "Decoration", icon: DecorationNavIcon },
       { href: "/labels", label: "Labels", icon: LabelsIcon },
-    ],
-  },
-  {
-    label: "The Lab",
-    routes: ["/lab", "/calculator"],
-    items: [
-      { href: "/lab", label: "Product Lab", icon: FlaskIcon },
     ],
   },
   {
@@ -73,7 +67,6 @@ const HOME_ITEMS: NavItem[] = [
   { href: "/today", label: "Today", icon: HomeIcon },
   { href: "/workshop", label: "Workshop", icon: WorkshopIcon },
   { href: "/pantry", label: "Pantry", icon: PantryIcon },
-  { href: "/lab", label: "Lab", icon: FlaskIcon },
   { href: "/observatory", label: "Observatory", icon: ObservatoryIcon },
   { href: "/shop", label: "Shop", icon: ShopIcon },
 ];

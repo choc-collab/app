@@ -429,7 +429,7 @@ function ExperimentCard({
             <>
               <button
                 onClick={() => router.push(`/calculator/${encodeURIComponent(id)}/run`)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-primary-foreground text-xs font-semibold hover:bg-accent/90 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-foreground text-xs font-semibold hover:bg-accent/90 transition-colors"
               >
                 <Play className="w-3.5 h-3.5" />
                 Make product

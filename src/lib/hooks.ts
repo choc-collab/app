@@ -2298,6 +2298,26 @@ export async function deleteExperiment(id: string) {
   });
 }
 
+/**
+ * All versions in the same lineage as the given experiment, oldest → newest.
+ *
+ * Experiment lineage is identified by `rootId`: v1 has `rootId` undefined and
+ * acts as its own root; v2+ have `rootId` pointing at v1's id. The chain is
+ * the set of experiments where `id === rootId || rootId === rootId`.
+ */
+export function useExperimentChain(experimentId: string | undefined) {
+  return useLiveQuery(async () => {
+    if (!experimentId) return [] as Experiment[];
+    const exp = await db.experiments.get(experimentId);
+    if (!exp?.id) return [] as Experiment[];
+    const rootId = exp.rootId ?? exp.id;
+    const all = await db.experiments.toArray();
+    return all
+      .filter((e) => e.id === rootId || e.rootId === rootId)
+      .sort((a, b) => (a.version ?? 1) - (b.version ?? 1));
+  }, [experimentId]) ?? [];
+}
+
 export function useExperimentIngredients(experimentId: string | undefined) {
   return useLiveQuery(
     () => experimentId

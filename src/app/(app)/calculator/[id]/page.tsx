@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useExperiment,
+  useExperimentChain,
   useExperimentIngredients,
   saveExperiment,
   deleteExperiment,
@@ -18,6 +19,8 @@ import {
 } from "@/lib/hooks";
 import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType } from "@/lib/ganacheBalance";
 import { estimateAw, shelfLifeFromEstimate, type AwEstimate } from "@/lib/ganacheAw";
+import { SegmentedTabs } from "@/components/pantry/segmented-tabs";
+import { VersionComparison } from "@/components/lab/version-comparison";
 import type { Ingredient } from "@/types";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
@@ -332,8 +335,11 @@ export default function ExperimentPage() {
 
   const experiment = useExperiment(id);
   const experimentIngredients = useExperimentIngredients(id);
+  const experimentChain = useExperimentChain(id);
   const allIngredients = useIngredients();
   const sourceFillingIngredients = useFillingIngs(cloneFillingId ?? undefined);
+  // Tab state — only meaningful when chain.length >= 2.
+  const [tab, setTab] = useState<"recipe" | "versions">("recipe");
 
   // Clone source filling ingredients on first load when ?clone= is present
   const [cloned, setCloned] = useState(false);
@@ -607,6 +613,27 @@ export default function ExperimentPage() {
         </div>
       )}
 
+      {/* Tab strip — only shown once a recipe has more than one version, so the
+          single-experiment editor stays unchanged for new users. */}
+      {experimentChain.length >= 2 && (
+        <div className="mb-5">
+          <SegmentedTabs
+            value={tab}
+            onChange={setTab}
+            options={[
+              { id: "recipe",   label: "Recipe" },
+              { id: "versions", label: "Versions", count: experimentChain.length },
+            ]}
+            ariaLabel="Switch between recipe editor and version history"
+          />
+        </div>
+      )}
+
+      {tab === "versions" && experimentChain.length >= 2 && (
+        <VersionComparison chain={experimentChain} ingredientMap={ingredientMap} />
+      )}
+
+      {tab === "recipe" && (<>
       {isNew && (
         <p className="text-xs text-muted-foreground mb-4">Add your ingredients below to see the balance readout.</p>
       )}
@@ -862,6 +889,7 @@ export default function ExperimentPage() {
           </button>
         )}
       </section>
+      </>)}
     </div>
   );
 }
