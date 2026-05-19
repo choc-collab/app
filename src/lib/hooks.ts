@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/db";
+import { db, isCloudConfigured } from "@/lib/db";
+import { sanitizeBrand } from "@/lib/brand-sanitize";
 import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
@@ -1761,10 +1762,23 @@ export async function setFacilityMayContain(allergens: string[]): Promise<void> 
 
 const EMPTY_BRAND: Brand = {};
 
+// One-shot guard so a corrupted row only triggers a single self-heal write
+// per page load — see sanitizeBrand for the underlying scenario.
+let brandSelfHealAttempted = false;
+
 /** Reactive read of the user's brand profile (logo, company info, socials).
  *  Returns an empty object when no brand has been configured yet. */
 export function useBrand(): Brand {
-  return useLiveQuery(async () => (await getPreferences()).brand ?? EMPTY_BRAND, [], EMPTY_BRAND);
+  return useLiveQuery(async () => {
+    const raw = (await getPreferences()).brand;
+    const { brand, repaired } = sanitizeBrand(raw);
+    if (repaired && isCloudConfigured && !brandSelfHealAttempted) {
+      brandSelfHealAttempted = true;
+      console.warn("[useBrand] Repairing corrupted brand record (non-string field).");
+      void setBrand(brand);
+    }
+    return brand;
+  }, [], EMPTY_BRAND);
 }
 
 export async function setBrand(brand: Brand): Promise<void> {
