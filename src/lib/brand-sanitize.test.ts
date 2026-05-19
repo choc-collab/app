@@ -32,7 +32,9 @@ describe("sanitizeBrand", () => {
   it("coerces a non-string logo to undefined and flags repair — the [object Object] regression", () => {
     const { brand, repaired } = sanitizeBrand({
       name: "Atelier Choc",
-      logo: { ref: "blob-handle", size: 12345 },
+      // A bare object with no BlobRef markers — the shape an older build
+      // could land when it accidentally stored a Blob or arbitrary object.
+      logo: { junk: true },
     });
     expect(brand.logo).toBeUndefined();
     expect(brand.name).toBe("Atelier Choc");
@@ -49,6 +51,31 @@ describe("sanitizeBrand", () => {
     });
     expect(brand).toEqual({});
     expect(repaired).toBe(true);
+  });
+
+  it("treats a Dexie Cloud BlobRef on logo as transient — hides it but does NOT flag repair", () => {
+    // Mid-sync state: Dexie Cloud has offloaded the long data URL to blob
+    // storage and the IndexedDB row temporarily holds a BlobRef in place of
+    // the string. The blobResolveMiddleware will restore the string shortly,
+    // so we must not trigger a self-heal write here — doing so would
+    // overwrite the cloud row's logo before the blob ever resolves.
+    const { brand, repaired } = sanitizeBrand({
+      name: "Atelier Choc",
+      logo: { _bt: "string", ref: "1:abc123", size: 482910 },
+    });
+    expect(brand.logo).toBeUndefined();
+    expect(brand.name).toBe("Atelier Choc");
+    expect(repaired).toBe(false);
+  });
+
+  it("treats a serialized TSONRef on logo as transient — hides it but does NOT flag repair", () => {
+    // The post-IndexedDB-rehydrate shape ({ type, ref, size }) — same
+    // transient state, different on-disk encoding.
+    const { brand, repaired } = sanitizeBrand({
+      logo: { type: "string", ref: "1:abc123", size: 482910 },
+    });
+    expect(brand.logo).toBeUndefined();
+    expect(repaired).toBe(false);
   });
 
   it("normalises socials whose label or url is the wrong type", () => {

@@ -3,19 +3,36 @@ import type { Brand, BrandSocial } from "@/types";
 /**
  * Defensive sanitiser for the `brand` field on UserPreferences when read back
  * from Dexie / Dexie Cloud sync. Every field on `Brand` is typed `string |
- * undefined` (or `BrandSocial[]`), but a pre-`fix for logo` build could land
- * a row with `logo` as a non-string when the FileReader-derived data URL
- * exceeded Dexie Cloud's per-row size limit and the partial write replicated
- * down to other devices. Once a bad row exists on the server it re-syncs to
- * every signed-in device — so we coerce non-string values to `undefined` on
- * read rather than letting React stringify them into `<img src="[object
- * Object]">` (which both shows a broken-picture icon and tears the page's
- * hydration tree).
+ * undefined` (or `BrandSocial[]`), but two distinct things can land a
+ * non-string value on read:
  *
- * Returns the cleaned brand plus a `repaired` flag so the caller can fire a
- * one-shot self-heal `setBrand(cleaned)` to overwrite the bad row in
- * Dexie Cloud and stop the bug spreading further.
+ * 1. Actual corruption — a pre-`fix for logo` build could store a Blob or
+ *    arbitrary object directly in `logo`. Render those as `<img src="[object
+ *    Object]">` and you get a broken-picture icon plus a torn hydration tree.
+ *    We coerce these to `undefined` AND set `repaired` so the caller can
+ *    self-heal the bad row.
+ *
+ * 2. Transient Dexie Cloud blob offloading — any string longer than
+ *    `largeStringThreshold` (default 32 KB; a downscaled logo data URL
+ *    easily clears this) is uploaded as a separate blob during sync. While
+ *    the upload is in flight, the field temporarily holds a `BlobRef`
+ *    (shape `{ _bt: "string", ref, size }`) or a serialized TSONRef
+ *    (`{ type, ref, size }`) until `blobResolveMiddleware` downloads the
+ *    blob and restores the original string. These must NOT be treated as
+ *    corruption — otherwise the self-heal fires and overwrites the cloud
+ *    row's logo before the blob ever resolves, permanently destroying it.
+ *    Coerce to `undefined` for display so React doesn't render
+ *    `<img src="[object Object]">`, but leave `repaired` untouched so the
+ *    underlying row sits intact until the blob resolver completes.
  */
+function isDexieCloudBlobRef(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o._bt === "string" && typeof o.ref === "string") return true;
+  if (typeof o.type === "string" && typeof o.ref === "string" && typeof o.size === "number") return true;
+  return false;
+}
+
 export function sanitizeBrand(raw: unknown): { brand: Brand; repaired: boolean } {
   if (raw == null || typeof raw !== "object") {
     return { brand: {}, repaired: raw != null };
@@ -26,6 +43,7 @@ export function sanitizeBrand(raw: unknown): { brand: Brand; repaired: boolean }
   const takeString = (v: unknown): string | undefined => {
     if (v === undefined) return undefined;
     if (typeof v === "string") return v;
+    if (isDexieCloudBlobRef(v)) return undefined;
     repaired = true;
     return undefined;
   };
