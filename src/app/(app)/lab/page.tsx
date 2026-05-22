@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useExperiments, saveExperiment, deleteExperiment, forkExperimentVersion, useFillings } from "@/lib/hooks";
 import { PageHeader } from "@/components/page-header";
 import { ChevronRight, Plus, Layers, Trash2, FlaskConical, Play, Pencil, GitBranch } from "lucide-react";
-import { GANACHE_TYPES, type GanacheType } from "@/types";
 
 type CreateMode = "blank" | "clone" | null;
 
@@ -17,7 +16,6 @@ export default function LabPage() {
 
   const [createMode, setCreateMode] = useState<CreateMode>(null);
   const [newName, setNewName] = useState("");
-  const [newGanacheType, setNewGanacheType] = useState<GanacheType>("dark");
   const [cloneFillingId, setCloneFillingId] = useState<string | "">("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -48,7 +46,6 @@ export default function LabPage() {
     setSaving(true);
     const id = await saveExperiment({
       name: newName.trim(),
-      ganacheType: newGanacheType,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -60,7 +57,6 @@ export default function LabPage() {
     setSaving(true);
     const id = await saveExperiment({
       name: newName.trim(),
-      ganacheType: newGanacheType,
       sourceFillingId: cloneFillingId ?? undefined,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -167,8 +163,6 @@ export default function LabPage() {
           nameInputRef={nameInputRef}
           newName={newName}
           setNewName={setNewName}
-          newGanacheType={newGanacheType}
-          setNewGanacheType={setNewGanacheType}
           cloneFillingId={cloneFillingId}
           setCloneFillingId={setCloneFillingId}
           ganacheFillings={ganacheFillings}
@@ -248,8 +242,6 @@ function CreateForm({
   nameInputRef,
   newName,
   setNewName,
-  newGanacheType,
-  setNewGanacheType,
   cloneFillingId,
   setCloneFillingId,
   ganacheFillings,
@@ -262,8 +254,6 @@ function CreateForm({
   nameInputRef: RefObject<HTMLInputElement | null>;
   newName: string;
   setNewName: (v: string) => void;
-  newGanacheType: GanacheType;
-  setNewGanacheType: (v: GanacheType) => void;
   cloneFillingId: string;
   setCloneFillingId: (v: string) => void;
   ganacheFillings: { id?: string; name: string }[];
@@ -312,18 +302,6 @@ function CreateForm({
           </select>
         </div>
       )}
-      <div>
-        <label className="label">Chocolate type</label>
-        <select
-          value={newGanacheType}
-          onChange={(e) => setNewGanacheType(e.target.value as GanacheType)}
-          className="input w-full"
-        >
-          {GANACHE_TYPES.map((t) => (
-            <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-          ))}
-        </select>
-      </div>
       <div className="flex gap-2 pt-1">
         <button
           onClick={mode === "blank" ? onCreateBlank : onClone}
