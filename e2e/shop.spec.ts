@@ -39,7 +39,7 @@ test.describe("Shop", () => {
 
   test("side-nav Shop link navigates to the Shop landing", async ({ page }) => {
     await page.goto("/today");
-    await page.getByRole("link", { name: "Shop" }).first().click();
+    await page.getByRole("link", { name: "Shop", exact: true }).click();
     await expect(page).toHaveURL(/\/shop\/?$/);
     await expect(page.getByText(/Shop ·/)).toBeVisible();
   });

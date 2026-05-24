@@ -792,9 +792,14 @@ const SECTIONS: Section[] = [
         <h3>Step 1 — set up your Brand profile (do this first)</h3>
         <p>
           Open <strong>Settings → Brand </strong> and fill in whatever is relevant: business name,
-          address, contact line (phone / email / website), VAT or business number, and a list of
-          named links (Instagram, Web, etc.). You can upload a logo image too — it&apos;s stored
-          alongside your data, no external hosting needed.
+          address, contact information (phone / email / website), VAT or business number, and your
+          social / web links. Links are picked from a dropdown of the common networks
+          (Instagram, Facebook, X, TikTok, YouTube, LinkedIn, WhatsApp, Email, Phone, Website) — selecting
+          one swaps in a small SVG icon on every label that uses the <em>socials</em> field, so a brand
+          row reads as a tidy icon-and-handle pair rather than &quot;Instagram @yourhandle&quot;. Pick
+          &quot;Custom…&quot; for any network not in the list (Pinterest, Threads, Mastodon, etc.) and
+          enter the label freely. You can upload a logo image too — it&apos;s stored alongside your
+          data, no external hosting needed.
         </p>
         <p>
           The label editor&apos;s <em>logo</em>, <em>company</em>, <em>contact</em>, <em>socials</em>, and
@@ -804,16 +809,31 @@ const SECTIONS: Section[] = [
         </p>
         <Callout kind="tip" title="Optional but worth it">
           You can skip Brand and still design templates — placeholder dashes will show where your
-          brand info would go. But for printed customer-facing labels, the address and contact line
+          brand info would go. But for printed customer-facing labels, the address and contact information
           are usually legally required, so fill them in before your first real print run.
         </Callout>
 
         <h3>Step 2 — design a template at <code>/labels</code></h3>
         <p>
           From the side nav: <strong>Pantry → Label templates</strong>, or directly at <code>/labels</code>.
-          Tap <strong>+ New template</strong>, give it a name and a size in millimetres (presets cover
-          common label sizes from 40×40 mm up to 89×62 mm; free-form W/H is always available).
+          Tap <strong>+ New template</strong>, then fill in four things before opening the editor:
         </p>
+        <ul>
+          <li><strong>Name</strong> — your reference for the template.</li>
+          <li><strong>Size</strong> — pick a preset (40×40 mm up to 89×62 mm) or enter free-form W/H in millimetres.</li>
+          <li>
+            <strong>Type</strong> — what kind of label this template prints. <em>Production batch</em>
+            (one label per product piece, after a moulding batch), <em>Filling batch</em> (one label per
+            filling jar, after a filling-only batch), or <em>Box / package</em> (one label per assembled
+            box, from a Shop sale). The type is pinned at creation: it decides where the template appears at
+            print time and what the editor preview pulls in.
+          </li>
+          <li>
+            <strong>Output format</strong> — <em>PNG</em> (default — one high-DPI image per label, works
+            with thermal printers like Niimbot or Brother) or <em>PDF</em> (one multi-page document for the
+            whole print run, best for sheet-print services and archival). You can switch later in the editor.
+          </li>
+        </ul>
         <p>
           The editor has three columns: a draggable field rail on the left, a millimetre-accurate
           canvas in the centre, and an inspector on the right.
@@ -858,11 +878,16 @@ const SECTIONS: Section[] = [
             to give the wrapped lines room.
           </li>
         </ul>
-        <Callout kind="note" title="Language-neutral by design">
-          The renderers never add English prose around your data — no &quot;Ingredients:&quot; or
-          &quot;BBE:&quot; prefixes that would be wrong in another language. If you want labels in
-          Dutch, French, Spanish, etc., drop free-text fields next to the data fields and type the
-          wording your customer reads. Dates use ISO <code>YYYY-MM-DD</code> by default; the date
+        <Callout kind="note" title="Field labels are English (for now)">
+          Auto-bound fields render with English prefixes where regulatorily expected:
+          <code>Contains:</code> / <code>May contain:</code> on allergens, the market-specific
+          panel title above the nutrition table, and <code>Best before:</code> /
+          <code>Production date:</code> / <code>Batch:</code> on the corresponding fields. If you
+          want a label in Dutch / French / Spanish / etc., set <code>showLabel: false</code> on the
+          field via the inspector and drop a free-text field next to it with your localised
+          wording. German and Dutch translations are the planned next pair — once they land,
+          flipping <em>Target Market</em> will swap the prefixes automatically and you can delete
+          your free-text workarounds. Dates use ISO <code>YYYY-MM-DD</code> by default; the date
           format inspector takes any pattern using <code>YYYY / YY / MM / M / DD / D</code> tokens.
         </Callout>
         <Callout kind="tip" title="The preview source dropdown">
@@ -881,28 +906,39 @@ const SECTIONS: Section[] = [
 
         <h3>Step 3 — set a default template (optional)</h3>
         <p>
-          Open <strong>Settings → Printing</strong> and pick a default in the
-          <em> Production batch labels</em> dropdown. From then on, every &quot;Save labels&quot; click
-          opens the picker pre-selected to that template — you can still change it per-batch before
-          confirming, but power users with one go-to label save the extra tap.
+          Open <strong>Settings → Printing</strong>. You get one default slot per template type:
+          <em> Production batches</em>, <em>Filling batches</em>, <em>Boxes (shop)</em>. Pick a default
+          for each entry point you use; the picker pre-selects that template the next time you tap
+          &quot;Save labels&quot; from the matching surface. You can still change it per-print before
+          confirming, but power users with one go-to label per kind save the extra tap.
         </p>
 
         <h3>Step 4 — print labels</h3>
         <p>
-          The same template can be used in three places. Each click runs the same pipeline:
-          render the template → rasterise to PNG → hand the file to the OS share sheet (iOS / iPadOS /
-          Android) or download it directly (Mac / Windows / Linux desktops).
+          A template can be printed from four places. Each click runs the same pipeline: render the
+          template against the resolved context(s) → rasterise to PNG (or generate a multi-page PDF,
+          depending on the template&apos;s format) → hand the file(s) to the OS share sheet on
+          iOS / iPadOS / Android, or trigger direct downloads on Mac / Windows / Linux desktops.
         </p>
         <StepList items={[
-          { title: "From a completed production batch", body: "When the batch is marked Done, two buttons appear (depending on what's in the batch): Save product labels and Save filling labels. The first prints one PNG per PlanProduct with that product's ingredients, allergens, and weight; the second prints one per filling jar with the filling's recipe and total batch grams. Pick a template in the picker, confirm, and your downloads folder (or share sheet) fills up with stickers." },
-          { title: "From the shop's Ready to sell tab", body: "Each prepared box on the Ready tab has a 🖨 Label button next to + Note / Sell. Clicking it prints one PNG for that specific box, with the ingredient list and allergens computed from the actual per-cavity product distribution — so a box with 3 yuzu + 2 caramel + 4 praline gets accurate proportions, not a one-of-each guess. Print N copies through your label printer for N identical boxes." },
-          { title: "Across any label printer", body: "The output is a high-DPI PNG (300 DPI by default — good for thermal printers and photo export alike). Save to Photos, AirDrop to a workstation, open in your label printer's app — whatever workflow you already have. Nothing in the app is tied to a specific printer brand." },
+          { title: "From a completed production batch", body: "When the batch is marked Done, two buttons appear (depending on what's in the batch): Save product labels and Save filling labels. The first produces one label per PlanProduct with that product's ingredients, allergens, and weight; the second produces one per filling jar with the filling's recipe and total batch grams. The picker only shows templates with the matching type. Pick one, confirm, and your downloads folder (or share sheet) fills up with stickers." },
+          { title: "From the shop's Ready to sell tab", body: "Each prepared box on the Ready tab has a 🖨 Label button next to + Note / Sell. Clicking it produces one label for that specific box, with the ingredient list, allergens, total weight, and best-before computed from the actual per-cavity product distribution and the box's packing date — so a box with 3 yuzu + 2 caramel + 4 praline gets accurate proportions, not a one-of-each guess. Print N copies through your label printer for N identical boxes." },
+          { title: "From the Stock page (per-row relabel)", body: "Every product-stock row and filling-stock row gets a 🖨 Label button alongside Freeze / Adjust / Gone. Use it when you need to reprint a label for one jar or one batch row — no need to re-trigger the whole batch's print run. Filling-stock rows added manually (without a source plan) hide the button." },
+          { title: "Across any label printer", body: "PNG output is a high-DPI image (300 DPI by default — sharp on thermal printers and photo-export alike). PDF output is vector throughout, so it scales without pixelation — ideal for sheet-print services or archival. Save to Photos, AirDrop to a workstation, open in your label printer's app — whatever workflow you already have. Nothing in the app is tied to a specific printer brand." },
         ]} />
+        <Callout kind="tip" title="Sensible filenames">
+          Each downloaded file is named <code>{`{ContextName}_{Identifier}.{ext}`}</code> — e.g.
+          <code>Yuzu Praline_B2026-05.png</code>. The identifier picks the batch number first, then
+          the production / packing date in ISO format (so files sort naturally in Finder / Explorer).
+          Multi-context PDFs that share a batch number are named after the batch
+          (<code>B2026-05_2026-05-14.pdf</code>). Collisions within one print run get
+          <code> (2)</code> / <code> (3)</code> suffixes — never overwritten.
+        </Callout>
         <Callout kind="tip" title="iOS share sheet vs. desktop downloads">
           On iPad and iPhone, clicking Save Labels opens the native share sheet so you can drop
           straight into Photos or AirDrop. On Mac, Windows, and Linux desktops it triggers direct
           downloads instead — the macOS share sheet doesn&apos;t offer useful save-to-disk
-          actions for PNGs, so the file lands in your Downloads folder where you actually want it.
+          actions for image / PDF files, so the file lands in your Downloads folder where you actually want it.
         </Callout>
 
         <h3>What ends up on the label, exactly</h3>
@@ -917,24 +953,41 @@ const SECTIONS: Section[] = [
           </li>
           <li>
             <strong>Allergens</strong> is the union of every allergen tagged on every ingredient
-            that ended up in the list above. The mandatory regulatory bold weight is on by default.
+            that ended up in the list above. The declaration line is prefixed with
+            <code>Contains:</code> and rendered bold (mandatory regulatory weight); the facility
+            advisory below is prefixed with <code>May contain:</code> and rendered italic + muted.
           </li>
           <li>
-            <strong>Nutrition</strong> renders the per-100g table for your <em>Target Market</em>
-            (Settings → Target Market) — EU/UK shows kJ + kcal + salt, US shows Calories + sodium
-            + vitamins, AU shows kJ + sodium. Values come from your ingredient data, weighted by
-            mass.
+            <strong>Nutrition</strong> renders as a boxed per-100g table for your <em>Target
+            Market</em> (Settings → Target Market) — outer border, regulatory panel title at top
+            (<code>Nutrition Declaration</code> for EU/UK, <code>Nutrition Facts</code> for US,
+            <code>Nutrition Information Panel</code> for AU, bilingual for Canada), section bars
+            between major nutrient groups, and indented sub-nutrients. EU/AU collapse the two
+            energy rows (kJ + kcal) into one combined value cell per label convention. Values come
+            from your ingredient data, weighted by mass.
           </li>
           <li>
-            <strong>Best-before</strong> is computed from the batch&apos;s completion date plus the
-            product&apos;s (or filling&apos;s) shelf-life weeks. No shelf life set → em-dash. The
+            <strong>Best before / Production date / Batch</strong> render with their respective
+            English prefixes (<code>Best before: yyyy-mm-dd</code>, <code>Production date:
+            yyyy-mm-dd</code>, <code>Batch: B-…</code>). Each can be suppressed per-field via
+            <code>showLabel: false</code> on the inspector if you&apos;d rather place a localised
+            free-text field next to a bare value.
+          </li>
+          <li>
+            <strong>Best-before</strong> is computed from a date plus a shelf-life:
+            production-batch and filling-batch use <em>plan completion date + product/filling
+            shelf-life weeks</em>; box labels use <em>sale packing date + earliest shelf-life
+            across the actual products in the box</em>. Missing date or shelf life → em-dash. The
             date format follows the pattern you picked in the inspector.
           </li>
           <li>
-            <strong>Net weight</strong> for a production batch label is <em>per-cavity weight × pieces per label</em>
-            (set <em>Pieces per label</em> in the template metadata for box labels — e.g. 9 for a
-            9-piece box). For filling jars, it&apos;s the total batch grams. For shop boxes, it&apos;s
-            the actual sum across all pieces in the cavity layout.
+            <strong>Net weight</strong> always prints the whole label&apos;s weight. For
+            production-batch labels, it&apos;s the per-piece weight multiplied by <em>Pieces / label</em>
+            (a number you set on the template — defaults to 1; bump to 9 if one label represents a
+            9-piece box of the same product). For filling jars, it&apos;s the total batch grams. For
+            shop boxes, it&apos;s the actual sum across every piece in the cavity layout. The
+            <em> Pieces / label</em> control only appears on production-batch templates — for the
+            other two types the resolver already accounts for the whole unit.
           </li>
         </ul>
 
@@ -946,7 +999,7 @@ const SECTIONS: Section[] = [
           export them once and import them onto a new machine in seconds.
         </p>
 
-        <Shot label="Label editor — field rail, canvas, inspector" note="Capture /labels/[id] with a populated 50×40mm template selected: one product/batch field on the canvas, the inspector showing bold/italic toggles + font picker, the preview source dropdown set to a recent batch so live data renders." />
+        <Shot label="Box of 9 — full label preview from the editor (demo data)" src="/docs/screenshots/label-editor-box.png" />
       </>
     ),
   },

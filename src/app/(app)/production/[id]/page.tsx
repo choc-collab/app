@@ -1941,4 +1941,3 @@ function formatGrams(g: number): string {
   const rounded = Math.round(g * 10) / 10;
   return rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 === 0 ? 0 : 2)} kg` : `${rounded} g`;
 }
-

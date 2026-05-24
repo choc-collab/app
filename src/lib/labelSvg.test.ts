@@ -139,9 +139,9 @@ describe("renderTemplateSvg — text-only renderers", () => {
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toContain(">B-1042</text>");
-    expect(svg).toContain(">11/05/2026</text>");
-    expect(svg).toContain(">2026-12-15</text>");
+    expect(svg).toContain(">Batch: B-1042</text>");
+    expect(svg).toContain(">Production date: 11/05/2026</text>");
+    expect(svg).toContain(">Best before: 2026-12-15</text>");
     expect(svg).toContain(">Madagascar 70%</text>");
   });
 
@@ -171,15 +171,27 @@ describe("renderTemplateSvg — text-only renderers", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderTemplateSvg — allergens", () => {
-  it("renders allergens bold on the first line, may-contain italic+muted on the second", () => {
+  it("prefixes the declaration with 'Contains:' bold and 'May contain:' italic+muted", () => {
     const svg = renderTemplateSvg(
       tpl([{ id: "f", type: "aller", x: 0, y: 0, w: 50, h: 8 }]),
       CTX,
       FULL_BRAND,
       baseOpts,
     );
+    expect(svg).toMatch(/font-weight="700"[^>]*>Contains: Milk, Soybeans</);
+    expect(svg).toMatch(/font-style="italic"[^>]*fill="#666666"[^>]*>May contain: Tree nuts<|fill="#666666"[^>]*font-style="italic"[^>]*>May contain: Tree nuts</);
+  });
+
+  it("drops the prefixes when showLabel is explicitly false", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "aller", x: 0, y: 0, w: 50, h: 8, props: { showLabel: false } }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    expect(svg).not.toContain("Contains:");
+    expect(svg).not.toContain("May contain:");
     expect(svg).toMatch(/font-weight="700"[^>]*>Milk, Soybeans</);
-    expect(svg).toMatch(/font-style="italic"[^>]*fill="#666666"[^>]*>Tree nuts<|fill="#666666"[^>]*font-style="italic"[^>]*>Tree nuts</);
   });
 
   it("wraps the allergen declaration when the box is narrower than the rendered text", () => {
@@ -241,6 +253,28 @@ describe("renderTemplateSvg — ingredients", () => {
     expect(svg).not.toContain(`<tspan font-weight="700">milk chocolate</tspan>`);
   });
 
+  it("keeps the comma with the preceding word when wrapping mid-list", () => {
+    // Field width forces a wrap mid-list. Without the comma-glue fix, the
+    // second line would begin with ", " (the comma-space separator pushed
+    // to the next line instead of staying with the previous ingredient).
+    const ctx: LabelContext = {
+      ...CTX,
+      ingredients: [
+        { name: "Caster Sugar",     allergens: [], amountG: 5 },
+        { name: "Felchlin Sao Palme",allergens: [], amountG: 5 },
+        { name: "Cream",            allergens: ["milk"], amountG: 5 },
+      ],
+    };
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "ingr", x: 0, y: 0, w: 28, h: 14, props: { boldAllergens: false } }]),
+      ctx,
+      FULL_BRAND,
+      baseOpts,
+    );
+    // No <text> node should begin with ", " — commas always trail the word.
+    expect(svg).not.toMatch(/<text[^>]*>, /);
+  });
+
   it("falls back to em-dash when there are no ingredients", () => {
     const ctx = { ...CTX, ingredients: [] };
     const svg = renderTemplateSvg(
@@ -258,45 +292,69 @@ describe("renderTemplateSvg — ingredients", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderTemplateSvg — nutrition table", () => {
-  it("renders one <text> row per nutrient, EU set by default", () => {
+  it("renders the boxed EU table with market title, per-100g header, and combined energy row", () => {
     const svg = renderTemplateSvg(
-      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 14 }]),
+      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 36 }]),
       CTX,
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toContain(">Energy 2100kJ</text>");
-    expect(svg).toContain(">Energy 504kcal</text>");
-    expect(svg).toContain(">Fat 32g</text>");
-    expect(svg).toContain(">of which saturates 19g</text>");
-    expect(svg).toContain(">Salt 0.1g</text>");
+    // Outer box rule + the regulatory EU/UK panel title
+    expect(svg).toMatch(/<rect [^/]*stroke="#111111"/);
+    expect(svg).toMatch(/font-weight="700"[^>]*>Nutrition Declaration</);
+    // Right-aligned column header
+    expect(svg).toMatch(/text-anchor="end"[^>]*>per 100g</);
+    // EU "Energy" row collapses kJ + kcal into one combined value cell
+    expect(svg).toMatch(/>Energy<\/text>/);
+    expect(svg).toMatch(/text-anchor="end"[^>]*>2100 kJ \/ 504 kcal</);
+    // Sub-nutrient rendered with its EU label
+    expect(svg).toContain(">of which saturates</text>");
+    // Top-level nutrient + value cell
+    expect(svg).toContain(">Salt</text>");
+    expect(svg).toMatch(/text-anchor="end"[^>]*>0\.1 g</);
+    // At least one section separator between blocks
+    expect(svg.match(/<line /g)?.length ?? 0).toBeGreaterThan(1);
   });
 
   it("swaps to FDA-style output when marketRegion is US", () => {
     const svg = renderTemplateSvg(
-      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 14 }]),
+      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 36 }]),
       CTX,
       FULL_BRAND,
       { measure: heuristicMeasurer, marketRegion: "US" },
     );
-    // FDA panel uses "Calories" (no kJ) and surfaces sodium/cholesterol/vitamins
-    // instead of EU's "Salt" line.
-    expect(svg).toContain("Calories");
-    expect(svg).toContain("Sodium");
-    expect(svg).not.toContain(">Salt ");
+    // US panel title + FDA-only nutrients
+    expect(svg).toMatch(/font-weight="700"[^>]*>Nutrition Facts</);
+    expect(svg).toContain(">Calories</text>");
+    expect(svg).toContain(">Sodium</text>");
+    // EU-only "Salt" row absent
+    expect(svg).not.toContain(">Salt</text>");
   });
 
   it("renders em-dash for missing nutrient values", () => {
     const ctx = { ...CTX, nutritionPer100g: { energyKj: 2100 } };
     const svg = renderTemplateSvg(
-      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 14 }]),
+      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 36 }]),
       ctx,
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toContain(">Energy 2100kJ</text>");
-    expect(svg).toContain(">Fat —</text>");
-    expect(svg).toContain(">Salt —</text>");
+    // kJ present, kcal missing → combined energy row shows mixed value
+    expect(svg).toMatch(/text-anchor="end"[^>]*>2100 kJ \/ —</);
+    // Other nutrients without data fall back to em-dash in the value cell
+    expect(svg).toMatch(/text-anchor="end"[^>]*>—</);
+  });
+
+  it("hides the title when showLabel is explicitly false", () => {
+    const svg = renderTemplateSvg(
+      tpl([{ id: "f", type: "nutri", x: 0, y: 0, w: 32, h: 36, props: { showLabel: false } }]),
+      CTX,
+      FULL_BRAND,
+      baseOpts,
+    );
+    expect(svg).not.toContain(">Nutrition Declaration<");
+    // Header + rows still render
+    expect(svg).toMatch(/text-anchor="end"[^>]*>per 100g</);
   });
 });
 
@@ -561,7 +619,9 @@ describe("renderTemplateSvg — bold / italic toggles", () => {
       FULL_BRAND,
       baseOpts,
     );
-    expect(svg).toMatch(/font-weight="700"[^>]*>Milk, Soybeans</);
+    // Narrow field forces the line to wrap; the Contains: fragment should still
+    // land inside a bold <text> node.
+    expect(svg).toMatch(/font-weight="700"[^>]*>Contains:/);
   });
 
   it("ingr renders allergen tspans bold while the surrounding text honours props.bold", () => {

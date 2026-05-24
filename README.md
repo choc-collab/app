@@ -88,6 +88,16 @@ Choc-collab keeps everything a chocolatier needs in one place: products built fr
 - **Pricing & Margins** — compare profitability across collections and box configurations; track margin snapshots over time with trigger labels (price change, coating swap, etc.)
 - **Production statistics** — KPIs (pieces made, batches, products produced), monthly/weekly volume charts colour-coded by product, and a product leaderboard with trend indicators
 
+### Labels — design and print
+
+- **Drag-and-drop label editor** at `/labels` — 18 field types grouped as Product/batch (auto-bound: name, weight, ingredients, allergens, nutrition, best-before, batch number, production date, origin), Brand/business (logo, company, contact, links, QR code), and Custom (free text, dividers, images). Inspector controls for size, bold/italic, a curated cross-platform font picker, pattern-based date formats, and per-field allergen emphasis. Multi-select with shift-click + a floating alignment / distribute toolbar
+- **Templates pinned to one source kind** — Production batch (per product piece), Filling batch (per filling jar), or Box (per shop sale). Kind is set at creation and decides where the template appears at print time
+- **PNG or PDF output** — choose per template. PNG for thermal printers (Niimbot, Brother), PDF for sheet-print services or archival. Multi-page PDFs (one per label) for whole-batch runs
+- **Four print entry points** — completed production batches (one click → one label per product or filling), shop Ready-to-sell tab (per-box labels with real cavity composition + packing-date-based best-before), and per-row Save-label on every Stock page row for one-off relabelling. Picker filters templates to the matching kind, pre-selects your per-kind default from Settings → Printing
+- **Brand profile in Settings** — business name, address, contact, VAT, logo, and curated social links (Instagram / Facebook / X / TikTok / YouTube / LinkedIn / WhatsApp / Email / Phone / Website) rendered as SVG icons on labels. Fill it in once, every template auto-populates
+- **EU FIC-style behaviour, market-aware** — ingredient lists sorted by mass per piece, allergen tokens emphasised bold, allergen declaration line mandatorily bold. Nutrition table swaps content for your target market (kJ + kcal + salt for EU/UK, Calories + sodium + vitamins for US, kJ + sodium for AU). Language-neutral renderers (no English prose around your data) so the same template prints correctly in any language
+- **Editor polish** — undo/redo (⌘Z / ⌘⇧Z), copy/paste/duplicate (⌘C / ⌘V / ⌘D), arrow-key nudge (1 mm; Shift = 5 mm), Delete to remove. Image uploads auto-downscale to 1500 px on their longest edge so phone photos don't bloat templates
+
 ### Cross-cutting
 
 - **Market region support** — configure your target market (EU, UK, US, AU, or CA); drives allergen checklists, nutrition panel format, and label compliance rules
@@ -180,7 +190,7 @@ src/
     (public)/               — public, unauthenticated
       layout.tsx            — simple header + footer
       page.tsx              — landing page at /  (welcome + two tiles)
-      getting-started/      — end-user guide (14-section walkthrough, linear + hub variants)
+      getting-started/      — end-user guide (20-section walkthrough including a label-design walkthrough, linear + hub variants)
     (app)/                  — auth-gated product
       layout.tsx            — AuthGate + SideNav + SectionAccent + demo-mode overlay + iOS install banner
       app/                  — /app home: greeting + section cards (Workshop / Pantry / Lab / Observatory / Shop)
@@ -192,7 +202,9 @@ src/
       collections/          — collections list + detail pages
       shopping/             — shopping list (low-stock + free-text items)
       production/           — production planning (list, new wizard, detail, summary)
-      stock/                — in-stock batch tracker (sell-before dates, mark as gone)
+      stock/                — in-stock batch tracker (sell-before dates, mark as gone, per-row Save-label)
+      labels/               — label-template gallery + new-template form + drag-and-drop editor
+      shop/                 — sell prepared boxes, log give-aways, print box labels
       calculator/           — Product Lab (ganache formulation + test batches + promotion)
       pantry/               — The Pantry section home (Products, Product Categories, Fillings, Ingredients, Moulds, Packaging, Collections, Decoration)
         decoration/         — decoration material list + detail pages
@@ -232,6 +244,11 @@ src/
     backup.ts               — export / import all data
     seed.ts                 — CSV → IndexedDB seed logic
     csv.ts                  — CSV parser
+    labelFields.ts          — label field-type registry and pure helpers (date format, weight, font resolution)
+    labelSvg.ts             — pure SVG renderers for every label field type
+    labelContext.ts         — pure context builders + batched Dexie loaders for the three source kinds
+    labelPrint.ts           — render → PNG / multi-page PDF → share-sheet or download pipeline
+    socials.ts              — curated catalog of social networks (label + canonical id) shared by Settings and the renderer
   types/
     index.ts                — all TypeScript types and constants
 e2e/

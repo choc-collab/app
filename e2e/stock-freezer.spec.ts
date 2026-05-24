@@ -22,7 +22,7 @@ test.describe("Stock — Freezer", () => {
     await page.goto("/stock");
     await page.getByRole("button", { name: "Fillings" }).click();
     await page.getByRole("button", { name: "Add filling stock" }).click();
-    await page.getByRole("combobox").selectOption({ label: "Freezer Test Praline" });
+    await page.getByLabel("Select filling").selectOption({ label: "Freezer Test Praline" });
     await page.getByPlaceholder("Amount in grams").fill("500");
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.locator("text=500g").first()).toBeVisible();
@@ -41,29 +41,28 @@ test.describe("Stock — Freezer", () => {
     await expect(page.locator("text=200g").first()).toBeVisible();
     await expect(page.locator("text=300g").first()).toBeVisible();
 
-    // Filter chip: Frozen only — should hide the 300g available row.
-    await page.getByLabel("Filters").click();
-    await page.getByRole("button", { name: "Frozen only" }).click();
+    // Segmented tab: Frozen — should hide the 300g available row.
+    await page.getByRole("tab", { name: /Frozen/ }).click();
     await expect(page.locator("text=300g")).toHaveCount(0);
     await expect(page.locator("text=200g").first()).toBeVisible();
 
-    // Available filter shows only the non-frozen row.
-    await page.getByRole("button", { name: "Available", exact: true }).click();
+    // In stock tab shows only the non-frozen row.
+    await page.getByRole("tab", { name: /In stock/ }).click();
     await expect(page.locator("text=300g").first()).toBeVisible();
     await expect(page.locator("text=In freezer")).toHaveCount(0);
 
     // Back to All and defrost.
-    await page.getByRole("button", { name: "All", exact: true }).click();
+    await page.getByRole("tab", { name: /All/ }).click();
     await page.getByRole("button", { name: "Defrost" }).click();
 
     // Confirmation modal
     await expect(page.getByText(/Defrost Freezer Test Praline/i)).toBeVisible();
     await page.getByRole("button", { name: "Yes, defrost" }).click();
 
-    // After defrost, no "In freezer" badge remains. Filter panel is still
-    // open from earlier — toggle to "Frozen only" and confirm no results.
+    // After defrost, no "In freezer" badge remains. Switching to the
+    // Frozen tab should show the empty state.
     await expect(page.locator("text=In freezer")).toHaveCount(0);
-    await page.getByRole("button", { name: "Frozen only" }).click();
+    await page.getByRole("tab", { name: /Frozen/ }).click();
     await expect(page.getByText("No fillings match your search")).toBeVisible();
   });
 });

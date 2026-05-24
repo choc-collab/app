@@ -1330,7 +1330,7 @@ function BrandTab({
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-primary">Business details</h2>
         <p className="text-xs text-muted-foreground">
-          Business name and address are required on EU FIC retail labels. The contact line is optional.
+          Business name and address are required on EU FIC retail labels. The contact information is optional.
         </p>
         <div className="rounded-lg border border-border bg-card p-4 space-y-4">
           <div className="space-y-1.5">
@@ -1354,12 +1354,16 @@ function BrandTab({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium">Contact line</label>
+            <label className="block text-sm font-medium">Contact information</label>
             <input
               type="text"
               value={draft.contact ?? ""}
               onChange={(e) => setDraft(d => ({ ...d, contact: e.target.value }))}
-              placeholder="e.g. atelierchoc.nl · hi@atelierchoc.nl"
+              // Keep this placeholder free of literal name@host.tld patterns:
+              // Cloudflare's Email Obfuscation rewrites them into a
+              // <span data-cfemail> + injected decoder script, which breaks
+              // React hydration of the rendered HTML.
+              placeholder={"e.g. atelierchoc.nl · hi [at] atelierchoc.nl"}
               className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
             />
           </div>

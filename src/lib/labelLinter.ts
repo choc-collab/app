@@ -66,7 +66,7 @@ const BRAND_RULES: BrandCompletenessRule[] = [
   {
     code: "brand.contact",
     triggerTypes: ["contact"],
-    message: "Contact field placed but no contact line is set — open Settings → Brand.",
+    message: "Contact field placed but no contact information is set — open Settings → Brand.",
     passes: (b) => Boolean((b.contact ?? "").trim()),
   },
   {

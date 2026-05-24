@@ -29,7 +29,7 @@ import type {
 } from "@/types";
 import { allergenLabel } from "@/types";
 import { findSocialNetwork } from "@/lib/socials";
-import { getNutrientsByMarket } from "@/lib/nutrition";
+import { getNutrientsByMarket, getNutritionPanelTitle } from "@/lib/nutrition";
 import {
   DEFAULT_FONT_FAMILY,
   FIELD_DEFINITIONS,
@@ -484,13 +484,16 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
     const mayContain = context?.mayContain ?? [];
     // `aller` is mandatorily bold for regulatory reasons — natural default 700.
     const weight = effectiveWeight(p, 700);
+    // The "Contains:" prefix is FALCPA's mandatory phrasing in the US and the
+    // de-facto standard in EU/UK label practice. Inline with the allergen list
+    // so it wraps naturally; opt-out via `showLabel: false` for users who
+    // prefer the bare layout.
+    const showPrefix = p.showLabel !== false;
     const parts: string[] = [];
     let yCursor = 0;
-    // Allergen declaration line — wrap by the box width so long allergen
-    // lists break across lines instead of overflowing. Each line emits its
-    // own `<text>` so the bold weight applies uniformly.
     if (allergens.length > 0) {
-      const declaration = allergens.map(allergenLabel).join(", ");
+      const body = allergens.map(allergenLabel).join(", ");
+      const declaration = showPrefix ? `Contains: ${body}` : body;
       const declLines = wrapLines(declaration, field.w, fontMm, weight, measure, fontFamily);
       for (const line of declLines) {
         parts.push(textEl(line, 0, yCursor, { fontMm, fontFamily, weight, italic: !!p.italic }));
@@ -503,7 +506,8 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
     // May-contain line stays italic + muted by convention (advisory tone);
     // also wraps by width so it can span multiple lines below the declaration.
     if (mayContain.length > 0) {
-      const mc = mayContain.map(allergenLabel).join(", ");
+      const mcBody = mayContain.map(allergenLabel).join(", ");
+      const mc = showPrefix ? `May contain: ${mcBody}` : mcBody;
       const mcLines = wrapLines(mc, field.w, fontMm, 400, measure, fontFamily);
       for (const line of mcLines) {
         parts.push(textEl(line, 0, yCursor, {
@@ -522,30 +526,171 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("nutri", p.size));
     const fontFamily = resolveFontFamily(p.font);
-    const lineHeight = fontMm * 1.32;
+    const market: MarketRegion = marketRegion ?? "EU";
     const data = context?.nutritionPer100g ?? {};
-    const nutrients = getNutrientsByMarket(marketRegion ?? "EU");
-    const weight = effectiveWeight(p, 400);
-    return nutrients
-      .map((nut, i) => {
-        const val = data[nut.key];
-        const indentMm = nut.indent * fontMm * 0.5;
-        const valStr = val == null ? PLACEHOLDER : `${val}${nut.unit}`;
-        return textEl(`${nut.label} ${valStr}`, indentMm, i * lineHeight, {
-          fontMm,
+    const nutrients = getNutrientsByMarket(market);
+    const baseWeight = effectiveWeight(p, 400);
+    // Title shown by default; opt-out via `showLabel: false` for users who
+    // want a bare table.
+    const showTitle = p.showLabel !== false;
+
+    // ── Table geometry ──────────────────────────────────────────────────
+    const titleFontMm = fontMm * 1.15;
+    const headerFontMm = fontMm * 0.85;
+    const rowH = fontMm * 1.4;
+    const titleH = titleFontMm * 1.6;
+    const hdrH = headerFontMm * 1.6;
+    const padX = fontMm * 0.45;
+    const indentStep = fontMm * 1.05;
+    // Slight vertical nudge so hanging-baseline text optically centres in rows.
+    const rowTextNudge = fontMm * 0.05;
+
+    // Rule weights in mm — US/CA get noticeably heavier rules to evoke the
+    // FDA-style panel without claiming full pixel-perfect compliance.
+    const heavyMarket = market === "US" || market === "CA";
+    const outerRule = heavyMarket ? 0.5 : 0.4;
+    const titleRule = heavyMarket ? 0.5 : 0.4;
+    const sectionRule = heavyMarket ? 0.4 : 0.3;
+    const thinRule = 0.15;
+
+    const title = getNutritionPanelTitle(market);
+
+    // ── Pre-process nutrients into row entries ─────────────────────────
+    // Collapses the EU/AU "Energy" pair (kJ + kcal) into a single combined
+    // row, and inserts a section separator wherever consecutive top-level
+    // nutrients change `section`.
+    type Entry =
+      | { kind: "row"; label: string; indent: number; valueText: string }
+      | { kind: "sep" };
+    const entries: Entry[] = [];
+
+    const formatVal = (v: number | undefined, unit: string): string => {
+      if (v == null) return PLACEHOLDER;
+      if (unit === "kJ" || unit === "kcal") return `${Math.round(v)} ${unit}`;
+      return `${v} ${unit}`;
+    };
+
+    let i = 0;
+    let prevSection: string | undefined;
+    while (i < nutrients.length) {
+      const nut = nutrients[i];
+      const next = nutrients[i + 1];
+      const isCombinedEnergy =
+        nut.key === "energyKj" &&
+        next?.key === "energyKcal" &&
+        nut.label === next.label &&
+        nut.indent === next.indent;
+
+      let valueText: string;
+      if (isCombinedEnergy) {
+        const kj = data.energyKj;
+        const kcal = data.energyKcal;
+        const kjStr = kj == null ? PLACEHOLDER : `${Math.round(kj)} kJ`;
+        const kcalStr = kcal == null ? PLACEHOLDER : `${Math.round(kcal)} kcal`;
+        valueText = `${kjStr} / ${kcalStr}`;
+      } else {
+        valueText = formatVal(data[nut.key], nut.unit);
+      }
+
+      if (prevSection != null && nut.section && nut.section !== prevSection) {
+        entries.push({ kind: "sep" });
+      }
+      entries.push({ kind: "row", label: nut.label, indent: nut.indent, valueText });
+      if (nut.section) prevSection = nut.section;
+
+      i += isCombinedEnergy ? 2 : 1;
+    }
+
+    // ── Emit SVG ────────────────────────────────────────────────────────
+    const parts: string[] = [];
+    const innerW = field.w;
+    const innerH = field.h;
+
+    // Outer box rule
+    parts.push(
+      `<rect x="0" y="0" width="${fmt(innerW)}" height="${fmt(innerH)}" ` +
+      `fill="none" stroke="${COLOR_BORDER}" stroke-width="${fmt(outerRule)}"/>`,
+    );
+
+    let y = 0;
+
+    if (showTitle) {
+      parts.push(
+        textEl(title, padX, y + (titleH - titleFontMm) / 2 + rowTextNudge, {
+          fontMm: titleFontMm,
           fontFamily,
-          weight,
+          weight: Math.max(baseWeight, 700),
           italic: !!p.italic,
           fill: COLOR_TEXT,
-        });
-      })
-      .join("");
+        }),
+      );
+      y += titleH;
+      parts.push(
+        `<line x1="0" y1="${fmt(y)}" x2="${fmt(innerW)}" y2="${fmt(y)}" ` +
+        `stroke="${COLOR_BORDER}" stroke-width="${fmt(titleRule)}"/>`,
+      );
+    }
+
+    // Column header — "per 100g" right-aligned
+    parts.push(
+      textEl("per 100g", innerW - padX, y + (hdrH - headerFontMm) / 2 + rowTextNudge, {
+        fontMm: headerFontMm,
+        fontFamily,
+        weight: baseWeight,
+        italic: true,
+        fill: COLOR_TEXT_DIM,
+        anchor: "end",
+      }),
+    );
+    y += hdrH;
+    parts.push(
+      `<line x1="0" y1="${fmt(y)}" x2="${fmt(innerW)}" y2="${fmt(y)}" ` +
+      `stroke="${COLOR_BORDER}" stroke-width="${fmt(thinRule)}"/>`,
+    );
+
+    for (const e of entries) {
+      if (e.kind === "sep") {
+        parts.push(
+          `<line x1="0" y1="${fmt(y)}" x2="${fmt(innerW)}" y2="${fmt(y)}" ` +
+          `stroke="${COLOR_BORDER}" stroke-width="${fmt(sectionRule)}"/>`,
+        );
+        continue;
+      }
+      const indentMm = e.indent * indentStep;
+      const textY = y + (rowH - fontMm) / 2 + rowTextNudge;
+      parts.push(
+        textEl(e.label, padX + indentMm, textY, {
+          fontMm,
+          fontFamily,
+          weight: baseWeight,
+          italic: !!p.italic,
+          fill: COLOR_TEXT,
+        }),
+      );
+      parts.push(
+        textEl(e.valueText, innerW - padX, textY, {
+          fontMm,
+          fontFamily,
+          weight: baseWeight,
+          italic: !!p.italic,
+          fill: COLOR_TEXT,
+          anchor: "end",
+        }),
+      );
+      y += rowH;
+    }
+
+    return parts.join("");
   },
 
   bbe: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("bbe", p.size));
-    return textEl(formatLabelDate(context?.bestBefore ?? null, p.dateFormat), 0, 0, {
+    const dateStr = formatLabelDate(context?.bestBefore ?? null, p.dateFormat);
+    // "Best before:" prefix is the standard EU/UK wording; opt-out via
+    // `showLabel: false` for users with very narrow date fields.
+    const text = p.showLabel === false ? dateStr : `Best before: ${dateStr}`;
+    return textEl(text, 0, 0, {
       fontMm,
       fontFamily: resolveFontFamily(p.font),
       weight: effectiveWeight(p, 400),
@@ -556,7 +701,11 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   batch: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("batch", p.size));
-    return textEl(context?.batchNumber || PLACEHOLDER, 0, 0, {
+    const body = context?.batchNumber || PLACEHOLDER;
+    // "Batch:" prefix mirrors `bbe` / `prodate` so dates and batch codes share
+    // a consistent labelling pattern; opt-out via `showLabel: false`.
+    const text = p.showLabel === false ? body : `Batch: ${body}`;
+    return textEl(text, 0, 0, {
       fontMm,
       fontFamily: resolveFontFamily(p.font),
       weight: effectiveWeight(p, 400),
@@ -567,7 +716,9 @@ const RENDERERS: Record<LabelFieldType, SvgFieldRenderer> = {
   prodate: ({ field, context }) => {
     const p = field.props ?? {};
     const fontMm = ptToMm(effectiveFieldSizePt("prodate", p.size));
-    return textEl(formatLabelDate(context?.producedAt ?? null, p.dateFormat), 0, 0, {
+    const dateStr = formatLabelDate(context?.producedAt ?? null, p.dateFormat);
+    const text = p.showLabel === false ? dateStr : `Production date: ${dateStr}`;
+    return textEl(text, 0, 0, {
       fontMm,
       fontFamily: resolveFontFamily(p.font),
       weight: effectiveWeight(p, 400),
@@ -759,14 +910,30 @@ function renderIngredientLinesSvg(
   });
 
   // Pack tokens into lines greedily, measuring each candidate at its own weight.
+  // When a ", " separator doesn't fit, we glue it onto the current line anyway
+  // (tiny overflow, ~1mm) rather than starting the next line with a leading
+  // comma. Without this, a wrap between "Caster Sugar" and ", Felchlin Sao
+  // Palme" would render as ", Felchlin…" on the second line.
   const lines: Tok[][] = [];
   let current: Tok[] = [];
   let currentWidth = 0;
   for (const tok of toks) {
+    const isSeparator = tok.text === ", ";
+    if (current.length === 0 && isSeparator) {
+      // Defensive: never let a line start with a bare separator.
+      continue;
+    }
     const w = measure(tok.text, fontMm, tok.allergen ? 700 : baseWeight, fontFamily);
     if (currentWidth + w <= maxWidthMm || current.length === 0) {
       current.push(tok);
       currentWidth += w;
+    } else if (isSeparator) {
+      // Attach the separator to the current line, then close it. The next
+      // ingredient will land at the start of a fresh line.
+      current.push(tok);
+      lines.push(current);
+      current = [];
+      currentWidth = 0;
     } else {
       lines.push(current);
       current = [tok];
