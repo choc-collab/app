@@ -31,7 +31,7 @@ const SECTIONS: SectionDef[] = [
   },
   {
     label: "The Pantry",
-    routes: ["/pantry", "/products", "/fillings", "/ingredients", "/moulds", "/packaging", "/collections", "/pantry/decoration"],
+    routes: ["/pantry", "/products", "/fillings", "/ingredients", "/moulds", "/packaging", "/collections", "/pantry/decoration", "/labels"],
     items: [
       { href: "/products", label: "Products", icon: ProductsIcon },
       { href: "/fillings", label: "Fillings", icon: FillingsIcon },
@@ -40,6 +40,7 @@ const SECTIONS: SectionDef[] = [
       { href: "/packaging", label: "Packaging", icon: PackagingIcon },
       { href: "/collections", label: "Collections", icon: CollectionsIcon },
       { href: "/pantry/decoration", label: "Decoration", icon: DecorationNavIcon },
+      { href: "/labels", label: "Labels", icon: LabelsIcon },
     ],
   },
   {
@@ -472,6 +473,15 @@ function PackagingIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+    </svg>
+  );
+}
+
+function LabelsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6Z" />
     </svg>
   );
 }

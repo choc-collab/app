@@ -2,9 +2,9 @@ import Dexie from "dexie";
 
 // Keep in sync with the highest version declared in db.ts. Dexie multiplies
 // its declared version by 10 for the underlying IndexedDB integer, so the
-// on-disk IDB version for Dexie v6 is 60. Compare in IDB-space so we don't
+// on-disk IDB version for Dexie v15 is 150. Compare in IDB-space so we don't
 // fight rounding when the browser reports versions via databases().
-const CURRENT_DEXIE_VERSION = 6;
+const CURRENT_DEXIE_VERSION = 15;
 const CURRENT_IDB_VERSION = CURRENT_DEXIE_VERSION * 10;
 const DB_NAME = "ChocolatierDB";
 

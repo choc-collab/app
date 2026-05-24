@@ -7,14 +7,19 @@ import {
   updateProductStockCount,
   freezePlanProduct, defrostPlanProduct,
   freezeFillingStock, defrostFillingStock,
+  useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
 } from "@/lib/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote, ArrowUpDown } from "lucide-react";
-import type { PlanProduct, ProductionPlan, Product, Mould, FillingStock } from "@/types";
+import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote, ArrowUpDown, Printer } from "lucide-react";
+import { labelTemplateKind } from "@/types";
+import type { PlanProduct, ProductionPlan, Product, Mould, FillingStock, LabelTemplate } from "@/types";
 import { reconcileStockCount } from "@/lib/stockCount";
 import { remainingShelfLifeDays, batchSellBy, WEEK_MS } from "@/lib/freezer";
 import { FreezeModal, DefrostConfirmModal } from "@/components/freeze-modal";
 import { SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
+import { loadProductionBatchContextForRow, loadFillingBatchContextForStock } from "@/lib/labelContext";
+import { printLabels } from "@/lib/labelPrint";
+import { PrintTemplatePicker } from "@/components/print-template-picker";
 
 type StockSort = "alpha" | "production" | "amount";
 
@@ -150,7 +155,34 @@ function ProductStockTab() {
   const [sortBy, setSortBy] = useState<StockSort>("production");
   const [freezingPbId, setFreezingPbId] = useState<string | null>(null);
   const [defrostingPbId, setDefrostingPbId] = useState<string | null>(null);
+  // Label-print state. `printTarget` is the row clicked; the picker mounts
+  // only while a target is set so the rest of the page never pays for it.
+  const [printTarget, setPrintTarget] = useState<{ planId: string; planProductId: string; productName: string } | null>(null);
+  const [printError, setPrintError] = useState("");
   const activeFilterCount = (filterSellBy ? 1 : 0) + (filterHasNotes ? 1 : 0);
+
+  const allLabelTemplates = useLabelTemplates();
+  const productLabelTemplates = useMemo(
+    () => allLabelTemplates.filter((t) => labelTemplateKind(t) === "production-batch"),
+    [allLabelTemplates],
+  );
+  const defaultLabelTemplateId = useDefaultLabelTemplateId("production-batch");
+  const brand = useBrand();
+  const marketRegion = useMarketRegion();
+
+  async function handleConfirmPrintLabel(template: LabelTemplate) {
+    if (!printTarget) return;
+    const { planId, planProductId } = printTarget;
+    setPrintTarget(null);
+    setPrintError("");
+    const ctx = await loadProductionBatchContextForRow(planId, planProductId);
+    if (!ctx) {
+      setPrintError("Could not load batch context — the batch may have been deleted.");
+      return;
+    }
+    const result = await printLabels({ template, contexts: [ctx], brand, marketRegion });
+    if (!result.success) setPrintError(result.error);
+  }
 
   const planMap = useMemo(() => new Map(allPlans.map((p) => [p.id!, p])), [allPlans]);
   const productMap = useMemo(() => new Map(products.map((r) => [r.id!, r])), [products]);
@@ -579,6 +611,13 @@ function ProductStockTab() {
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                         <button
+                          onClick={() => setPrintTarget({ planId: plan.id!, planProductId: pb.id!, productName: group.product?.name ?? "product" })}
+                          className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors inline-flex items-center gap-0.5"
+                          title="Save a label for this batch"
+                        >
+                          <Printer className="w-3 h-3" /> Label
+                        </button>
+                        <button
                           onClick={() => setFreezingPbId(pb.id!)}
                           className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:border-sky-500 hover:bg-sky-50 transition-colors inline-flex items-center gap-0.5"
                           title="Move pieces to the freezer"
@@ -701,6 +740,20 @@ function ProductStockTab() {
           />
         );
       })()}
+
+      {printError && (
+        <p className="text-xs text-destructive">{printError}</p>
+      )}
+      {printTarget && (
+        <PrintTemplatePicker
+          title={`Save label for ${printTarget.productName}`}
+          description="One label for this batch."
+          templates={productLabelTemplates}
+          defaultId={defaultLabelTemplateId}
+          onConfirm={handleConfirmPrintLabel}
+          onCancel={() => setPrintTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -725,9 +778,37 @@ function FillingStockTab() {
   const [sortBy, setSortBy] = useState<StockSort>("production");
   const [freezingId, setFreezingId] = useState<string | null>(null);
   const [defrostingId, setDefrostingId] = useState<string | null>(null);
+  // Label-print state — `printTarget` holds enough about the stock row to
+  // resolve a single filling-batch context at confirm time. Only rows tied
+  // to a production plan are eligible (manual stock adds have no source plan).
+  const [printTarget, setPrintTarget] = useState<{ stockId: string; planId: string; fillingId: string; fillingName: string } | null>(null);
+  const [printError, setPrintError] = useState("");
 
   const fillingsMap = useMemo(() => new Map(allFillings.map((l) => [l.id!, l])), [allFillings]);
   const plansMap = useMemo(() => new Map(allPlans.map((p) => [p.id!, p])), [allPlans]);
+
+  const allLabelTemplates = useLabelTemplates();
+  const fillingLabelTemplates = useMemo(
+    () => allLabelTemplates.filter((t) => labelTemplateKind(t) === "filling-batch"),
+    [allLabelTemplates],
+  );
+  const defaultFillingLabelTemplateId = useDefaultLabelTemplateId("filling-batch");
+  const brand = useBrand();
+  const marketRegion = useMarketRegion();
+
+  async function handleConfirmPrintFillingLabel(template: LabelTemplate) {
+    if (!printTarget) return;
+    const target = printTarget;
+    setPrintTarget(null);
+    setPrintError("");
+    const ctx = await loadFillingBatchContextForStock({ planId: target.planId, fillingId: target.fillingId });
+    if (!ctx) {
+      setPrintError("Could not load filling-batch context — the originating plan may have been deleted.");
+      return;
+    }
+    const result = await printLabels({ template, contexts: [ctx], brand, marketRegion });
+    if (!result.success) setPrintError(result.error);
+  }
 
   const activeFilterCount = filterHasNotes ? 1 : 0;
 
@@ -1108,6 +1189,20 @@ function FillingStockTab() {
                         </button>
                       ) : (
                         <>
+                          {entry.planId && (
+                            <button
+                              onClick={() => setPrintTarget({
+                                stockId: entry.id!,
+                                planId: entry.planId!,
+                                fillingId: entry.fillingId,
+                                fillingName: fillingsMap.get(entry.fillingId)?.name ?? "filling",
+                              })}
+                              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-primary hover:text-primary transition-colors inline-flex items-center gap-0.5"
+                              title="Save a label for this filling"
+                            >
+                              <Printer className="w-3 h-3" /> Label
+                            </button>
+                          )}
                           <button
                             onClick={() => setFreezingId(entry.id!)}
                             className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:border-sky-500 hover:bg-sky-50 transition-colors inline-flex items-center gap-0.5"
@@ -1201,6 +1296,20 @@ function FillingStockTab() {
           />
         );
       })()}
+
+      {printError && (
+        <p className="text-xs text-destructive">{printError}</p>
+      )}
+      {printTarget && (
+        <PrintTemplatePicker
+          title={`Save label for ${printTarget.fillingName}`}
+          description="One label for this filling batch."
+          templates={fillingLabelTemplates}
+          defaultId={defaultFillingLabelTemplateId}
+          onConfirm={handleConfirmPrintFillingLabel}
+          onCancel={() => setPrintTarget(null)}
+        />
+      )}
     </div>
   );
 }

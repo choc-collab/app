@@ -427,9 +427,45 @@ export interface UserPreferences {
   defaultFillMode: FillMode;
   facilityMayContain: string[];
   coatings: string[];
+  /** Brand identity used on labels, receipts, and other customer-facing surfaces.
+   *  Optional — when unset, label fields that bind to brand info render placeholders. */
+  brand?: Brand;
+  /** @deprecated Legacy single default — predates the per-kind map below.
+   *  Still read at the hook level so existing users don't lose their setting,
+   *  but new writes go to `defaultLabelTemplateIds["production-batch"]`. */
+  defaultBatchLabelTemplateId?: string;
+  /** Per-kind default templates. Each label-print entry point (production
+   *  page, shop, stock) preselects the template for its kind, so the picker
+   *  opens with the right choice already highlighted. */
+  defaultLabelTemplateIds?: Partial<Record<LabelTemplateKind, string>>;
   /** Last app version for which the user saw (or was seeded past) the "What's new" banner. */
   lastSeenVersion?: string;
   updatedAt: Date;
+}
+
+/** A single named link on the brand profile (e.g. Instagram, Web, Email). */
+export interface BrandSocial {
+  label: string;
+  url: string;
+}
+
+/**
+ * Brand identity for label printing and other customer-facing output.
+ * All fields are optional so users can fill in only what's relevant to them.
+ */
+export interface Brand {
+  /** Trading / business name (e.g. "Atelier Choc"). */
+  name?: string;
+  /** Business address — free-form, may include multiple lines. */
+  address?: string;
+  /** Contact information — free-form, typically phone/email/web on one line. */
+  contact?: string;
+  /** Ordered list of named social/web links. */
+  socials?: BrandSocial[];
+  /** Logo image as a data URL (base64), same convention as Product.photo. */
+  logo?: string;
+  /** Optional business identifier (VAT, tax ID, company registration). */
+  vatNumber?: string;
 }
 
 export interface Mould {
@@ -1271,4 +1307,286 @@ export interface GiveAwayRecord {
   pieceCount: number;
   /** Sum of `costPerProduct × pieces` at log time, in the user's currency. */
   ingredientCost: number;
+}
+
+// ============================================================================
+// Label printing — templates, fields, and source descriptors
+// ============================================================================
+
+/**
+ * Available field types on a label template. Grouped by binding source:
+ *   - `product` group binds to the source's product/batch context (resolved by
+ *     `LabelSource` at print time).
+ *   - `brand` group binds to the user's `Brand` profile from `userPreferences`.
+ *   - `custom` group is template-local content the user types into the inspector.
+ */
+export type LabelFieldType =
+  // product / batch (auto-bound)
+  | "name"      // product or filling name
+  | "subtitle"  // derived line e.g. "9 pieces · 90g"
+  | "weight"    // net weight string
+  | "ingr"      // ingredient list (EU FIC ordered, allergens emphasised)
+  | "aller"     // allergen declaration block (incl. facility "may contain")
+  | "nutri"     // nutrition table (per 100g, market-aware)
+  | "bbe"       // best-before date
+  | "batch"     // batch number(s)
+  | "prodate"   // production date
+  | "origin"    // shell origin / cocoa percentage line
+  // brand / business (auto-bound)
+  | "logo"      // brand logo image
+  | "company"   // business name + address block
+  | "contact"   // single-line contact (phone / email / web)
+  | "socials"   // multi-line list of named links
+  | "qr"        // QR code (defaults to website URL)
+  // custom (template-local)
+  | "text"      // free text typed into the inspector
+  | "divider"   // horizontal rule
+  | "image";    // user-uploaded image
+
+/**
+ * Per-field formatting and content options. A single bag of optional keys —
+ * each renderer picks the keys it cares about and ignores the rest. Mirrors
+ * the shape used in the canvas-editor prototype, kept loose so adding a new
+ * formatting knob is one optional field plus a renderer change.
+ */
+/**
+ * User-supplied date pattern for `bbe` and `prodate` renderers. The pattern
+ * is plain text with these case-sensitive tokens substituted at render time:
+ *
+ *   - `YYYY`  4-digit year       (2026)
+ *   - `YY`    2-digit year       (26)
+ *   - `MM`    2-digit month      (05)
+ *   - `M`     month, no padding  (5)
+ *   - `DD`    2-digit day        (21)
+ *   - `D`     day, no padding    (21)
+ *
+ * Everything else in the string is printed verbatim, so the user picks any
+ * separator they like — `DD/MM/YYYY`, `DD.MM.YY`, `YYYY-MM-DD`, even
+ * `DD MM YY` (with spaces) all work. Default is `YYYY-MM-DD` (ISO).
+ */
+export type LabelDateFormat = string;
+
+export interface LabelFieldProps {
+  /** Font size in pt. Defaults are per field type. */
+  size?: number;
+  /** CSS font-weight (100–900). Used by name/subtitle/headings.
+   *  @deprecated Use `bold` for the user-facing toggle; `weight` is still
+   *  honoured by the renderer for backward-compat with older templates. */
+  weight?: number;
+  /** When true, the field's body text is rendered at weight 700.
+   *  When unset, the renderer uses the field type's natural weight (e.g.
+   *  `aller` is mandatorily bold for regulatory reasons regardless of this). */
+  bold?: boolean;
+  /** Italic body text. Applies to every text-bearing field. */
+  italic?: boolean;
+  /** Font family — stored as a stable id from `FONT_OPTIONS` (in labelFields).
+   *  When unset, the renderer falls back to the system-default sans stack so
+   *  templates designed before this prop existed keep printing identically. */
+  font?: string;
+  /** When false, hides the small "INGREDIENTS" / "ALLERGENS" heading above the block. */
+  showLabel?: boolean;
+  /** When true, allergen tokens inside the ingredient string are emphasised (bold). */
+  boldAllergens?: boolean;
+  /** Free-text content. Used by `text`. */
+  text?: string;
+  /** Image source as a data URL (base64). Used by `image`. */
+  image?: string;
+  /** Override URL encoded into the QR code. Used by `qr`. When unset, falls
+   *  back to the brand's first social/web link, then to an empty placeholder. */
+  qrUrl?: string;
+  /** Date format used by `bbe` and `prodate`. Defaults to `iso`. */
+  dateFormat?: LabelDateFormat;
+}
+
+/**
+ * One field placed on a label. Coordinates and dimensions are in millimetres
+ * with origin top-left, matching the prototype. `id` is template-local (not
+ * shared across templates) — sequential numbers or any unique string is fine
+ * since the field never leaves its owning `LabelTemplate.fields`.
+ */
+export interface LabelField {
+  /** Template-local field identifier — unique within `LabelTemplate.fields`. */
+  id: string;
+  type: LabelFieldType;
+  /** Position in millimetres, top-left origin. */
+  x: number;
+  y: number;
+  /** Size in millimetres. */
+  w: number;
+  h: number;
+  props?: LabelFieldProps;
+}
+
+/**
+ * A user-designed label template. Persisted in the `labelTemplates` Dexie
+ * table; rendered against a resolved `LabelSource` at print time.
+ *
+ * Templates are deliberately fungible — they aren't pinned to a specific
+ * source kind or regulatory framework. The user designs them however they
+ * want, and at print time chooses which template to use against which source.
+ * Market-specific behaviour (which nutrients render in the nutrition table,
+ * etc.) is driven by the global `userPreferences.marketRegion` setting.
+ *
+ * Coordinates and dimensions are stored in millimetres so the same template
+ * renders identically on screen, on the OS print dialog, and on a future
+ * server-side PDF generator.
+ */
+/** Which `LabelSource` kind a template is designed for. Drives template
+ *  filtering at print time so each entry point only offers compatible
+ *  templates. Optional on read for backwards compatibility — pre-existing
+ *  templates predate this field and are treated as production-batch. */
+export type LabelTemplateKind = "production-batch" | "filling-batch" | "collection-package";
+
+/** Output format the print pipeline produces for this template.
+ *  - `png` (default): a high-DPI raster per label, paired with the OS share
+ *    sheet on iOS/iPadOS/Android and per-file downloads elsewhere. Optimised
+ *    for thermal printers (Niimbot, Brother etc.) which expect bitmap input.
+ *  - `pdf`: a single vector multi-page PDF for the entire print run — one
+ *    page per label. Right for sheet-print services and archival workflows
+ *    where lossless scaling matters more than thermal-printer compatibility. */
+export type LabelTemplateFormat = "png" | "pdf";
+
+export interface LabelTemplate {
+  id?: string;
+  name: string;
+  /** The kind of source this template binds against. Set at creation time;
+   *  not switchable from the editor. Older templates may omit this and are
+   *  treated as `production-batch` at read time (see `labelTemplateKind`). */
+  kind?: LabelTemplateKind;
+  /** Output format — see `LabelTemplateFormat`. Defaults to `png` at read
+   *  time for legacy templates that predate this field. */
+  format?: LabelTemplateFormat;
+  /** Physical label dimensions in millimetres. */
+  width: number;
+  height: number;
+  /** Number of product pieces this label represents. The `weight` and
+   *  `subtitle` renderers multiply `LabelContext.perCavityWeightG` by this
+   *  value so a "Box of 9" template prints "90g" rather than the per-piece
+   *  weight. Defaults to 1 (single-piece label) when omitted. */
+  piecesPerLabel?: number;
+  fields: LabelField[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Read a template's kind with a defensible default for legacy rows that
+ *  predate the kind field. Centralises the fallback so callers can compare
+ *  by value without sprinkling `?? "production-batch"` everywhere. */
+export function labelTemplateKind(t: LabelTemplate): LabelTemplateKind {
+  return t.kind ?? "production-batch";
+}
+
+/** Read a template's output format with the legacy default. */
+export function labelTemplateFormat(t: LabelTemplate): LabelTemplateFormat {
+  return t.format ?? "png";
+}
+
+/**
+ * Discriminated union describing what a print run binds against. The
+ * `LabelContext` resolver (piece 2) takes one of these and produces the
+ * normalised data the renderers consume.
+ *
+ *   - `production-batch`    one row per `PlanProduct` in a completed plan
+ *   - `filling-batch`       a row from `fillingStock`
+ *   - `collection-package`  a Collection × Packaging combination from the shop
+ */
+export type LabelSource =
+  | { kind: "production-batch"; planId: string; planProductId: string }
+  | { kind: "filling-batch"; planId: string; planFillingId: string }
+  | { kind: "collection-package"; collectionId: string; packagingId: string };
+
+/**
+ * One ingredient line in a resolved label context. Ordered position in
+ * `LabelContext.ingredients` is significant (descending by mass per cavity)
+ * so renderers can produce an EU-FIC-compliant ingredient list with no
+ * additional sorting.
+ */
+export interface LabelContextIngredient {
+  /** Display name as printed on the label (e.g. "milk*", "yuzu juice (5%)"). */
+  name: string;
+  /** Allergen ids carried by this ingredient (e.g. ["milk", "soy"]).
+   *  Renderers use this to bold the token inside the rendered list. */
+  allergens: string[];
+  /** Grams contributed by this ingredient per single product (one cavity).
+   *  Used by editor diagnostics; renderers normally consume `name` + `allergens` only. */
+  amountG: number;
+}
+
+/**
+ * Normalised, renderer-ready data resolved from a `LabelSource`. The label
+ * editor and print pipeline both render templates against this shape — never
+ * directly against Product / PlanProduct / Filling rows. Keeps the renderer
+ * layer pure and source-agnostic, and lets us add a new `LabelSource` kind
+ * later without touching the renderers themselves.
+ *
+ * "Per cavity" / "per piece" semantics: every numeric atom on this object is
+ * scoped to a *single product unit* (one cavity, one filling batch row, one
+ * box). Renderers that represent N pieces on one label (e.g. a box of 9)
+ * scale the per-cavity values themselves.
+ */
+export interface LabelContext {
+  source: LabelSource;
+  /** Customer-facing name (Product.name for production-batch, Filling.name for
+   *  filling-batch, Collection.name for collection-package). */
+  name: string;
+  /** Per-label weight in grams, ready to multiply by the template's
+   *  `piecesPerLabel`. Kind-specific semantics:
+   *   - production-batch: weight of one product piece (one cavity).
+   *   - filling-batch:    total batch grams (the renderer prints the whole jar).
+   *   - collection-package: total box grams (already accounts for cell counts).
+   *
+   *  The legacy name (`perCavityWeightG`) reflects the production-batch origin
+   *  of this field; the other kinds store totals here so a default template
+   *  with `piecesPerLabel = 1` prints the correct whole-unit weight. */
+  perCavityWeightG: number;
+  /** Total pieces in scope of this resolution. For production-batch this is
+   *  `actualYield` (or `quantity × cavities` if the plan hasn't recorded a
+   *  measured yield yet) so users can see how many labels make sense. */
+  totalCavityCount: number;
+  /** Ingredients ordered by mass per cavity, descending. */
+  ingredients: LabelContextIngredient[];
+  /** Aggregated allergens declared on any ingredient — unique, sorted. */
+  allergens: string[];
+  /** Facility "may contain" advisories from `userPreferences.facilityMayContain`. */
+  mayContain: string[];
+  /** Aggregated nutrition per 100g, market-aware via the existing nutrition
+   *  pipeline. Empty `{}` when no underlying ingredient carries nutrition data. */
+  nutritionPer100g: import("@/lib/nutrition").NutritionData;
+  /** Best-before computed from `ProductionPlan.completedAt + Product.shelfLifeWeeks`,
+   *  or null when either is missing. */
+  bestBefore: Date | null;
+  /** Batch number stamped on the source plan. Empty string when not yet assigned. */
+  batchNumber: string;
+  /** Production date — `ProductionPlan.completedAt` when the plan is done, else null. */
+  producedAt: Date | null;
+  /** Shell origin / cocoa percentage line, derived from
+   *  `Product.shellIngredientId → Ingredient.name`. Empty when no shell. */
+  origin: string;
+  /** Resolver-time warnings (e.g. "no default mould — weight unavailable").
+   *  Surfaced by the editor preview and the linter. */
+  warnings: string[];
+}
+
+/** Factory for a blank template. Pure — no DB access. Used by the new-template
+ *  flow to seed the editor with sensible defaults; the caller persists. */
+export function createBlankTemplate(input: {
+  name: string;
+  width: number;
+  height: number;
+  kind: LabelTemplateKind;
+  /** Output format — defaults to PNG (thermal-printer friendly). */
+  format?: LabelTemplateFormat;
+  now?: Date;
+}): Omit<LabelTemplate, "id"> {
+  const now = input.now ?? new Date();
+  return {
+    name: input.name,
+    kind: input.kind,
+    format: input.format ?? "png",
+    width: input.width,
+    height: input.height,
+    fields: [],
+    createdAt: now,
+    updatedAt: now,
+  };
 }

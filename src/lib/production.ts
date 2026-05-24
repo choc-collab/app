@@ -717,6 +717,10 @@ export type StandaloneFillingAmount = {
    *  map (legacy behaviour). */
   scaledNestedFillings: ScaledNestedFilling[];
   notes?: string;
+  /** Shelf life of the underlying filling in weeks — drives the Best-by line
+   *  in the batch summary for filling-only plans. Undefined when the filling
+   *  has no shelf-life metadata. */
+  shelfLifeWeeks?: number;
 };
 
 /** Compute ingredient amounts for each PlanFilling row.
@@ -767,6 +771,7 @@ export function calculateStandaloneFillingAmounts(
       scaledIngredients,
       scaledNestedFillings,
       notes: pf.notes,
+      shelfLifeWeeks: filling.shelfLifeWeeks,
     });
   }
   return results;
@@ -977,13 +982,14 @@ export function generateBatchSummary(params: {
     lines.push("─".repeat(48));
   }
 
-  // --- Estimated shelf life per product ---
-  // Renders whenever any product has a shelf life defined, with a parenthetical
-  // note when a previous-batch filling reduces the effective value below the
-  // product's nominal shelf life.
+  // --- Estimated shelf life ---
+  // Per-product lines render when productsMap/productFillingsMap are supplied,
+  // with a parenthetical note when a previous-batch filling reduces the
+  // effective value below the product's nominal shelf life. Filling-only plans
+  // emit per-filling lines from standaloneFillings instead.
+  const shelfLifeLines: string[] = [];
   if (productsMap && productFillingsMap && planProducts.length > 0) {
     const seenProducts = new Set<string>();
-    const shelfLifeLines: string[] = [];
     for (const pb of planProducts) {
       if (seenProducts.has(pb.productId)) continue;
       seenProducts.add(pb.productId);
@@ -1008,13 +1014,22 @@ export function generateBatchSummary(params: {
         shelfLifeLines.push(`  ${productName.padEnd(30)} ${effectiveWeeks} wks  ·  Best by: ${bestBy}`);
       }
     }
-    if (shelfLifeLines.length > 0) {
-      lines.push("");
-      lines.push("ESTIMATED SHELF LIFE");
-      lines.push("─".repeat(48));
-      for (const l of shelfLifeLines) lines.push(l);
-      lines.push("─".repeat(48));
-    }
+  }
+  const seenFillings = new Set<string>();
+  for (const sf of standaloneFillings) {
+    if (seenFillings.has(sf.fillingId)) continue;
+    seenFillings.add(sf.fillingId);
+    if (sf.shelfLifeWeeks == null) continue;
+    const bestBy = new Date(completedAt.getTime() + sf.shelfLifeWeeks * 7 * 24 * 60 * 60 * 1000)
+      .toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    shelfLifeLines.push(`  ${sf.fillingName.padEnd(30)} ${sf.shelfLifeWeeks} wks  ·  Best by: ${bestBy}`);
+  }
+  if (shelfLifeLines.length > 0) {
+    lines.push("");
+    lines.push("ESTIMATED SHELF LIFE");
+    lines.push("─".repeat(48));
+    for (const l of shelfLifeLines) lines.push(l);
+    lines.push("─".repeat(48));
   }
 
   lines.push("");

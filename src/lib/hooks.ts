@@ -1,6 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/db";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason } from "@/types";
+import { db, isCloudConfigured } from "@/lib/db";
+import { sanitizeBrand } from "@/lib/brand-sanitize";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -1757,6 +1758,59 @@ export function useFacilityMayContain(): string[] {
 
 export async function setFacilityMayContain(allergens: string[]): Promise<void> {
   await updatePreference({ facilityMayContain: allergens });
+}
+
+const EMPTY_BRAND: Brand = {};
+
+// One-shot guard so a corrupted row only triggers a single self-heal write
+// per page load — see sanitizeBrand for the underlying scenario.
+let brandSelfHealAttempted = false;
+
+/** Reactive read of the user's brand profile (logo, company info, socials).
+ *  Returns an empty object when no brand has been configured yet. */
+export function useBrand(): Brand {
+  return useLiveQuery(async () => {
+    const raw = (await getPreferences()).brand;
+    const { brand, repaired } = sanitizeBrand(raw);
+    if (repaired && isCloudConfigured && !brandSelfHealAttempted) {
+      brandSelfHealAttempted = true;
+      console.warn("[useBrand] Repairing corrupted brand record (non-string field).");
+      void setBrand(brand);
+    }
+    return brand;
+  }, [], EMPTY_BRAND);
+}
+
+export async function setBrand(brand: Brand): Promise<void> {
+  await updatePreference({ brand });
+}
+
+/** Reactive read of the user-configured default label template id for a given
+ *  kind. Empty string means "no default configured" — each entry point falls
+ *  back to picking the first compatible template alphabetically.
+ *
+ *  Migration: pre-kind users had a single `defaultBatchLabelTemplateId`. When
+ *  the new per-kind map has no entry for "production-batch", we fall back to
+ *  that legacy value so existing setups keep working without a manual reset. */
+export function useDefaultLabelTemplateId(kind: LabelTemplateKind): string {
+  return useLiveQuery(async () => {
+    const prefs = await getPreferences();
+    const fromMap = prefs.defaultLabelTemplateIds?.[kind];
+    if (fromMap) return fromMap;
+    if (kind === "production-batch") return prefs.defaultBatchLabelTemplateId ?? "";
+    return "";
+  }, [kind], "");
+}
+
+/** Persist the user's default template choice for a given kind. Empty string
+ *  clears the slot. Writes always go to the per-kind map; the legacy field is
+ *  left untouched so a rollback to an older build would still find a value. */
+export async function setDefaultLabelTemplateId(kind: LabelTemplateKind, id: string): Promise<void> {
+  const prefs = await getPreferences();
+  const map = { ...(prefs.defaultLabelTemplateIds ?? {}) };
+  if (id) map[kind] = id;
+  else delete map[kind];
+  await updatePreference({ defaultLabelTemplateIds: map });
 }
 
 /**
@@ -3599,4 +3653,35 @@ export async function saveGiveaway(input: {
     } as GiveAwayRecord) as string;
     return id;
   });
+}
+
+// --- Label templates ---
+
+/** Reactive list of templates, sorted by most-recently-updated first. */
+export function useLabelTemplates(): LabelTemplate[] {
+  return useLiveQuery(async () => {
+    const all = await db.labelTemplates.toArray();
+    return all.sort((a, b) => {
+      const av = a.updatedAt instanceof Date ? a.updatedAt.getTime() : new Date(a.updatedAt).getTime();
+      const bv = b.updatedAt instanceof Date ? b.updatedAt.getTime() : new Date(b.updatedAt).getTime();
+      return bv - av;
+    });
+  }) ?? [];
+}
+
+export function useLabelTemplate(id: string | undefined): LabelTemplate | undefined {
+  return useLiveQuery(() => (id ? db.labelTemplates.get(id) : undefined), [id]);
+}
+
+export async function saveLabelTemplate(obj: Omit<LabelTemplate, "id"> & { id?: string }): Promise<string> {
+  const now = new Date();
+  if (obj.id) {
+    await db.labelTemplates.update(obj.id, { ...obj, updatedAt: now });
+    return obj.id;
+  }
+  return db.labelTemplates.add({ ...obj, createdAt: obj.createdAt ?? now, updatedAt: now } as LabelTemplate) as Promise<string>;
+}
+
+export async function deleteLabelTemplate(id: string): Promise<void> {
+  await db.labelTemplates.delete(id);
 }

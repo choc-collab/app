@@ -27,6 +27,7 @@ import type {
   Packaging, PackagingOrder, Collection, CollectionProduct, CollectionPackaging,
   CollectionPricingSnapshot, DecorationMaterial, FillingStock,
   Sale,
+  LabelTemplate, LabelField,
 } from "@/types";
 
 // Sentinel ingredient name to detect duplicate loads
@@ -2271,5 +2272,147 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
     } as Sale);
   }
 
-  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen). Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
+  // ── Label templates ───────────────────────────────────────────────────────
+  // Three ready-to-use templates exercising every label kind. Set as the
+  // user's defaults so the Save-Label flows preselect them out of the box.
+  const templateNow = new Date();
+  const mkField = (f: Partial<LabelField> & { id: string; type: LabelField["type"]; x: number; y: number; w: number; h: number }): LabelField => ({
+    id: f.id,
+    type: f.type,
+    x: f.x,
+    y: f.y,
+    w: f.w,
+    h: f.h,
+    props: f.props,
+  });
+
+  // 1. Production batch — small thermal label affixed per tray of bonbons.
+  //    Trimmed to the essentials staff need at the bench: name, batch, dates,
+  //    and the allergen declaration.
+  const bonbonLabelId = await db.labelTemplates.add({
+    name: "Bonbon tray label",
+    kind: "production-batch",
+    format: "png",
+    width: 50,
+    height: 30,
+    piecesPerLabel: 1,
+    fields: [
+      mkField({ id: "name",    type: "name",    x: 1, y: 1,    w: 48, h: 5, props: { size: 11 } }),
+      mkField({ id: "batch",   type: "batch",   x: 1, y: 7,    w: 48, h: 4, props: { size: 8 } }),
+      mkField({ id: "prodate", type: "prodate", x: 1, y: 11.5, w: 48, h: 4, props: { size: 8 } }),
+      mkField({ id: "bbe",     type: "bbe",     x: 1, y: 16,   w: 48, h: 4, props: { size: 8 } }),
+      mkField({ id: "aller",   type: "aller",   x: 1, y: 20.5, w: 48, h: 8, props: { size: 7 } }),
+    ],
+    createdAt: templateNow,
+    updatedAt: templateNow,
+  } as LabelTemplate);
+
+  // 2. Filling batch — label for affixing to filling tubs / pastry containers.
+  //    No nutrition, allergens declared. `weight` here is the whole batch.
+  const fillingLabelId = await db.labelTemplates.add({
+    name: "Filling tub label",
+    kind: "filling-batch",
+    format: "png",
+    width: 60,
+    height: 40,
+    piecesPerLabel: 1,
+    fields: [
+      mkField({ id: "name",   type: "name",   x: 1,  y: 1,    w: 58, h: 5,   props: { size: 11 } }),
+      mkField({ id: "weight", type: "weight", x: 1,  y: 6.5,  w: 30, h: 4,   props: { size: 9 } }),
+      mkField({ id: "batch",  type: "batch",  x: 32, y: 6.5,  w: 27, h: 4,   props: { size: 9 } }),
+      mkField({ id: "ingr",   type: "ingr",   x: 1,  y: 11.5, w: 58, h: 12,  props: { size: 5, boldAllergens: true } }),
+      mkField({ id: "aller",  type: "aller",  x: 1,  y: 24,   w: 58, h: 6,   props: { size: 6 } }),
+      // Each date row gets its own full-width line — "Production date:" needs
+      // ~42mm at 8pt and won't fit beside bbe on a 60mm-wide strip.
+      mkField({ id: "bbe",    type: "bbe",    x: 1,  y: 30.5, w: 58, h: 4,   props: { size: 8 } }),
+      mkField({ id: "prodate",type: "prodate",x: 1,  y: 35,   w: 58, h: 4,   props: { size: 8, italic: true } }),
+    ],
+    createdAt: templateNow,
+    updatedAt: templateNow,
+  } as LabelTemplate);
+
+  // 3. Collection package — the flagship 80×100mm box label with full
+  //    regulatory content: brand, ingredients, allergens, boxed nutrition
+  //    table (market-aware via UserPreferences.marketRegion), and QR.
+  const boxLabelId = await db.labelTemplates.add({
+    name: "Box of 9 — full label",
+    kind: "collection-package",
+    format: "png",
+    width: 80,
+    height: 100,
+    piecesPerLabel: 1,
+    fields: [
+      // Brand block (y = 2..18). Company gets enough height for the brand
+      // name + a two-line address; socials sits just under it (1 link wide).
+      mkField({ id: "logo",    type: "logo",    x: 2,  y: 2,    w: 14, h: 14 }),
+      mkField({ id: "company", type: "company", x: 18, y: 2,    w: 60, h: 13, props: { size: 9 } }),
+      mkField({ id: "socials", type: "socials", x: 18, y: 14.5, w: 60, h: 4,  props: { size: 7 } }),
+
+      // Hero (y = 20..36). QR sits to the right of the name/weight column so
+      // nothing overlaps the ingredients block below.
+      mkField({ id: "name",    type: "name",    x: 2,  y: 20,   w: 58, h: 7,  props: { size: 14 } }),
+      mkField({ id: "subtitle",type: "subtitle",x: 2,  y: 27.5, w: 58, h: 4,  props: { size: 8 } }),
+      mkField({ id: "weight",  type: "weight",  x: 2,  y: 31.5, w: 58, h: 5,  props: { size: 11 } }),
+      mkField({ id: "qr",      type: "qr",      x: 62, y: 20,   w: 16, h: 16 }),
+
+      // Content (y = 38..88).
+      mkField({ id: "ingr",    type: "ingr",    x: 2,  y: 38,   w: 76, h: 10, props: { size: 5.5, boldAllergens: true } }),
+      mkField({ id: "aller",   type: "aller",   x: 2,  y: 48.5, w: 76, h: 6,  props: { size: 6.5 } }),
+      mkField({ id: "nutri",   type: "nutri",   x: 2,  y: 55,   w: 76, h: 33, props: { size: 5.5 } }),
+
+      // Footer (y = 89..98).
+      mkField({ id: "bbe",     type: "bbe",     x: 2,  y: 89,   w: 37, h: 4,  props: { size: 8 } }),
+      mkField({ id: "batch",   type: "batch",   x: 41, y: 89,   w: 37, h: 4,  props: { size: 8 } }),
+      mkField({ id: "origin",  type: "origin",  x: 2,  y: 94,   w: 76, h: 4,  props: { size: 7, italic: true } }),
+    ],
+    createdAt: templateNow,
+    updatedAt: templateNow,
+  } as LabelTemplate);
+
+  // Persist these as the user's defaults for each kind so the Save-Label
+  // pickers preselect them. Reuses the shared hook helper, which transparently
+  // initialises the prefs row (with DEFAULT_PREFERENCES) when none exists,
+  // and merges into any existing `defaultLabelTemplateIds` map.
+  const { setDefaultLabelTemplateId } = await import("@/lib/hooks");
+  await setDefaultLabelTemplateId("production-batch", bonbonLabelId as string);
+  await setDefaultLabelTemplateId("filling-batch", fillingLabelId as string);
+  await setDefaultLabelTemplateId("collection-package", boxLabelId as string);
+
+  // Seed demo brand info so the labels look complete on a fresh install.
+  // Only fills fields the user hasn't already set — never overwrites their
+  // own brand. Facility "may contain" likewise stays untouched if populated.
+  const demoBrand = {
+    name: "Choc-Collab",
+    address: "Damrak 70\n1012 LM Amsterdam",
+    socials: [
+      { label: "Web", url: "www.choc-collab.org" },
+    ],
+  };
+  // Single shared-facility advisory keeps the label uncluttered while still
+  // exercising the "May contain" rendering path.
+  const demoMayContain = ["sesame"];
+  const prefsRow = (await db.userPreferences.toArray())[0];
+  if (prefsRow?.id) {
+    const existingBrand = prefsRow.brand ?? {};
+    const mergedBrand = {
+      name: existingBrand.name ?? demoBrand.name,
+      address: existingBrand.address ?? demoBrand.address,
+      contact: existingBrand.contact,
+      socials: existingBrand.socials && existingBrand.socials.length > 0
+        ? existingBrand.socials
+        : demoBrand.socials,
+      logo: existingBrand.logo,
+      vatNumber: existingBrand.vatNumber,
+    };
+    const mergedMayContain = prefsRow.facilityMayContain && prefsRow.facilityMayContain.length > 0
+      ? prefsRow.facilityMayContain
+      : demoMayContain;
+    await db.userPreferences.update(prefsRow.id, {
+      brand: mergedBrand,
+      facilityMayContain: mergedMayContain,
+      updatedAt: templateNow,
+    });
+  }
+
+  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen), 3 label templates (bonbon tray, filling tub, full box) preset as defaults for each kind. Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
 }

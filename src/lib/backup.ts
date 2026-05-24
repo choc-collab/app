@@ -42,6 +42,7 @@ export interface BackupData {
   fillingStock?: unknown[];
   fillingCategories?: unknown[];
   ingredientCategories?: unknown[];
+  labelTemplates?: unknown[];
   sales?: unknown[];
   giveaways?: unknown[];
 
@@ -96,6 +97,7 @@ async function buildBackupData(): Promise<BackupData> {
     fillingStock,
     fillingCategories,
     ingredientCategories,
+    labelTemplates,
     sales,
     giveaways,
   ] = await Promise.all([
@@ -131,6 +133,7 @@ async function buildBackupData(): Promise<BackupData> {
     db.fillingStock.toArray(),
     db.fillingCategories.toArray(),
     db.ingredientCategories.toArray(),
+    db.labelTemplates.toArray(),
     db.sales.toArray(),
     db.giveaways.toArray(),
   ]);
@@ -171,6 +174,7 @@ async function buildBackupData(): Promise<BackupData> {
     fillingStock,
     fillingCategories,
     ingredientCategories,
+    labelTemplates,
     sales,
     giveaways,
   };
@@ -192,6 +196,7 @@ function hasAnyData(data: BackupData): boolean {
     data.collectionProducts ?? [], data.collectionPackagings ?? [],
     data.collectionPricingSnapshots ?? [], data.fillingStock ?? [],
     data.fillingCategories ?? [], data.ingredientCategories ?? [],
+    data.labelTemplates ?? [],
     data.sales ?? [], data.giveaways ?? [],
   ];
   return arrays.some((a) => Array.isArray(a) && a.length > 0);
@@ -266,6 +271,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
       db.experiments, db.experimentIngredients, db.shoppingItems,
       db.collections, db.collectionProducts, db.collectionPackagings, db.collectionPricingSnapshots, db.fillingStock,
       db.fillingCategories, db.ingredientCategories,
+      db.labelTemplates,
       db.sales, db.giveaways,
     ],
     async () => {
@@ -282,6 +288,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
         db.collections.clear(), db.collectionProducts.clear(),
         db.collectionPackagings.clear(), db.collectionPricingSnapshots.clear(),
         db.fillingStock.clear(), db.fillingCategories.clear(), db.ingredientCategories.clear(),
+        db.labelTemplates.clear(),
         db.sales.clear(), db.giveaways.clear(),
       ]);
     },
@@ -457,6 +464,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const rawFillingCategories       = data.fillingCategories       ?? [];
   const rawIngredientCategories    = data.ingredientCategories    ?? [];
   const rawFillingComponents       = data.fillingComponents       ?? [];
+  const rawLabelTemplates          = data.labelTemplates          ?? [];
   const rawSales                   = data.sales                   ?? [];
   const rawGiveaways               = data.giveaways               ?? [];
 
@@ -492,6 +500,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const fillingStock             = applyAll<never>(rawFillingStock, migrateFillingStock);
   const fillingCategories        = rawFillingCategories as never[];
   const ingredientCategories     = rawIngredientCategories as never[];
+  const labelTemplates           = rawLabelTemplates as never[];
   const sales                    = rawSales as never[];
   const giveaways                = rawGiveaways as never[];
 
@@ -555,6 +564,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
       db.experiments, db.experimentIngredients, db.shoppingItems,
       db.collections, db.collectionProducts, db.collectionPackagings, db.collectionPricingSnapshots, db.fillingStock,
       db.fillingCategories, db.ingredientCategories,
+      db.labelTemplates,
       db.sales, db.giveaways,
     ],
     async () => {
@@ -571,6 +581,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         db.collections.clear(), db.collectionProducts.clear(),
         db.collectionPackagings.clear(), db.collectionPricingSnapshots.clear(),
         db.fillingStock.clear(), db.fillingCategories.clear(), db.ingredientCategories.clear(),
+        db.labelTemplates.clear(),
         db.sales.clear(), db.giveaways.clear(),
       ]);
       await Promise.all([
@@ -606,6 +617,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         fillingStock.length             && db.fillingStock.bulkAdd(fillingStock),
         fillingCategories.length        && db.fillingCategories.bulkAdd(fillingCategories),
         ingredientCategories.length     && db.ingredientCategories.bulkAdd(ingredientCategories),
+        labelTemplates.length           && db.labelTemplates.bulkAdd(labelTemplates),
         sales.length                    && db.sales.bulkAdd(sales),
         giveaways.length                && db.giveaways.bulkAdd(giveaways),
       ]);

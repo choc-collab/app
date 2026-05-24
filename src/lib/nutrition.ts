@@ -55,6 +55,11 @@ export interface NutrientDef {
   indent: number;
   /** FDA Daily Value for %DV column (US only). undefined = no %DV shown */
   dailyValue?: number;
+  /** Logical grouping used by the boxed nutrition renderer to insert a
+   *  separator bar between major sections. Consecutive nutrients sharing
+   *  a `section` render as one block; a change in `section` draws a rule.
+   *  Optional — entries without a section never trigger a rule. */
+  section?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,34 +68,34 @@ export interface NutrientDef {
 
 /** EU & UK — FIC 1169/2011 Nutrition Declaration */
 const EU_UK_NUTRIENTS: NutrientDef[] = [
-  { key: "energyKj",      label: "Energy",           unit: "kJ",   mandatory: true,  indent: 0 },
-  { key: "energyKcal",    label: "Energy",           unit: "kcal", mandatory: true,  indent: 0 },
-  { key: "fat",           label: "Fat",              unit: "g",    mandatory: true,  indent: 0 },
-  { key: "saturatedFat",  label: "of which saturates", unit: "g",  mandatory: true,  indent: 1 },
-  { key: "carbohydrate",  label: "Carbohydrate",     unit: "g",    mandatory: true,  indent: 0 },
-  { key: "sugars",        label: "of which sugars",  unit: "g",    mandatory: true,  indent: 1 },
-  { key: "fibre",         label: "Fibre",            unit: "g",    mandatory: false, indent: 0 },
-  { key: "protein",       label: "Protein",          unit: "g",    mandatory: true,  indent: 0 },
-  { key: "salt",          label: "Salt",             unit: "g",    mandatory: true,  indent: 0 },
+  { key: "energyKj",      label: "Energy",           unit: "kJ",   mandatory: true,  indent: 0, section: "energy" },
+  { key: "energyKcal",    label: "Energy",           unit: "kcal", mandatory: true,  indent: 0, section: "energy" },
+  { key: "fat",           label: "Fat",              unit: "g",    mandatory: true,  indent: 0, section: "fat" },
+  { key: "saturatedFat",  label: "of which saturates", unit: "g",  mandatory: true,  indent: 1, section: "fat" },
+  { key: "carbohydrate",  label: "Carbohydrate",     unit: "g",    mandatory: true,  indent: 0, section: "carbs" },
+  { key: "sugars",        label: "of which sugars",  unit: "g",    mandatory: true,  indent: 1, section: "carbs" },
+  { key: "fibre",         label: "Fibre",            unit: "g",    mandatory: false, indent: 0, section: "carbs" },
+  { key: "protein",       label: "Protein",          unit: "g",    mandatory: true,  indent: 0, section: "minerals" },
+  { key: "salt",          label: "Salt",             unit: "g",    mandatory: true,  indent: 0, section: "minerals" },
 ];
 
 /** US — FDA Nutrition Facts */
 const US_NUTRIENTS: NutrientDef[] = [
-  { key: "energyKcal",    label: "Calories",            unit: "kcal", mandatory: true,  indent: 0 },
-  { key: "fat",           label: "Total Fat",           unit: "g",    mandatory: true,  indent: 0, dailyValue: 78 },
-  { key: "saturatedFat",  label: "Saturated Fat",       unit: "g",    mandatory: true,  indent: 1, dailyValue: 20 },
-  { key: "transFat",      label: "Trans Fat",           unit: "g",    mandatory: true,  indent: 1 },
-  { key: "cholesterolMg", label: "Cholesterol",         unit: "mg",   mandatory: true,  indent: 0, dailyValue: 300 },
-  { key: "sodium",        label: "Sodium",              unit: "mg",   mandatory: true,  indent: 0, dailyValue: 2300 },
-  { key: "carbohydrate",  label: "Total Carbohydrate",  unit: "g",    mandatory: true,  indent: 0, dailyValue: 275 },
-  { key: "fibre",         label: "Dietary Fiber",       unit: "g",    mandatory: true,  indent: 1, dailyValue: 28 },
-  { key: "sugars",        label: "Total Sugars",        unit: "g",    mandatory: true,  indent: 1 },
-  { key: "addedSugars",   label: "Incl. Added Sugars",  unit: "g",    mandatory: true,  indent: 2, dailyValue: 50 },
-  { key: "protein",       label: "Protein",             unit: "g",    mandatory: true,  indent: 0 },
-  { key: "vitaminDMcg",   label: "Vitamin D",           unit: "mcg",  mandatory: true,  indent: 0, dailyValue: 20 },
-  { key: "calciumMg",     label: "Calcium",             unit: "mg",   mandatory: true,  indent: 0, dailyValue: 1300 },
-  { key: "ironMg",        label: "Iron",                unit: "mg",   mandatory: true,  indent: 0, dailyValue: 18 },
-  { key: "potassiumMg",   label: "Potassium",           unit: "mg",   mandatory: true,  indent: 0, dailyValue: 4700 },
+  { key: "energyKcal",    label: "Calories",            unit: "kcal", mandatory: true,  indent: 0, section: "calories" },
+  { key: "fat",           label: "Total Fat",           unit: "g",    mandatory: true,  indent: 0, dailyValue: 78,   section: "fat" },
+  { key: "saturatedFat",  label: "Saturated Fat",       unit: "g",    mandatory: true,  indent: 1, dailyValue: 20,   section: "fat" },
+  { key: "transFat",      label: "Trans Fat",           unit: "g",    mandatory: true,  indent: 1,                   section: "fat" },
+  { key: "cholesterolMg", label: "Cholesterol",         unit: "mg",   mandatory: true,  indent: 0, dailyValue: 300,  section: "cholesterol" },
+  { key: "sodium",        label: "Sodium",              unit: "mg",   mandatory: true,  indent: 0, dailyValue: 2300, section: "sodium" },
+  { key: "carbohydrate",  label: "Total Carbohydrate",  unit: "g",    mandatory: true,  indent: 0, dailyValue: 275,  section: "carbs" },
+  { key: "fibre",         label: "Dietary Fiber",       unit: "g",    mandatory: true,  indent: 1, dailyValue: 28,   section: "carbs" },
+  { key: "sugars",        label: "Total Sugars",        unit: "g",    mandatory: true,  indent: 1,                   section: "carbs" },
+  { key: "addedSugars",   label: "Incl. Added Sugars",  unit: "g",    mandatory: true,  indent: 2, dailyValue: 50,   section: "carbs" },
+  { key: "protein",       label: "Protein",             unit: "g",    mandatory: true,  indent: 0,                   section: "protein" },
+  { key: "vitaminDMcg",   label: "Vitamin D",           unit: "mcg",  mandatory: true,  indent: 0, dailyValue: 20,   section: "vitamins" },
+  { key: "calciumMg",     label: "Calcium",             unit: "mg",   mandatory: true,  indent: 0, dailyValue: 1300, section: "vitamins" },
+  { key: "ironMg",        label: "Iron",                unit: "mg",   mandatory: true,  indent: 0, dailyValue: 18,   section: "vitamins" },
+  { key: "potassiumMg",   label: "Potassium",           unit: "mg",   mandatory: true,  indent: 0, dailyValue: 4700, section: "vitamins" },
 ];
 
 /** Australia — FSANZ Nutrition Information Panel (NIP).
@@ -98,14 +103,14 @@ const US_NUTRIENTS: NutrientDef[] = [
  *  non-mandatory so AU-only users aren't warned when they leave it blank. It
  *  auto-fills from kJ via `fillDerivedNutrition` when kJ is entered. */
 const AU_NUTRIENTS: NutrientDef[] = [
-  { key: "energyKj",      label: "Energy",           unit: "kJ",   mandatory: true,  indent: 0 },
-  { key: "energyKcal",    label: "Energy",           unit: "kcal", mandatory: false, indent: 0 },
-  { key: "protein",       label: "Protein",          unit: "g",    mandatory: true,  indent: 0 },
-  { key: "fat",           label: "Fat, total",       unit: "g",    mandatory: true,  indent: 0 },
-  { key: "saturatedFat",  label: "– saturated",      unit: "g",    mandatory: true,  indent: 1 },
-  { key: "carbohydrate",  label: "Carbohydrate",     unit: "g",    mandatory: true,  indent: 0 },
-  { key: "sugars",        label: "– sugars",         unit: "g",    mandatory: true,  indent: 1 },
-  { key: "sodium",        label: "Sodium",           unit: "mg",   mandatory: true,  indent: 0 },
+  { key: "energyKj",      label: "Energy",           unit: "kJ",   mandatory: true,  indent: 0, section: "energy" },
+  { key: "energyKcal",    label: "Energy",           unit: "kcal", mandatory: false, indent: 0, section: "energy" },
+  { key: "protein",       label: "Protein",          unit: "g",    mandatory: true,  indent: 0, section: "protein" },
+  { key: "fat",           label: "Fat, total",       unit: "g",    mandatory: true,  indent: 0, section: "fat" },
+  { key: "saturatedFat",  label: "– saturated",      unit: "g",    mandatory: true,  indent: 1, section: "fat" },
+  { key: "carbohydrate",  label: "Carbohydrate",     unit: "g",    mandatory: true,  indent: 0, section: "carbs" },
+  { key: "sugars",        label: "– sugars",         unit: "g",    mandatory: true,  indent: 1, section: "carbs" },
+  { key: "sodium",        label: "Sodium",           unit: "mg",   mandatory: true,  indent: 0, section: "sodium" },
 ];
 
 /** Return the nutrient list for a market, including all fields (mandatory + optional) */

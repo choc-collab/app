@@ -12,9 +12,13 @@ import {
   updateSaleNote,
   updateSaleNotes,
   useAllCollectionPackagings,
+  useBrand,
   useCollections,
   useCurrencySymbol,
+  useDefaultLabelTemplateId,
   useGiveawayMonthTallies,
+  useLabelTemplates,
+  useMarketRegion,
   usePackagingList,
   usePreparedSales,
   useRecentGiveaways,
@@ -25,9 +29,13 @@ import {
 } from "@/lib/hooks";
 import { firstNSaleIds, groupPreparedSales, type SaleGroup } from "@/lib/saleGrouping";
 import { SaleQuantityStepper } from "@/components/sale-quantity-stepper";
+import { loadCollectionPackageContext } from "@/lib/labelContext";
+import { printLabels } from "@/lib/labelPrint";
+import { PrintTemplatePicker } from "@/components/print-template-picker";
 import type { ShopProductInfo } from "@/lib/shopColor";
-import { GIVE_AWAY_REASONS } from "@/types";
-import type { GiveAwayRecord, Packaging, Sale } from "@/types";
+import { GIVE_AWAY_REASONS, labelTemplateKind } from "@/types";
+import type { GiveAwayRecord, LabelTemplate, Packaging, Sale } from "@/types";
+import { Printer } from "lucide-react";
 
 const NEW_SALE_HREF = "/shop/new";
 const LOG_GIVEAWAY_HREF = "/shop/giveaways";
@@ -129,6 +137,50 @@ export default function ShopPage() {
 
   const activityCount = filteredRecent.length + filteredGiveaways.length;
 
+  // Label-print state — opens the template picker for the specific prepared
+  // sale the user clicked. The shop is where label-printing actually happens:
+  // a Collection × Packaging on its own is a recipe, a prepared sale is the
+  // physical box (with a known per-cavity product distribution) that needs
+  // a sticker.
+  const allLabelTemplates = useLabelTemplates();
+  const labelTemplates = useMemo(
+    () => allLabelTemplates.filter((t) => labelTemplateKind(t) === "collection-package"),
+    [allLabelTemplates],
+  );
+  const defaultLabelTemplateId = useDefaultLabelTemplateId("collection-package");
+  const brand = useBrand();
+  const marketRegion = useMarketRegion();
+  const [printTarget, setPrintTarget] = useState<Sale | null>(null);
+  const [printError, setPrintError] = useState("");
+
+  async function handleConfirmPrint(template: LabelTemplate) {
+    if (!printTarget) return;
+    const { collectionId, packagingId, cells, preparedAt } = printTarget;
+    setPrintTarget(null);
+    setPrintError("");
+    // Pass the actual per-cavity distribution and packing date so the
+    // resolver computes ingredient totals from the real composition and
+    // anchors BBE to when this specific box was prepared.
+    const ctx = await loadCollectionPackageContext(
+      collectionId,
+      packagingId,
+      cells,
+      preparedAt ? new Date(preparedAt) : null,
+    );
+    const result = await printLabels({
+      template,
+      contexts: [ctx],
+      brand,
+      marketRegion,
+    });
+    if (!result.success) setPrintError(result.error);
+  }
+
+  function openPrintPicker(sale: Sale) {
+    setPrintError("");
+    setPrintTarget(sale);
+  }
+
   return (
     <div className="p-6 max-w-4xl">
       <HeaderRow
@@ -177,6 +229,7 @@ export default function ShopPage() {
               symbol={symbol}
               query={readyQuery}
               onQueryChange={setReadyQuery}
+              onPrintLabel={openPrintPicker}
             />
           ) : (
             <RecentActivityTab
@@ -192,6 +245,20 @@ export default function ShopPage() {
             />
           )}
         </section>
+      )}
+
+      {printError && (
+        <p className="mt-3 text-xs text-destructive">{printError}</p>
+      )}
+      {printTarget && (
+        <PrintTemplatePicker
+          title="Save box label"
+          description="One label for this box — print as many copies as you need from your label-printer app."
+          templates={labelTemplates}
+          defaultId={defaultLabelTemplateId}
+          onConfirm={handleConfirmPrint}
+          onCancel={() => setPrintTarget(null)}
+        />
       )}
     </div>
   );
@@ -237,12 +304,14 @@ function ReadyToSellTab({
   symbol,
   query,
   onQueryChange,
+  onPrintLabel,
 }: {
   all: Sale[];
   filtered: Sale[];
   symbol: string;
   query: string;
   onQueryChange: (q: string) => void;
+  onPrintLabel: (sale: Sale) => void;
 }) {
   if (all.length === 0) {
     return (
@@ -265,7 +334,7 @@ function ReadyToSellTab({
           Nothing matches “{query}”.
         </p>
       ) : (
-        <SalesList sales={filtered} symbol={symbol} kind="prepared" />
+        <SalesList sales={filtered} symbol={symbol} kind="prepared" onPrintLabel={onPrintLabel} />
       )}
     </>
   );
@@ -737,10 +806,15 @@ function SalesList({
   sales,
   symbol,
   kind,
+  onPrintLabel,
 }: {
   sales: Sale[];
   symbol: string;
   kind: "prepared" | "sold";
+  /** Only invoked from "prepared" rows. Receives the clicked Sale so the
+   *  caller can read its per-cavity distribution (`cells`) for an accurate
+   *  ingredient breakdown on the label. */
+  onPrintLabel?: (sale: Sale) => void;
 }) {
   const { viewById: productInfoById } = useShopProducts();
   const packagings = usePackagingList(true);
@@ -780,6 +854,7 @@ function SalesList({
                 packaging={pkg}
                 packagingLabel={label}
                 productInfoById={productInfoById}
+                onPrintLabel={onPrintLabel}
               />
             );
           }
@@ -792,6 +867,7 @@ function SalesList({
               packaging={pkg}
               packagingLabel={label}
               productInfoById={productInfoById}
+              onPrintLabel={onPrintLabel}
             />
           );
         })}
@@ -831,6 +907,7 @@ function SaleRow({
   packaging,
   packagingLabel,
   productInfoById,
+  onPrintLabel,
 }: {
   sale: Sale;
   kind: "prepared" | "sold";
@@ -839,6 +916,7 @@ function SaleRow({
   packaging: Packaging | undefined;
   packagingLabel: string;
   productInfoById: Map<string, ShopProductInfo>;
+  onPrintLabel?: (sale: Sale) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftNote, setDraftNote] = useState(sale.customerNote ?? "");
@@ -943,6 +1021,7 @@ function SaleRow({
           saleId={sale.id}
           hasNote={Boolean(sale.customerNote)}
           onEdit={() => setEditing(true)}
+          onPrintLabel={onPrintLabel ? () => onPrintLabel(sale) : undefined}
         />
       )}
       {kind === "sold" && sale.id && soldWithinLast(sale.soldAt, 24 * 60 * 60_000) && (
@@ -997,10 +1076,12 @@ function PreparedActions({
   saleId,
   hasNote,
   onEdit,
+  onPrintLabel,
 }: {
   saleId: string;
   hasNote: boolean;
   onEdit: () => void;
+  onPrintLabel?: () => void;
 }) {
   const [busy, setBusy] = useState<"sell" | "void" | null>(null);
   const [confirmVoid, setConfirmVoid] = useState(false);
@@ -1069,6 +1150,19 @@ function PreparedActions({
       >
         {hasNote ? "Edit" : "+ Note"}
       </button>
+      {onPrintLabel && (
+        <button
+          type="button"
+          onClick={onPrintLabel}
+          disabled={busy !== null}
+          className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 inline-flex items-center gap-1"
+          title="Save box label"
+          aria-label="Save box label"
+          data-testid="shop-print-label-btn"
+        >
+          <Printer className="w-3.5 h-3.5" /> Label
+        </button>
+      )}
       <button
         type="button"
         onClick={handleSell}
@@ -1098,6 +1192,7 @@ function PreparedGroupRow({
   packaging,
   packagingLabel,
   productInfoById,
+  onPrintLabel,
 }: {
   group: SaleGroup;
   symbol: string;
@@ -1105,6 +1200,7 @@ function PreparedGroupRow({
   packaging: Packaging | undefined;
   packagingLabel: string;
   productInfoById: Map<string, ShopProductInfo>;
+  onPrintLabel?: (sale: Sale) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [sellQty, setSellQty] = useState(1);
@@ -1269,6 +1365,19 @@ function PreparedGroupRow({
             >
               {hasNote ? "Edit" : "+ Note"}
             </button>
+            {onPrintLabel && (
+              <button
+                type="button"
+                onClick={() => onPrintLabel(group.representative)}
+                disabled={sellBusy}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 inline-flex items-center gap-1"
+                title="Save box label (this Collection × Packaging)"
+                aria-label="Save box label"
+                data-testid="shop-print-label-group-btn"
+              >
+                <Printer className="w-3.5 h-3.5" /> Label
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}

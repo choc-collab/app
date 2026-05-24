@@ -3,30 +3,35 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { PageHeader } from "@/components/page-header";
 import { exportBackup, importBackup, clearAllData } from "@/lib/backup";
-import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames } from "@/lib/hooks";
-import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, type CurrencyCode, type MarketRegion, type FillMode } from "@/types";
+import { useMarketRegion, setMarketRegion, useFacilityMayContain, setFacilityMayContain, useCurrency, setCurrency, useDefaultFillMode, setDefaultFillMode, useIngredientCategoryNames, useBrand, setBrand, useLabelTemplates, useDefaultLabelTemplateId, setDefaultLabelTemplateId } from "@/lib/hooks";
+import { getAllergensByRegion, allergenLabel, CURRENCIES, getCurrencySymbol, MARKET_LABEL_RULES, labelTemplateKind, type CurrencyCode, type MarketRegion, type FillMode, type Brand, type BrandSocial, type LabelTemplate, type LabelTemplateKind } from "@/types";
+import { SOCIAL_NETWORKS, findSocialNetwork } from "@/lib/socials";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { loadDemoData, isDemoDataLoaded } from "@/lib/seed-demo";
 import { isCloudConfigured } from "@/lib/db";
 import { getStorageStatus, requestPersistentStorage, formatBytes, type StorageStatus } from "@/lib/persistent-storage";
 import { readLastSnapshotMetadata, dismissLastSnapshotMetadata, type LastSnapshotMetadata } from "@/lib/upgrade-snapshot";
-import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive } from "lucide-react";
+import { Download, Upload, AlertTriangle, CheckCircle, ChevronDown, FlaskConical, Video, Printer, Pencil, Trash2, FileSpreadsheet, ShieldCheck, HardDrive, Tags, ChevronRight } from "lucide-react";
+import Link from "next/link";
 import { CSVImport } from "@/components/csv-import";
 import { makeIngredientImportConfig, getExistingIngredientIndex, exportIngredientsCSV } from "@/lib/csv-import-ingredients";
+import { downscaleImageIfNeeded } from "@/lib/image-downscale";
 import type { Ingredient } from "@/types";
 
 type ImportState = "idle" | "confirm" | "importing" | "done" | "error";
-type Tab = "backup" | "import" | "market" | "printing" | "demo";
+type Tab = "backup" | "import" | "market" | "brand" | "printing" | "demo";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("backup");
   const [marketDirty, setMarketDirty] = useState(false);
+  const [brandDirty, setBrandDirty] = useState(false);
   const marketRegion = useMarketRegion();
   const currency = useCurrency();
   const facilityMayContain = useFacilityMayContain();
   const defaultFillMode = useDefaultFillMode();
+  const brand = useBrand();
 
-  const anyDirty = marketDirty;
+  const anyDirty = marketDirty || brandDirty;
 
   // Guard page-level navigation (side nav links, browser close/refresh)
   useNavigationGuard(anyDirty);
@@ -36,6 +41,7 @@ export default function SettingsPage() {
     if (anyDirty) {
       if (!window.confirm("You have unsaved changes. Leave without saving?")) return;
       setMarketDirty(false);
+      setBrandDirty(false);
     }
     setActiveTab(tab);
   }
@@ -110,6 +116,12 @@ export default function SettingsPage() {
           Target Market
         </button>
         <button
+          onClick={() => switchTab("brand")}
+          className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "brand" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
+        >
+          Brand
+        </button>
+        <button
           onClick={() => switchTab("printing")}
           className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${activeTab === "printing" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
         >
@@ -141,8 +153,13 @@ export default function SettingsPage() {
           <ImportTab />
         ) : activeTab === "market" ? (
           <PreferencesTab marketRegion={marketRegion} onRegionChange={setMarketRegion} currency={currency} onCurrencyChange={setCurrency} facilityMayContain={facilityMayContain} onMayContainChange={setFacilityMayContain} defaultFillMode={defaultFillMode} onFillModeChange={setDefaultFillMode} onDirtyChange={setMarketDirty} />
+        ) : activeTab === "brand" ? (
+          <BrandTab brand={brand} onBrandChange={setBrand} onDirtyChange={setBrandDirty} />
         ) : activeTab === "printing" ? (
-          <LabelPrinterSection />
+          <div className="space-y-6">
+            <LabelTemplatesLink />
+            <DefaultBatchLabelTemplateSection />
+          </div>
         ) : activeTab === "demo" ? (
           <DemoTab />
         ) : null}
@@ -494,42 +511,116 @@ function DemoTab() {
   );
 }
 
-function LabelPrinterSection() {
-  const [enabled, setEnabled] = useState(() =>
-    typeof window !== "undefined" && localStorage.getItem("niimbot-printer-enabled") === "true"
+function LabelTemplatesLink() {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-primary">Label templates</h2>
+      <Link
+        href="/labels"
+        className="group block rounded-lg border border-border bg-card p-4 hover:bg-muted/40 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <Tags className="w-5 h-5 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Design printable label templates</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Drag-and-drop editor for box stickers, filling labels, and retail boxes. Templates are
+              stored on this device (and synced via Dexie Cloud if configured) and reused at print time.
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground shrink-0" />
+        </div>
+      </Link>
+    </section>
   );
+}
 
-  function toggle() {
-    const next = !enabled;
-    setEnabled(next);
-    localStorage.setItem("niimbot-printer-enabled", next ? "true" : "false");
+function DefaultBatchLabelTemplateSection() {
+  const templates = useLabelTemplates();
+
+  // One row per kind so users can pin a default for each entry point. The
+  // empty-state copy and section heading stay the same — only the picker
+  // splits by kind underneath.
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-primary">Default label templates</h2>
+      <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+        {templates.length === 0 ? (
+          <div className="flex items-start gap-3">
+            <Printer className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">No templates yet</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Design one in <Link href="/labels" className="underline">Label templates</Link>.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <DefaultTemplateRow
+              kind="production-batch"
+              label="Production batches"
+              hint="Pre-selected when you tap “Save labels” on a finished moulding batch."
+              templates={templates}
+            />
+            <DefaultTemplateRow
+              kind="filling-batch"
+              label="Filling batches"
+              hint="Pre-selected when you tap “Save labels” on a finished filling-only batch."
+              templates={templates}
+            />
+            <DefaultTemplateRow
+              kind="collection-package"
+              label="Boxes (shop)"
+              hint="Pre-selected when you print a box label from Shop → Ready to sell."
+              templates={templates}
+            />
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DefaultTemplateRow({
+  kind, label, hint, templates,
+}: {
+  kind: LabelTemplateKind;
+  label: string;
+  hint: string;
+  templates: LabelTemplate[];
+}) {
+  const defaultId = useDefaultLabelTemplateId(kind);
+  const eligible = useMemo(() => templates.filter((t) => labelTemplateKind(t) === kind), [templates, kind]);
+
+  function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setDefaultLabelTemplateId(kind, e.target.value);
   }
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-primary">Label Printer</h2>
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-        <div className="flex items-center gap-3">
-          <Printer className="w-5 h-5 text-primary shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Label printing</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Shows a &ldquo;Save labels&rdquo; button on completed production batches. Generates one PNG
-              traceability label per product type and opens the share sheet — save to Photos,
-              AirDrop, or open in the Niimbot app to print.
-            </p>
-          </div>
-          <button
-            role="switch"
-            aria-checked={enabled}
-            onClick={toggle}
-            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-border"}`}
+    <div className="flex items-start gap-3">
+      <Printer className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-xs text-muted-foreground mt-0.5 mb-2">{hint}</p>
+        {eligible.length === 0 ? (
+          <p className="text-xs italic text-muted-foreground">
+            No templates of this type yet — choose “{label}” when creating one.
+          </p>
+        ) : (
+          <select
+            value={defaultId}
+            onChange={onChange}
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`} />
-          </button>
-        </div>
+            <option value="">— Pick at print time —</option>
+            {eligible.map((t) => (
+              <option key={t.id} value={t.id}>{t.name} ({t.width}×{t.height}mm)</option>
+            ))}
+          </select>
+        )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -997,6 +1088,436 @@ function PreferencesTab({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+function BrandTab({
+  brand,
+  onBrandChange,
+  onDirtyChange,
+}: {
+  brand: Brand;
+  onBrandChange: (brand: Brand) => Promise<void>;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Brand>(brand);
+  const [logoError, setLogoError] = useState("");
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  const isDirty = editing && JSON.stringify(draft) !== JSON.stringify(brand);
+  useEffect(() => { onDirtyChange(isDirty); }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function startEditing() {
+    setDraft(brand);
+    setLogoError("");
+    setSaveError("");
+    setEditing(true);
+  }
+
+  function handleCancel() {
+    setEditing(false);
+    setLogoError("");
+    setSaveError("");
+  }
+
+  async function handleSave() {
+    const cleaned: Brand = {
+      ...draft,
+      socials: (draft.socials ?? []).filter(s => s.label.trim() || s.url.trim()),
+    };
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onBrandChange(cleaned);
+      setEditing(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not save brand settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLogoError("");
+    setLogoBusy(true);
+    try {
+      const dataUrl = await downscaleImageIfNeeded(file);
+      setDraft(d => ({ ...d, logo: dataUrl }));
+    } catch (err) {
+      setLogoError(err instanceof Error ? err.message : "Could not read that image.");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+
+  function removeLogo() {
+    setDraft(d => ({ ...d, logo: undefined }));
+    setLogoError("");
+  }
+
+  function updateSocial(idx: number, patch: Partial<BrandSocial>) {
+    setDraft(d => ({
+      ...d,
+      socials: (d.socials ?? []).map((s, i) => i === idx ? { ...s, ...patch } : s),
+    }));
+  }
+
+  function addSocial() {
+    setDraft(d => ({ ...d, socials: [...(d.socials ?? []), { label: "", url: "" }] }));
+  }
+
+  function removeSocial(idx: number) {
+    setDraft(d => ({ ...d, socials: (d.socials ?? []).filter((_, i) => i !== idx) }));
+  }
+
+  useEffect(() => {
+    if (!editing) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") handleCancel();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editing]);
+
+  const active = editing ? draft : brand;
+  const hasAnyValue = !!(active.name || active.address || active.contact || active.logo || active.vatNumber || (active.socials ?? []).length > 0);
+
+  // ---- Read-only view ----
+  if (!editing) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-primary">Brand</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Logo, business details, and links printed on labels and other customer-facing output.
+            </p>
+          </div>
+          <button
+            onClick={startEditing}
+            className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Edit
+          </button>
+        </div>
+
+        {!hasAnyValue ? (
+          <div className="rounded-lg border border-dashed border-border bg-card px-4 py-6 text-center">
+            <p className="text-sm text-muted-foreground">No brand info set yet.</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">Add it to populate logo, company, and contact fields on labels.</p>
+          </div>
+        ) : (
+          <>
+            {active.logo && (
+              <div className="rounded-lg border border-border bg-card px-4 py-3">
+                <p className="text-sm text-muted-foreground mb-2">Logo</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={active.logo} alt="Brand logo" className="max-h-24 max-w-[12rem] object-contain" />
+              </div>
+            )}
+
+            <div className="rounded-lg border border-border bg-card divide-y divide-border">
+              {active.name && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Business name</span>
+                  <span className="text-sm font-medium text-right">{active.name}</span>
+                </div>
+              )}
+              {active.address && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Address</span>
+                  <span className="text-sm font-medium text-right whitespace-pre-line">{active.address}</span>
+                </div>
+              )}
+              {active.contact && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Contact</span>
+                  <span className="text-sm font-medium text-right">{active.contact}</span>
+                </div>
+              )}
+              {active.vatNumber && (
+                <div className="flex justify-between gap-4 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">VAT / business no.</span>
+                  <span className="text-sm font-medium text-right">{active.vatNumber}</span>
+                </div>
+              )}
+            </div>
+
+            {(active.socials ?? []).length > 0 && (
+              <div className="rounded-lg border border-border bg-card px-4 py-3">
+                <p className="text-sm text-muted-foreground mb-2">Links</p>
+                <ul className="space-y-1">
+                  {(active.socials ?? []).map((s, i) => (
+                    <li key={i} className="flex justify-between gap-4 text-sm">
+                      <span className="text-muted-foreground">{s.label || "—"}</span>
+                      <span className="font-medium text-right break-all">{s.url}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ---- Edit mode ----
+  const draftSocials = draft.socials ?? [];
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-primary">Logo</h2>
+        <p className="text-xs text-muted-foreground">
+          Uploaded as an image and embedded into labels. PNG with a transparent background works best. Large images are resized to fit print sizes before being saved.
+        </p>
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          {draft.logo ? (
+            <div className="flex items-start gap-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={draft.logo} alt="Brand logo preview" className="max-h-24 max-w-[12rem] object-contain border border-border rounded bg-white p-1" />
+              <div className="flex flex-col gap-2">
+                <label className={`cursor-pointer rounded-full border border-border px-3 py-1.5 text-sm text-center hover:bg-muted ${logoBusy ? "opacity-50 pointer-events-none" : ""}`}>
+                  {logoBusy ? "Reading…" : "Replace"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoFile}
+                    className="sr-only"
+                    disabled={logoBusy}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={removeLogo}
+                  className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm text-status-warn hover:bg-muted"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
+            <label className={`inline-flex items-center gap-2 rounded-full border border-dashed border-border px-4 py-2 text-sm text-muted-foreground hover:bg-muted cursor-pointer w-fit ${logoBusy ? "opacity-50 pointer-events-none" : ""}`}>
+              <Upload className="w-4 h-4" />
+              {logoBusy ? "Reading…" : "Upload logo"}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleLogoFile}
+                className="sr-only"
+                disabled={logoBusy}
+              />
+            </label>
+          )}
+          {logoError && (
+            <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+              <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+              <p className="text-xs text-destructive">{logoError}</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-primary">Business details</h2>
+        <p className="text-xs text-muted-foreground">
+          Business name and address are required on EU FIC retail labels. The contact information is optional.
+        </p>
+        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">Business name</label>
+            <input
+              type="text"
+              value={draft.name ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, name: e.target.value }))}
+              placeholder="e.g. Atelier Choc"
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">Address</label>
+            <textarea
+              value={draft.address ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, address: e.target.value }))}
+              placeholder={"e.g.\nPrinsengracht 12\n1015 DK Amsterdam"}
+              rows={3}
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm resize-y"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">Contact information</label>
+            <input
+              type="text"
+              value={draft.contact ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, contact: e.target.value }))}
+              // Keep this placeholder free of literal name@host.tld patterns:
+              // Cloudflare's Email Obfuscation rewrites them into a
+              // <span data-cfemail> + injected decoder script, which breaks
+              // React hydration of the rendered HTML.
+              placeholder={"e.g. atelierchoc.nl · hi [at] atelierchoc.nl"}
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium">VAT / business number <span className="text-muted-foreground font-normal">(optional)</span></label>
+            <input
+              type="text"
+              value={draft.vatNumber ?? ""}
+              onChange={(e) => setDraft(d => ({ ...d, vatNumber: e.target.value }))}
+              placeholder="e.g. NL123456789B01"
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-primary">Links</h2>
+        <p className="text-xs text-muted-foreground">
+          Socials, website, or any other URL you want to surface on labels or QR codes. The label decides which ones to render.
+        </p>
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          {draftSocials.length === 0 && (
+            <p className="text-sm text-muted-foreground">No links yet.</p>
+          )}
+          {draftSocials.map((s, i) => (
+            <SocialLinkRow
+              key={i}
+              social={s}
+              onChange={(patch) => updateSocial(i, patch)}
+              onRemove={() => removeSocial(i)}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={addSocial}
+            className="rounded-full border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+          >
+            + Add link
+          </button>
+        </div>
+      </section>
+
+      {saveError && (
+        <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+          <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+          <div className="text-xs text-destructive space-y-1">
+            <p><strong>Could not save.</strong> {saveError}</p>
+            {draft.logo && (
+              <p>
+                If you just added a logo, the saved record may be too large for sync. Try a smaller image, or remove the logo and save the other fields first.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          disabled={saving || logoBusy}
+          className="flex-1 rounded-full bg-primary text-primary-foreground py-2 text-sm font-medium disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button
+          onClick={handleCancel}
+          disabled={saving}
+          className="rounded-full border border-border px-4 py-2 text-sm disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One row in the Brand → Links editor. The label is a dropdown of curated
+ * social networks (so the renderer always finds a matching icon) plus a
+ * "Custom…" escape hatch that reveals a free-text input for niche networks
+ * we haven't pre-listed. Switching back to a curated entry clears the custom
+ * text so the picker stays predictable.
+ */
+const CUSTOM_LABEL_SENTINEL = "__custom__";
+
+function SocialLinkRow({
+  social,
+  onChange,
+  onRemove,
+}: {
+  social: BrandSocial;
+  onChange: (patch: Partial<BrandSocial>) => void;
+  onRemove: () => void;
+}) {
+  const matched = findSocialNetwork(social.label);
+  const isCustom = !matched && social.label.length > 0;
+  // Sentinel chosen so newly-added (empty label) rows default to the first
+  // curated option's label — saves a click for the common case while still
+  // letting the user pick "Custom…" right away.
+  const selectValue = matched ? matched.id : isCustom ? CUSTOM_LABEL_SENTINEL : "";
+
+  function onSelect(e: React.ChangeEvent<HTMLSelectElement>) {
+    const v = e.target.value;
+    if (v === "") { onChange({ label: "" }); return; }
+    if (v === CUSTOM_LABEL_SENTINEL) {
+      // Preserve any custom label the user already typed; otherwise leave it
+      // blank so the input shows its placeholder.
+      if (!isCustom) onChange({ label: "" });
+      return;
+    }
+    const def = SOCIAL_NETWORKS.find((n) => n.id === v);
+    if (def) onChange({ label: def.label });
+  }
+
+  const urlPlaceholder = matched?.placeholder ?? "URL or @handle";
+
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <select
+        value={selectValue}
+        onChange={onSelect}
+        className="w-full sm:w-44 rounded-md border border-border bg-card px-3 py-2 text-sm"
+      >
+        <option value="">— Pick a network —</option>
+        {SOCIAL_NETWORKS.map((n) => (
+          <option key={n.id} value={n.id}>{n.label}</option>
+        ))}
+        <option value={CUSTOM_LABEL_SENTINEL}>Custom…</option>
+      </select>
+      {selectValue === CUSTOM_LABEL_SENTINEL && (
+        <input
+          type="text"
+          value={social.label}
+          onChange={(e) => onChange({ label: e.target.value })}
+          placeholder="Network name (e.g. Pinterest)"
+          className="w-full sm:w-44 rounded-md border border-border bg-card px-3 py-2 text-sm"
+          autoFocus
+        />
+      )}
+      <input
+        type="text"
+        value={social.url}
+        onChange={(e) => onChange({ url: e.target.value })}
+        placeholder={urlPlaceholder}
+        className="flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm"
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove link"
+        className="shrink-0 rounded-full border border-border p-2 text-muted-foreground hover:text-status-warn hover:bg-muted"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

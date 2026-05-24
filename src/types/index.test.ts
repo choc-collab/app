@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { costPerGram, allergenLabel, migrateAllergens, getAllergensByRegion, EU_ALLERGENS, UK_ALLERGENS, US_ALLERGENS, AU_ALLERGENS, CA_ALLERGENS, getCurrencySymbol, CURRENCIES, MARKET_LABEL_RULES, normalizeApplyAt, DECORATION_APPLY_AT_OPTIONS } from "./index";
+import { costPerGram, allergenLabel, migrateAllergens, getAllergensByRegion, EU_ALLERGENS, UK_ALLERGENS, US_ALLERGENS, AU_ALLERGENS, CA_ALLERGENS, getCurrencySymbol, CURRENCIES, MARKET_LABEL_RULES, normalizeApplyAt, DECORATION_APPLY_AT_OPTIONS, createBlankTemplate } from "./index";
 import type { Ingredient } from "./index";
 
 function makeIngredient(overrides: Partial<Ingredient> = {}): Ingredient {
@@ -401,5 +401,33 @@ describe("DECORATION_APPLY_AT_OPTIONS", () => {
     for (const o of DECORATION_APPLY_AT_OPTIONS) {
       expect(o.label).toBeTruthy();
     }
+  });
+});
+
+// ── createBlankTemplate ─────────────────────────────────────────────────────
+
+describe("createBlankTemplate", () => {
+  it("returns a template seeded with the supplied dimensions and metadata", () => {
+    const now = new Date("2026-05-10T12:00:00Z");
+    const tpl = createBlankTemplate({
+      name: "Box of 9",
+      kind: "collection-package",
+      width: 89,
+      height: 36,
+      now,
+    });
+    expect(tpl.name).toBe("Box of 9");
+    expect(tpl.kind).toBe("collection-package");
+    expect(tpl.width).toBe(89);
+    expect(tpl.height).toBe(36);
+    expect(tpl.fields).toEqual([]);
+    expect(tpl.createdAt).toBe(now);
+    expect(tpl.updatedAt).toBe(now);
+  });
+
+  it("returns a fresh fields array on each call (no shared reference)", () => {
+    const a = createBlankTemplate({ name: "a", kind: "production-batch", width: 50, height: 30 });
+    const b = createBlankTemplate({ name: "b", kind: "production-batch", width: 50, height: 30 });
+    expect(a.fields).not.toBe(b.fields);
   });
 });
