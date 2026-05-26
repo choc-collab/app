@@ -886,6 +886,43 @@ export function generateBatchSummary(params: {
     lines.push("");
   }
 
+  // Per-filling ingredient breakdown: lists each filling's scaled ingredients
+  // and nested-filling components (the nested filling itself, not its leaf
+  // ingredients) inline under the filling header. Mirrors the production-card
+  // recipe view so the summary reads "500g caramel base + 5g peppermint oil"
+  // rather than showing the nested filling's expanded raw ingredients.
+  // Leaf ingredients still aggregate globally in INGREDIENTS USED below for
+  // recall traceability.
+  const formatComponentLines = (
+    si: readonly ScaledIngredient[],
+    sn: readonly ScaledNestedFilling[] | undefined,
+  ): string[] => {
+    type Row = { name: string; manufacturer?: string; amount: number; unit: string; nested: boolean };
+    const rows: Row[] = [];
+    for (const i of si) {
+      const ing = ingredientMap.get(i.ingredientId);
+      rows.push({
+        name: ing?.name ?? `Ingredient #${i.ingredientId}`,
+        manufacturer: ing?.manufacturer,
+        amount: Math.round(i.amount * 10) / 10,
+        unit: i.unit,
+        nested: false,
+      });
+    }
+    for (const n of sn ?? []) {
+      rows.push({ name: n.fillingName, amount: Math.round(n.amount * 10) / 10, unit: n.unit, nested: true });
+    }
+    rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return rows.map((r) => {
+      const label = r.nested
+        ? `${r.name} (nested)`
+        : r.manufacturer
+          ? `${r.name} (${r.manufacturer})`
+          : r.name;
+      return `    ${label.padEnd(32)} ${r.amount}${r.unit}`;
+    });
+  };
+
   // --- Standalone filling batches (PlanFilling-derived) ---
   if (standaloneFillings.length > 0) {
     lines.push("FILLING BATCHES");
@@ -895,6 +932,7 @@ export function generateBatchSummary(params: {
       totalFillingG += sf.targetGrams;
       const multLabel = sf.multiplier > 0 ? `  (×${sf.multiplier} base)` : "";
       lines.push(`  ${sf.fillingName.padEnd(30)} ${sf.targetGrams}g${multLabel}`);
+      for (const l of formatComponentLines(sf.scaledIngredients, sf.scaledNestedFillings)) lines.push(l);
     }
     lines.push("─".repeat(48));
     lines.push(`  ${"Total yield:".padEnd(30)} ${totalFillingG}g`);
@@ -916,6 +954,7 @@ export function generateBatchSummary(params: {
       } else {
         lines.push(`  ${cl.fillingName.padEnd(30)} ${cl.totalWeightG}g`);
       }
+      for (const l of formatComponentLines(cl.scaledIngredients, cl.scaledNestedFillings)) lines.push(l);
     }
     lines.push("─".repeat(48));
     lines.push("");

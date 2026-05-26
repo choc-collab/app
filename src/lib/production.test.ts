@@ -1078,11 +1078,10 @@ describe("generateBatchSummary", () => {
     };
     const ings: IngredientRef[] = [{ id: "1", name: "Cream" }];
     const result = generateBatchSummary(makeBatchSummaryParams({ fillingAmounts: [la1, la2], ingredients: ings }));
-    // 50 + 30 = 80g total cream
-    expect(result).toContain("80g");
-    // Should appear only once
-    const matches = result.match(/Cream/g);
-    expect(matches).toHaveLength(1);
+    // INGREDIENTS USED is the global aggregate: 50 + 30 = 80g cream, listed once.
+    const ingredientsBlock = result.slice(result.indexOf("INGREDIENTS USED"));
+    expect(ingredientsBlock).toMatch(/Cream\s+80g/);
+    expect(ingredientsBlock.match(/Cream/g)).toHaveLength(1);
   });
 
   it("omits ingredients section when there are no filling amounts", () => {
@@ -1160,6 +1159,66 @@ describe("generateBatchSummary", () => {
     expect(result).toContain("Total:");
     expect(result).toContain("15 pcs");
     expect(result).not.toContain("Yield:");
+  });
+
+  it("lists the nested filling as a single component under the host, alongside the host's own ingredients", () => {
+    // Host filling "Peppermint cream" = 500g caramel base (nested) + 5g
+    // peppermint oil. The nested caramel base also appears as its own
+    // FillingAmount (after expandNestedFillings) with its own leaf ingredients.
+    const host: FillingAmount = {
+      fillingId: "host", fillingName: "Peppermint cream",
+      planProductId: "1", productName: "Mint truffle",
+      weightG: 505,
+      scaledIngredients: [{ ingredientId: "peppermint", amount: 5, unit: "g" }],
+      scaledNestedFillings: [{ fillingId: "base", fillingName: "Caramel base", amount: 500, unit: "g" }],
+    };
+    const child: FillingAmount = {
+      fillingId: "base", fillingName: "Caramel base",
+      planProductId: "1", productName: "Mint truffle",
+      weightG: 500,
+      scaledIngredients: [{ ingredientId: "choc", amount: 300, unit: "g" }],
+    };
+    const result = generateBatchSummary(makeBatchSummaryParams({
+      fillingAmounts: [host, child],
+      ingredients: [
+        { id: "peppermint", name: "Peppermint oil" },
+        { id: "choc", name: "Callebaut", manufacturer: "Callebaut" },
+      ],
+    }));
+
+    // Host shows the nested filling and the host's own ingredient inline —
+    // not the caramel base's leaf ingredients. The two indented lines
+    // immediately under the host header are alphabetically sorted.
+    const lines = result.split("\n");
+    const hostIdx = lines.findIndex((l) => /^ {2}Peppermint cream\b/.test(l));
+    expect(hostIdx).toBeGreaterThan(-1);
+    expect(lines[hostIdx + 1]).toMatch(/^ {4}Caramel base \(nested\)\s+500g/);
+    expect(lines[hostIdx + 2]).toMatch(/^ {4}Peppermint oil\s+5g/);
+    // The next line is the Caramel base's own header — Callebaut should not
+    // leak into the host's sub-block.
+    expect(lines[hostIdx + 3]).toMatch(/^ {2}Caramel base\s+500g/);
+    expect(lines[hostIdx + 4]).toMatch(/^ {4}Callebaut/);
+
+    // INGREDIENTS USED is still the global raw-ingredient ledger (recall trace).
+    expect(result).toContain("INGREDIENTS USED");
+    expect(result).toMatch(/Callebaut.*300g/);
+    expect(result).toMatch(/Peppermint oil\s+5g/);
+  });
+
+  it("lists nested filling and ingredients inline for standalone filling batches", () => {
+    const standalone = {
+      planFillingId: "pf1", fillingId: "host", fillingName: "Peppermint cream",
+      targetGrams: 505, multiplier: 1,
+      scaledIngredients: [{ ingredientId: "peppermint", amount: 5, unit: "g" }],
+      scaledNestedFillings: [{ fillingId: "base", fillingName: "Caramel base", amount: 500, unit: "g" }],
+    };
+    const result = generateBatchSummary(makeBatchSummaryParams({
+      standaloneFillings: [standalone],
+      ingredients: [{ id: "peppermint", name: "Peppermint oil" }],
+    }));
+    expect(result).toContain("FILLING BATCHES");
+    expect(result).toMatch(/Caramel base \(nested\)\s+500g/);
+    expect(result).toMatch(/Peppermint oil\s+5g/);
   });
 });
 
