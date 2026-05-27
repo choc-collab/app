@@ -46,13 +46,16 @@
 /production/*/               /production/_spa/                  200
 /production/:id              /production/_spa/                  200
 
-# Calculator nested routes
+# Calculator nested routes (must come before the /calculator/:id catch-all below)
 /calculator/:id/batch/*   /calculator/_spa/batch/:splat   200
 /calculator/*/batch/      /calculator/_spa/batch/         200
 /calculator/:id/batch     /calculator/_spa/batch/         200
 /calculator/:id/run/*     /calculator/_spa/run/:splat     200
 /calculator/*/run/        /calculator/_spa/run/           200
 /calculator/:id/run       /calculator/_spa/run/           200
+/calculator/:id/*         /calculator/_spa/:splat         200
+/calculator/*/            /calculator/_spa/               200
+/calculator/:id           /calculator/_spa/               200
 
 # Nested category / design detail pages
 /fillings/categories/:id/*           /fillings/categories/_spa/:splat     200
