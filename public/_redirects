@@ -3,13 +3,6 @@
 /app                   /today  302
 /app/                  /today  302
 
-# /lab and /calculator are not yet publicly available — bounce to home.
-# More specific rules first (Cloudflare processes top-to-bottom, first match wins).
-/lab/*                 /  302
-/lab                   /  302
-/calculator/*          /  302
-/calculator            /  302
-
 # SPA rewrites for dynamic routes: user-generated IDs don't exist at build time,
 # so we generate a `_spa` placeholder HTML per route and rewrite any real ID to it.
 # The placeholder hydrates client-side and `useSpaId` reads the actual ID from
@@ -53,7 +46,7 @@
 /production/*/               /production/_spa/                  200
 /production/:id              /production/_spa/                  200
 
-# Calculator nested routes (blocked above, but include for completeness)
+# Calculator nested routes
 /calculator/:id/batch/*   /calculator/_spa/batch/:splat   200
 /calculator/*/batch/      /calculator/_spa/batch/         200
 /calculator/:id/batch     /calculator/_spa/batch/         200
