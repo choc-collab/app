@@ -43,7 +43,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dexie": "^4.4.2",
-    "dexie-cloud-addon": "^4.4.11",
+    "dexie-cloud-addon": "^4.4.13",
     "dexie-react-hooks": "^4.4.0",
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
