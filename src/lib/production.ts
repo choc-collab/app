@@ -1058,7 +1058,12 @@ export function generateBatchSummary(params: {
   for (const sf of standaloneFillings) {
     if (seenFillings.has(sf.fillingId)) continue;
     seenFillings.add(sf.fillingId);
-    if (sf.shelfLifeWeeks == null) continue;
+    if (sf.shelfLifeWeeks == null) {
+      // Surface fillings whose shelf life isn't set so the chocolatier knows
+      // why no Best-by appears — and where to fix it.
+      shelfLifeLines.push(`  ${sf.fillingName.padEnd(30)} no shelf life set on filling`);
+      continue;
+    }
     const bestBy = new Date(completedAt.getTime() + sf.shelfLifeWeeks * 7 * 24 * 60 * 60 * 1000)
       .toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
     shelfLifeLines.push(`  ${sf.fillingName.padEnd(30)} ${sf.shelfLifeWeeks} wks  ·  Best by: ${bestBy}`);

@@ -1783,6 +1783,82 @@ describe("generateBatchSummary for fillings-only and hybrid plans", () => {
     expect(out).toContain("200g");
   });
 
+  it("emits ESTIMATED SHELF LIFE + Best by for a fillings-only batch when host has shelfLifeWeeks (host also has a nested child)", () => {
+    const hostWithNested: StandaloneFillingAmount = {
+      planFillingId: "pf-host",
+      fillingId: "host",
+      fillingName: "Peppermint cream",
+      targetGrams: 505,
+      multiplier: 1,
+      scaledIngredients: [{ ingredientId: "pepp", amount: 5, unit: "g" }],
+      scaledNestedFillings: [{ fillingId: "base", fillingName: "Caramel base", amount: 500, unit: "g" }],
+      shelfLifeWeeks: 4,
+    };
+    const out = generateBatchSummary({
+      batchNumber: "B5",
+      planName: "Filling day",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [],
+      productNames: new Map(),
+      moulds: new Map(),
+      fillingAmounts: [],
+      ingredients: [{ id: "pepp", name: "Peppermint oil" }],
+      standaloneFillings: [hostWithNested],
+    });
+    expect(out).toContain("ESTIMATED SHELF LIFE");
+    expect(out).toMatch(/Peppermint cream\s+4 wks\s+·\s+Best by:/);
+  });
+
+  it("notes 'no shelf life set on filling' for standalone fillings without shelfLifeWeeks", () => {
+    // Mixed: one filling has shelf life, one doesn't — both should appear in
+    // the section, so the user can see which filling needs the data.
+    const withShelf: StandaloneFillingAmount = {
+      planFillingId: "pf-a", fillingId: "a", fillingName: "Peppermint cream",
+      targetGrams: 500, multiplier: 1,
+      scaledIngredients: [], scaledNestedFillings: [],
+      shelfLifeWeeks: 4,
+    };
+    const withoutShelf: StandaloneFillingAmount = {
+      planFillingId: "pf-b", fillingId: "b", fillingName: "Caramel base",
+      targetGrams: 500, multiplier: 1,
+      scaledIngredients: [], scaledNestedFillings: [],
+    };
+    const out = generateBatchSummary({
+      batchNumber: "B6",
+      planName: "P",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [],
+      productNames: new Map(),
+      moulds: new Map(),
+      fillingAmounts: [],
+      ingredients: [],
+      standaloneFillings: [withShelf, withoutShelf],
+    });
+    expect(out).toContain("ESTIMATED SHELF LIFE");
+    expect(out).toMatch(/Peppermint cream\s+4 wks\s+·\s+Best by:/);
+    expect(out).toMatch(/Caramel base\s+no shelf life set on filling/);
+  });
+
+  it("calculateStandaloneFillingAmounts carries shelfLifeWeeks through for a host with nested children", () => {
+    const planFilling: PlanFilling = {
+      id: "pf-host", planId: "plan-1", fillingId: "host", targetGrams: 505, sortOrder: 0,
+    };
+    const fillingsMap = new Map<string, Filling>([
+      ["host", makeFilling({ id: "host", name: "Peppermint cream", shelfLifeWeeks: 4 })],
+      ["base", makeFilling({ id: "base", name: "Caramel base" })],
+    ]);
+    const fillingIngredientsMap = new Map<string, FillingIngredient[]>([
+      ["host", [makeFillingIngredient({ fillingId: "host", ingredientId: "pepp", amount: 5 })]],
+    ]);
+    const componentsMap = new Map<string, FillingComponent[]>([
+      ["host", [{ fillingId: "host", childFillingId: "base", amount: 500, unit: "g", sortOrder: 0 }]],
+    ]);
+    const [amount] = calculateStandaloneFillingAmounts([planFilling], fillingsMap, fillingIngredientsMap, componentsMap);
+    expect(amount.shelfLifeWeeks).toBe(4);
+    expect(amount.scaledNestedFillings).toHaveLength(1);
+    expect(amount.scaledNestedFillings[0].fillingName).toBe("Caramel base");
+  });
+
   it("is unchanged when no standaloneFillings are passed (backward-compat)", () => {
     const pb = makePlanProduct();
     const out = generateBatchSummary({
