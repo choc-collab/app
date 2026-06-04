@@ -1058,7 +1058,8 @@ describe("generateBatchSummary", () => {
       { id: "2", name: "Cream" },
     ];
     const result = generateBatchSummary(makeBatchSummaryParams({ fillingAmounts: [la], ingredients: ings }));
-    expect(result).toContain("INGREDIENTS USED");
+    // For a single-filling batch the per-filling breakdown is the only listing —
+    // the aggregate section is suppressed as redundant.
     expect(result).toContain("Dark chocolate (Valrhona)");
     expect(result).toContain("70g");
     expect(result).toContain("Cream");
@@ -1766,7 +1767,13 @@ describe("generateBatchSummary for fillings-only and hybrid plans", () => {
     expect(out).toContain("Caramel");
   });
 
-  it("aggregates standalone filling ingredients into INGREDIENTS USED", () => {
+  it("aggregates standalone filling ingredients into INGREDIENTS USED when multiple fillings are made", () => {
+    const sf2: StandaloneFillingAmount = {
+      planFillingId: "pf2", fillingId: "2", fillingName: "Praline",
+      targetGrams: 300, multiplier: 1,
+      scaledIngredients: [{ ingredientId: "sugar", amount: 50, unit: "g" }],
+      scaledNestedFillings: [],
+    };
     const out = generateBatchSummary({
       batchNumber: "B3",
       planName: "P",
@@ -1776,11 +1783,61 @@ describe("generateBatchSummary for fillings-only and hybrid plans", () => {
       moulds: new Map(),
       fillingAmounts: [],
       ingredients: ings,
-      standaloneFillings: [sf],
+      standaloneFillings: [sf, sf2],
     });
     expect(out).toContain("INGREDIENTS USED");
+    // 200 (Caramel) + 50 (Praline) = 250g sugar summed across both fillings
+    expect(out).toMatch(/Sugar\s+250g/);
+  });
+
+  it("skips INGREDIENTS USED for a single-filling batch with no nested components (per-filling breakdown is the same numbers)", () => {
+    const sfSolo: StandaloneFillingAmount = {
+      planFillingId: "pf1", fillingId: "1", fillingName: "Caramel",
+      targetGrams: 500, multiplier: 2,
+      scaledIngredients: [
+        { ingredientId: "sugar", amount: 200, unit: "g" },
+        { ingredientId: "cream", amount: 300, unit: "g" },
+      ],
+      scaledNestedFillings: [],
+    };
+    const out = generateBatchSummary({
+      batchNumber: "B-single",
+      planName: "Solo filling",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [],
+      productNames: new Map(),
+      moulds: new Map(),
+      fillingAmounts: [],
+      ingredients: [{ id: "sugar", name: "Sugar" }, { id: "cream", name: "Cream" }],
+      standaloneFillings: [sfSolo],
+    });
+    expect(out).toContain("FILLING BATCHES");
+    // Ingredients still appear in the per-filling breakdown
     expect(out).toContain("Sugar");
-    expect(out).toContain("200g");
+    expect(out).toContain("Cream");
+    // …but the aggregate section is suppressed because it would duplicate
+    expect(out).not.toContain("INGREDIENTS USED");
+  });
+
+  it("keeps INGREDIENTS USED when the single filling has nested components (aggregate adds info)", () => {
+    const sfWithNested: StandaloneFillingAmount = {
+      planFillingId: "pf1", fillingId: "1", fillingName: "Peppermint cream",
+      targetGrams: 505, multiplier: 1,
+      scaledIngredients: [{ ingredientId: "pepp", amount: 5, unit: "g" }],
+      scaledNestedFillings: [{ fillingId: "base", fillingName: "Caramel base", amount: 500, unit: "g" }],
+    };
+    const out = generateBatchSummary({
+      batchNumber: "B-nested",
+      planName: "P",
+      completedAt: new Date("2026-04-21T10:00:00Z"),
+      planProducts: [],
+      productNames: new Map(),
+      moulds: new Map(),
+      fillingAmounts: [],
+      ingredients: [{ id: "pepp", name: "Peppermint oil" }],
+      standaloneFillings: [sfWithNested],
+    });
+    expect(out).toContain("INGREDIENTS USED");
   });
 
   it("emits ESTIMATED SHELF LIFE + Best by for a fillings-only batch when host has shelfLifeWeeks (host also has a nested child)", () => {

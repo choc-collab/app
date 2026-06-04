@@ -989,7 +989,19 @@ export function generateBatchSummary(params: {
     }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
-  if (sorted.length > 0) {
+  // When the batch contains only one unique filling and that filling has no
+  // nested components, the per-filling breakdown above already lists exactly
+  // these numbers — the aggregate would just duplicate it. Multi-filling and
+  // nested-host batches still benefit from the aggregate as a recall ledger.
+  const activeFillings: { fillingId: string; scaledNestedFillings?: { length: number } }[] = [
+    ...fillingAmounts.filter((la) => !la.isFromPreviousBatch),
+    ...standaloneFillings,
+  ];
+  const uniqueFillingIds = new Set(activeFillings.map((f) => f.fillingId));
+  const anyNested = activeFillings.some((f) => (f.scaledNestedFillings?.length ?? 0) > 0);
+  const aggregateDuplicatesPerFilling = uniqueFillingIds.size <= 1 && !anyNested;
+
+  if (sorted.length > 0 && !aggregateDuplicatesPerFilling) {
     lines.push("INGREDIENTS USED");
     lines.push("─".repeat(48));
     for (const ing of sorted) {
