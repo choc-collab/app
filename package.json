@@ -47,7 +47,7 @@
     "dexie-react-hooks": "^4.4.0",
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
-    "lucide-react": "^1.17.0",
+    "lucide-react": "^1.18.0",
     "next": "^16.2.7",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
