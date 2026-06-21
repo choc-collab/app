@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useProductsList, useMouldsList, useProductFillingsForProducts, useFillingIngredientsForFillings, useIngredients, saveProductionPlan, savePlanProduct, savePlanFilling, saveFillingStock, toggleStep, useFillings, usePlanProducts, usePlanFillings, generateBatchNumber, useProductStockAlerts, useCollections, useAllCollectionProducts, useFillingStockItems, useShelfStableCategoryNames, useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling } from "@/lib/hooks";
-import { AlertTriangle, ArrowLeft, Beaker, Check, ChevronDown, History, Package, PackageX, Plus, ShoppingCart, Sprout, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Ban, Beaker, Check, ChevronDown, History, Package, PackageX, Plus, Search, ShoppingCart, Sprout, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Product, Mould, PlanProduct, PlanFilling, PlanProductAdditionalMould, FillingPreviousBatch, Filling } from "@/types";
@@ -10,6 +10,7 @@ import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, cal
 import { consumeSeedFromTodayList } from "@/lib/todaySeed";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
+import { SegmentedTabs } from "@/components/pantry/segmented-tabs";
 
 // Per-product ingredient stock issues
 interface IngredientIssue {
@@ -94,6 +95,9 @@ function NewPlanContent() {
   const [expandedWarnings, setExpandedWarnings] = useState<Set<string>>(new Set<string>());
   // Collection filter — default ON so active-collection products are prioritised
   const [filterToActiveCollection, setFilterToActiveCollection] = useState(true);
+  // Free-text product search, mirroring the /products page so the selection step
+  // feels like a familiar product list rather than a bespoke picker.
+  const [productSearch, setProductSearch] = useState("");
 
   // Load source plan products + fillings when duplicating
   const sourcePlanProducts = usePlanProducts(fromPlanId);
@@ -252,10 +256,26 @@ function NewPlanContent() {
       .map((cr) => cr.productId)
   ), [allCollectionProducts, activeCollectionIds]);
 
-  // Sort products: when collections exist, active-collection products float to top.
-  // Within each group (active / rest): gone → low stock → ingredient issues → alpha.
-  // When no collections defined, sort is unchanged (stock priority → alpha).
-  const sortedProducts = useMemo(() => {
+  // Products matching the search box (name only) — the shared lens for the
+  // segmented-tab counts below as well as the grouped list itself.
+  const searchedProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter((p) => p.name.toLowerCase().includes(q));
+  }, [products, productSearch]);
+
+  // Tab counts reflect what's actually searchable right now (post-search) so the
+  // "(12)" next to a tab matches the list you'd see if you switched to it.
+  const currentCollectionCount = useMemo(
+    () => searchedProducts.filter((p) => activeCollectionProductIds.has(p.id!)).length,
+    [searchedProducts, activeCollectionProductIds],
+  );
+
+  // Group products into legible sections — "Needs attention" (any stock or
+  // ingredient flag) floats to the top, then the current collection, then the
+  // rest. The smart prioritisation that used to be an invisible global sort is
+  // now spelled out as headers. Returns an ordered list of non-empty groups.
+  const productGroups = useMemo(() => {
     const stockPriority = (alert: "low" | "gone" | undefined, issues: IngredientIssue[]) => {
       if (alert === "gone") return 0;
       if (alert === "low") return 1;
@@ -264,24 +284,39 @@ function NewPlanContent() {
       if (issues.some((i) => i.status === "ordered")) return 4;
       return 5;
     };
+    const needsAttention = (p: Product) =>
+      productStockAlerts.get(p.id!) != null || (ingredientIssuesByProduct.get(p.id!) ?? []).length > 0;
 
     const list = filterToActiveCollection && hasActiveCollections
-      ? products.filter((r) => activeCollectionProductIds.has(r.id!))
-      : [...products];
+      ? searchedProducts.filter((p) => activeCollectionProductIds.has(p.id!))
+      : searchedProducts;
 
-    return list.sort((a, b) => {
-      // If collections exist, active-collection products sort before others
-      if (hasActiveCollections) {
-        const aIn = activeCollectionProductIds.has(a.id!);
-        const bIn = activeCollectionProductIds.has(b.id!);
-        if (aIn !== bIn) return aIn ? -1 : 1;
-      }
+    const attention: Product[] = [];
+    const collection: Product[] = [];
+    const other: Product[] = [];
+    for (const p of list) {
+      if (needsAttention(p)) attention.push(p);
+      else if (hasActiveCollections && activeCollectionProductIds.has(p.id!)) collection.push(p);
+      else other.push(p);
+    }
+
+    const byName = (a: Product, b: Product) => a.name.localeCompare(b.name);
+    attention.sort((a, b) => {
       const pa = stockPriority(productStockAlerts.get(a.id!), ingredientIssuesByProduct.get(a.id!) ?? []);
       const pb = stockPriority(productStockAlerts.get(b.id!), ingredientIssuesByProduct.get(b.id!) ?? []);
-      if (pa !== pb) return pa - pb;
-      return a.name.localeCompare(b.name);
+      return pa !== pb ? pa - pb : byName(a, b);
     });
-  }, [products, productStockAlerts, ingredientIssuesByProduct, activeCollectionProductIds, hasActiveCollections, filterToActiveCollection]);
+    collection.sort(byName);
+    other.sort(byName);
+
+    const groups: Array<{ key: string; label: string; items: Product[] }> = [];
+    if (attention.length) groups.push({ key: "attention", label: "Needs attention", items: attention });
+    if (collection.length) groups.push({ key: "collection", label: "In current collection", items: collection });
+    if (other.length) groups.push({ key: "other", label: hasActiveCollections ? "Other products" : "Everything else", items: other });
+    return groups;
+  }, [searchedProducts, productStockAlerts, ingredientIssuesByProduct, activeCollectionProductIds, hasActiveCollections, filterToActiveCollection]);
+
+  const totalShown = useMemo(() => productGroups.reduce((n, g) => n + g.items.length, 0), [productGroups]);
 
   const hasShelfStableFillings = useMemo(() => {
     // Direct check first — fast path for the common case.
@@ -718,152 +753,180 @@ function NewPlanContent() {
 
       {phase === "select" && (
         <div className="px-4 space-y-3 pb-6">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">Select the products you want to make:</p>
-            {hasActiveCollections && (
-              <button
-                onClick={() => setFilterToActiveCollection((v) => !v)}
-                className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filterToActiveCollection
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground"
-                }`}
-              >
-                {filterToActiveCollection ? "Current collection" : "All products"}
-              </button>
-            )}
+          <p className="text-sm text-muted-foreground">Select the products you want to make:</p>
+
+          {/* Collection lens — explicit two-state toggle replaces the old single
+              button whose label flipped ambiguously between states. */}
+          {hasActiveCollections && (
+            <SegmentedTabs
+              ariaLabel="Filter products by collection"
+              value={filterToActiveCollection ? "current" : "all"}
+              onChange={(v) => setFilterToActiveCollection(v === "current")}
+              options={[
+                { id: "current", label: "Current collection", count: currentCollectionCount },
+                { id: "all", label: "All products", count: searchedProducts.length },
+              ]}
+            />
+          )}
+
+          {/* Search — same control as the /products page so the picker reads like
+              a familiar product list. The rows are already single-line, so there's
+              no density toggle here (it had nothing meaningful to collapse). */}
+          <div className="relative">
+            <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Search products…"
+              aria-label="Search products to add"
+              className="input !pl-9"
+            />
           </div>
           {products.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">No products yet.</p>
+          ) : totalShown === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">
+              {productSearch.trim()
+                ? <>No products match &ldquo;<span className="text-foreground">{productSearch.trim()}</span>&rdquo;.</>
+                : "No products in the current collection."}
+            </p>
           ) : (
-            <>
-            {hasActiveCollections && sortedProducts.length === 0 && (
-              <p className="text-sm text-muted-foreground py-4 text-center">No products in the current collection.</p>
-            )}
-            <ul className="space-y-2">
-              {sortedProducts.map((r, idx) => {
-                const selected = selectedIds.has(r.id!);
-                const stockAlert = productStockAlerts.get(r.id!);
-                const ingIssues = ingredientIssuesByProduct.get(r.id!) ?? [];
-                const hasOutOfStock = ingIssues.some((i) => i.status === "outOfStock");
-                const hasIngWarning = ingIssues.length > 0;
-                const warningExpanded = expandedWarnings.has(r.id!);
-
-                // When showing all products with active collections, insert a divider
-                // at the boundary between active-collection and other products
-                const showDivider =
-                  !filterToActiveCollection &&
-                  hasActiveCollections &&
-                  idx > 0 &&
-                  activeCollectionProductIds.has(sortedProducts[idx - 1].id!) &&
-                  !activeCollectionProductIds.has(r.id!);
-
-                return (
-                  <li key={r.id}>
-                    {showDivider && (
-                      <div className="flex items-center gap-2 py-1 mb-1">
-                        <div className="h-px flex-1 bg-border" />
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Other products</span>
-                        <div className="h-px flex-1 bg-border" />
-                      </div>
-                    )}
-                    <div
-                      className={`rounded-lg border transition-colors ${
-                        selected
-                          ? "border-primary bg-primary/5"
-                          : stockAlert === "gone"
-                          ? "border-status-alert-edge bg-status-alert-bg/60"
-                          : stockAlert === "low"
-                          ? "border-status-warn-edge bg-status-warn-bg/50"
-                          : hasOutOfStock
-                          ? "border-status-alert-edge bg-card"
-                          : "border-border bg-card"
-                      }`}
-                    >
-                      {/* Main product row */}
-                      <button
-                        onClick={() => toggleProduct(r.id!, r)}
-                        className="w-full flex items-center gap-3 p-3 text-left"
-                      >
-                        <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
-                          selected ? "bg-primary border-primary" : "border-border"
-                        }`}>
-                          {selected && <Check className="w-3 h-3 text-primary-foreground" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{r.name}</p>
-                        </div>
-
-                        {/* Product stock status badge */}
-                        {stockAlert && (
-                          <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                            stockAlert === "gone"
-                              ? "bg-status-alert-bg text-status-alert"
-                              : "bg-status-warn-bg text-status-warn"
-                          }`}>
-                            {stockAlert === "gone" ? (
-                              <><PackageX className="w-3 h-3" aria-hidden="true" />Out of stock</>
-                            ) : (
-                              <><ShoppingCart className="w-3 h-3" aria-hidden="true" />Low stock</>
-                            )}
-                          </span>
-                        )}
-                      </button>
-
-                      {/* Ingredient issues row — shown when there are issues */}
-                      {hasIngWarning && (
-                        <div className={`border-t mx-0 ${
-                          hasOutOfStock ? "border-status-alert-edge" : "border-status-warn-edge"
-                        }`}>
-                          <button
-                            onClick={() => setExpandedWarnings((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(r.id!)) next.delete(r.id!);
-                              else next.add(r.id!);
-                              return next;
-                            })}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-left"
-                          >
-                            <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${hasOutOfStock ? "text-status-alert" : "text-status-warn"}`} aria-hidden="true" />
-                            <span className={`flex-1 text-xs font-medium ${hasOutOfStock ? "text-status-alert" : "text-status-warn"}`}>
-                              {hasOutOfStock
-                                ? `${ingIssues.filter((i) => i.status === "outOfStock").length} ingredient${ingIssues.filter((i) => i.status === "outOfStock").length > 1 ? "s" : ""} out of stock`
-                                : `${ingIssues.length} ingredient stock alert${ingIssues.length > 1 ? "s" : ""}`}
-                            </span>
-                            <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${warningExpanded ? "" : "-rotate-90"}`} aria-hidden="true" />
-                          </button>
-
-                          {warningExpanded && (
-                            <ul className="px-3 pb-2.5 space-y-1">
-                              {ingIssues.map((issue) => (
-                                <li key={issue.ingredientId} className="flex items-center gap-2">
-                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                    issue.status === "outOfStock" ? "bg-status-alert" :
-                                    issue.status === "ordered" ? "bg-blue-400" :
-                                    "bg-status-warn-edge"
-                                  }`} />
-                                  <span className="text-xs text-foreground truncate">{issue.name}</span>
-                                  <span className={`ml-auto shrink-0 text-[11px] ${
-                                    issue.status === "outOfStock" ? "text-status-alert font-medium" :
-                                    issue.status === "ordered" ? "text-blue-600" :
-                                    "text-status-warn"
-                                  }`}>
-                                    {issue.status === "outOfStock" ? "Out of stock" :
-                                     issue.status === "ordered" ? "Ordered" :
-                                     "Running low"}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
+            <div className="space-y-4">
+              {productGroups.map((group) => (
+                <div key={group.key} className="space-y-2">
+                  {/* Section header — only when there's more than one group, so a
+                      single-group list isn't topped by a redundant label. */}
+                  {productGroups.length > 1 && (
+                    <div className="flex items-center gap-2 px-0.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</span>
+                      <span className="text-[10px] text-muted-foreground tabular-nums">{group.items.length}</span>
+                      <div className="h-px flex-1 bg-border" />
                     </div>
-                  </li>
-                );
-              })}
-            </ul>
-            </>
+                  )}
+                  <ul className="space-y-2">
+                    {group.items.map((r) => {
+                      const selected = selectedIds.has(r.id!);
+                      const stockAlert = productStockAlerts.get(r.id!);
+                      const ingIssues = ingredientIssuesByProduct.get(r.id!) ?? [];
+                      const hasOutOfStock = ingIssues.some((i) => i.status === "outOfStock");
+                      const hasIngWarning = ingIssues.length > 0;
+                      const warningExpanded = expandedWarnings.has(r.id!);
+
+                      return (
+                        <li key={r.id}>
+                          <div
+                            className={`rounded-lg border transition-colors ${
+                              selected
+                                ? "border-primary bg-primary/5"
+                                : stockAlert === "gone"
+                                ? "border-status-alert-edge bg-status-alert-bg/60"
+                                : stockAlert === "low"
+                                ? "border-status-warn-edge bg-status-warn-bg/50"
+                                : hasOutOfStock
+                                ? "border-status-alert-edge bg-card"
+                                : "border-border bg-card"
+                            }`}
+                          >
+                            {/* Main product row */}
+                            <button
+                              onClick={() => toggleProduct(r.id!, r)}
+                              className="w-full flex items-center gap-3 p-3 text-left"
+                            >
+                              <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                                selected ? "bg-primary border-primary" : "border-border"
+                              }`}>
+                                {selected && <Check className="w-3 h-3 text-primary-foreground" />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm truncate">{r.name}</p>
+                              </div>
+
+                              {/* Status badges. "Can't make" flags a hard stop (an
+                                  out-of-stock ingredient blocks production); the
+                                  product's own stock badge sits alongside it. */}
+                              {(hasOutOfStock || stockAlert) && (
+                                <div className="shrink-0 flex items-center gap-1.5">
+                                  {hasOutOfStock && (
+                                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-status-alert-bg text-status-alert">
+                                      <Ban className="w-3 h-3" aria-hidden="true" />Can&rsquo;t make
+                                    </span>
+                                  )}
+                                  {stockAlert && (
+                                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                      stockAlert === "gone"
+                                        ? "bg-status-alert-bg text-status-alert"
+                                        : "bg-status-warn-bg text-status-warn"
+                                    }`}>
+                                      {stockAlert === "gone" ? (
+                                        <><PackageX className="w-3 h-3" aria-hidden="true" />Out of stock</>
+                                      ) : (
+                                        <><ShoppingCart className="w-3 h-3" aria-hidden="true" />Low stock</>
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </button>
+
+                            {/* Ingredient issues row — the expandable breakdown of
+                                which ingredients are short. The "Can't make" badge
+                                above is the at-a-glance signal; this is the detail. */}
+                            {hasIngWarning && (
+                              <div className={`border-t mx-0 ${
+                                hasOutOfStock ? "border-status-alert-edge" : "border-status-warn-edge"
+                              }`}>
+                                <button
+                                  onClick={() => setExpandedWarnings((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(r.id!)) next.delete(r.id!);
+                                    else next.add(r.id!);
+                                    return next;
+                                  })}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                                >
+                                  <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${hasOutOfStock ? "text-status-alert" : "text-status-warn"}`} aria-hidden="true" />
+                                  <span className={`flex-1 text-xs font-medium ${hasOutOfStock ? "text-status-alert" : "text-status-warn"}`}>
+                                    {hasOutOfStock
+                                      ? `${ingIssues.filter((i) => i.status === "outOfStock").length} ingredient${ingIssues.filter((i) => i.status === "outOfStock").length > 1 ? "s" : ""} out of stock`
+                                      : `${ingIssues.length} ingredient stock alert${ingIssues.length > 1 ? "s" : ""}`}
+                                  </span>
+                                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${warningExpanded ? "" : "-rotate-90"}`} aria-hidden="true" />
+                                </button>
+
+                                {warningExpanded && (
+                                  <ul className="px-3 pb-2.5 space-y-1">
+                                    {ingIssues.map((issue) => (
+                                      <li key={issue.ingredientId} className="flex items-center gap-2">
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                          issue.status === "outOfStock" ? "bg-status-alert" :
+                                          issue.status === "ordered" ? "bg-blue-400" :
+                                          "bg-status-warn-edge"
+                                        }`} />
+                                        <span className="text-xs text-foreground truncate">{issue.name}</span>
+                                        <span className={`ml-auto shrink-0 text-[11px] ${
+                                          issue.status === "outOfStock" ? "text-status-alert font-medium" :
+                                          issue.status === "ordered" ? "text-blue-600" :
+                                          "text-status-warn"
+                                        }`}>
+                                          {issue.status === "outOfStock" ? "Out of stock" :
+                                           issue.status === "ordered" ? "Ordered" :
+                                           "Running low"}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
           )}
           <button
             onClick={() => setPhase("configure")}
