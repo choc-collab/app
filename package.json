@@ -42,12 +42,12 @@
     "@types/leaflet": "^1.9.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dexie": "^4.4.3",
+    "dexie": "^4.4.4",
     "dexie-cloud-addon": "^4.4.13",
     "dexie-react-hooks": "^4.4.0",
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
-    "lucide-react": "^1.18.0",
+    "lucide-react": "^1.21.0",
     "next": "^16.2.7",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
@@ -59,17 +59,17 @@
     "postcss": "^8.5.13"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4.3.1",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.7",
     "postcss": "^8.5.13",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }
