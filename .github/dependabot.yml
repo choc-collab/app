@@ -5,6 +5,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    groups:
+      # Roll all minor/patch npm updates into ONE combined PR per run.
+      # Major bumps are intentionally left ungrouped so they get their own
+      # PR for isolated review (e.g. typescript 6 -> 7 broke peer ranges).
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # eslint v10 breaks eslint-plugin-react@7.x (bundled by eslint-config-next).
       # Stay on 9.x until upstream catches up.
