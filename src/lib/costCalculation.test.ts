@@ -18,7 +18,6 @@ import {
   SHELL_FACTOR,
   CAP_FACTOR,
 } from "./costCalculation";
-import { FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
 import type { Mould, ProductFilling, FillingIngredient, Filling, CoatingChocolateMapping, Ingredient, BreakdownEntry } from "@/types";
 
 const mockMould: Mould = {
@@ -55,7 +54,7 @@ describe("calculateFillingWeightPerCavityG", () => {
   it("scales by fill percentage using default shell percentage (37%)", () => {
     // Default shellPercentage = 37 → fillFactor = 0.63
     const full = calculateFillingWeightPerCavityG(mockMould, 100);
-    expect(full).toBeCloseTo(10 * 0.63 * DENSITY_G_PER_ML);
+    expect(full).toBeCloseTo(10 * 0.63);
 
     const half = calculateFillingWeightPerCavityG(mockMould, 50);
     expect(half).toBeCloseTo(full / 2);
@@ -64,7 +63,7 @@ describe("calculateFillingWeightPerCavityG", () => {
   it("uses a custom shellPercentage", () => {
     // shellPercentage = 50 → fillFactor = 0.50
     const result = calculateFillingWeightPerCavityG(mockMould, 100, 50);
-    expect(result).toBeCloseTo(10 * 0.50 * DENSITY_G_PER_ML);
+    expect(result).toBeCloseTo(10 * 0.50);
   });
 
   it("returns 0 for 0% fill percentage", () => {
@@ -423,16 +422,16 @@ describe("deriveShellPercentageFromFractions", () => {
 
 describe("fill fraction conversion", () => {
   it("converts grams to fraction and back", () => {
-    // 10g cavity (≈10ml), 6g filling at density 1.2 → 5ml → 50% of cavity
+    // 10g cavity, 6g filling → mass fraction 0.6
     const fraction = gramsToFillFraction(6, 10);
-    expect(fraction).toBeCloseTo(0.5);
+    expect(fraction).toBeCloseTo(0.6);
     expect(fillFractionToGrams(fraction, 10)).toBeCloseTo(6);
   });
 
   it("rescales grams when the cavity weight changes", () => {
     // The same recipe (50% of cavity) should yield more grams in a larger cavity
-    const fraction = gramsToFillFraction(6, 10); // 0.5 against 10g cavity
-    expect(fillFractionToGrams(fraction, 15)).toBeCloseTo(9); // 50% of 15g cavity = 9g
+    const fraction = gramsToFillFraction(6, 10); // 0.6 against 10g cavity
+    expect(fillFractionToGrams(fraction, 15)).toBeCloseTo(9); // 0.6 × 15g cavity = 9g
   });
 
   it("returns 0 for zero cavity weight", () => {
@@ -452,7 +451,7 @@ describe("calculateProductCost (grams mode)", () => {
   const ingredientCostMap = new Map<string, number | null>([["100", 0.02], ["101", 0.01]]);
 
   it("scales fillFraction to grams using the supplied mould's cavity weight", () => {
-    // 0.5 fraction × 10g cavity × 1.2 density = 6g of filling per cavity
+    // 0.5 fraction × 10g cavity = 5g of filling per cavity
     const productFilling: ProductFilling = {
       id: "1", productId: "1", fillingId: "10", sortOrder: 0,
       fillPercentage: 100, // Would give a different result in percentage mode
@@ -475,11 +474,11 @@ describe("calculateProductCost (grams mode)", () => {
     const fillingEntries = result.breakdown.filter((e) => e.kind === "filling_ingredient");
     expect(fillingEntries).toHaveLength(2);
     const totalFillingGrams = fillingEntries.reduce((s, e) => s + e.grams, 0);
-    expect(totalFillingGrams).toBeCloseTo(6, 1);
+    expect(totalFillingGrams).toBeCloseTo(5, 1);
   });
 
   it("rescales fill grams when costing against a larger mould", () => {
-    // Same fraction (0.5), but a 15g cavity → 0.5 × 15 × 1.2 = 9g of filling
+    // Same fraction (0.5), but a 15g cavity → 0.5 × 15 = 7.5g of filling
     const productFilling: ProductFilling = {
       id: "1", productId: "1", fillingId: "10", sortOrder: 0,
       fillPercentage: 100,
@@ -500,7 +499,7 @@ describe("calculateProductCost (grams mode)", () => {
     const totalFillingGrams = result.breakdown
       .filter((e) => e.kind === "filling_ingredient")
       .reduce((s, e) => s + e.grams, 0);
-    expect(totalFillingGrams).toBeCloseTo(9, 1);
+    expect(totalFillingGrams).toBeCloseTo(7.5, 1);
   });
 
   it("falls back to percentage mode when fillFraction is not set", () => {

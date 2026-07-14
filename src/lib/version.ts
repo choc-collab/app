@@ -72,3 +72,20 @@ export function decideBanner(params: {
 }
 
 export const CHANGELOG_URL = "https://github.com/choc-collab/app/blob/main/CHANGELOG.md";
+
+/** The release that shipped the filling/shell weight density correction.
+ *  Upgrades that cross this version offer a one-time cost recalculation, because
+ *  stored cost snapshots from earlier versions hold outdated gram figures. */
+export const COST_CORRECTION_VERSION = "0.6.1";
+
+/**
+ * Did an upgrade from `from` to `to` cross (reach or pass) `target`? True when
+ * `from` is below `target` and `to` is at or above it. A null `from` (pre-banner
+ * user with existing data) is treated as older than everything, so any
+ * `to >= target` counts as a crossing.
+ */
+export function crossesVersion(from: string | null, to: string, target: string): boolean {
+  if (compareVersions(to, target) < 0) return false;
+  if (from === null) return true;
+  return compareVersions(from, target) < 0;
+}

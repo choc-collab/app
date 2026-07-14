@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, topoSortFillingsChildrenFirst, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "./production";
+import { calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, topoSortFillingsChildrenFirst, generateSteps, scheduleColorSteps, generateBatchSummary, computeEffectiveShelfLife, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR } from "./production";
 import type { ColorTask, FillingAmount, ConsolidatedFilling, IngredientRef, StandaloneFillingAmount } from "./production";
 import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, FillingComponent, Mould, Product, DecorationMaterial } from "@/types";
 
@@ -48,8 +48,8 @@ describe("calculateFillingAmounts", () => {
   });
 
   it("calculates fill-scaled weight for a single ganache filling at 100%", () => {
-    // fillWeight = 10 ml × 15 cavities × 1 mould × 0.63 × 1.2 density = 113.4 g
-    const expectedFillWeight = mould.cavityWeightG * mould.numberOfCavities * 1 * FILL_FACTOR * DENSITY_G_PER_ML;
+    // fillWeight = 10g × 15 cavities × 1 mould × 0.63 = 94.5 g
+    const expectedFillWeight = mould.cavityWeightG * mould.numberOfCavities * 1 * FILL_FACTOR;
     const expectedWeight = Math.round(expectedFillWeight * 1.0);
 
     const result = calculateFillingAmounts(
@@ -75,7 +75,7 @@ describe("calculateFillingAmounts", () => {
     const li1 = makeFillingIngredient({ id: "1", fillingId: "1", amount: 100 });
     const li2 = makeFillingIngredient({ id: "2", fillingId: "2", amount: 100 });
 
-    const fillWeight = mould.cavityWeightG * mould.numberOfCavities * 1 * FILL_FACTOR * DENSITY_G_PER_ML;
+    const fillWeight = mould.cavityWeightG * mould.numberOfCavities * 1 * FILL_FACTOR;
 
     const result = calculateFillingAmounts(
       [makePlanProduct()],
@@ -179,7 +179,7 @@ describe("calculateFillingAmounts", () => {
     );
 
     expect(result).toHaveLength(1);
-    // Fill-scaled: 10ml × 24 cavities × 1 mould × (1 - 0.37) × 1.2 g/ml ≈ 181g
+    // Fill-scaled: 10g × 24 cavities × 1 mould × (1 - 0.37) ≈ 151g
     expect(result[0].weightG).toBeLessThan(300);
     expect(result[0].weightG).toBeGreaterThan(100);
   });
@@ -283,7 +283,7 @@ describe("calculateFillingAmounts", () => {
     );
 
     // Each batch is independently rounded, so triple may differ by ±1g from singleResult × 3
-    const fillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR * DENSITY_G_PER_ML;
+    const fillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR;
     expect(tripleResult[0].weightG).toBe(Math.round(fillWeight * 3));
     expect(tripleResult[0].weightG).toBeGreaterThan(singleResult[0].weightG * 2);
   });
@@ -300,7 +300,7 @@ describe("calculateFillingAmounts", () => {
       new Map([["1", filling]]),
       new Map([["1", mould]]),
     );
-    const expectedFillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR * DENSITY_G_PER_ML;
+    const expectedFillWeight = mould.cavityWeightG * mould.numberOfCavities * FILL_FACTOR;
     expect(result[0].weightG).toBe(Math.round(expectedFillWeight));
     // Ingredient scaled from raw 200 g up to produce `weightG` of cooked filling
     const expectedAmount = Math.round(200 * (Math.round(expectedFillWeight) / 150) * 10) / 10;
@@ -1344,8 +1344,8 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
 
     // Adding a second mould must strictly increase the fill weight.
     expect(withAdditional[0].weightG).toBeGreaterThan(baseMouldOnly[0].weightG);
-    // Exact check: 15×10 + 24×8 = 342 ml; × 0.63 × 1.2 ≈ 258.55g
-    const expected = Math.round((15 * 10 + 24 * 8) * FILL_FACTOR * DENSITY_G_PER_ML);
+    // Exact check: 15×10 + 24×8 = 342g; × 0.63 ≈ 215.46g
+    const expected = Math.round((15 * 10 + 24 * 8) * FILL_FACTOR);
     expect(withAdditional[0].weightG).toBe(expected);
   });
 
@@ -1358,14 +1358,14 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
       new Map([["1", makeFilling()]]),
       new Map([["1", mould]]),
     );
-    // 5 cavities × 10g × 0.63 × 1.2 = 37.8 → 38g
-    const expected = Math.round(5 * 10 * FILL_FACTOR * DENSITY_G_PER_ML);
+    // 5 cavities × 10g × 0.63 = 31.5 → 32g
+    const expected = Math.round(5 * 10 * FILL_FACTOR);
     expect(result[0].weightG).toBe(expected);
   });
 
   it("scales grams-mode fillings by each slot's cavity volume", () => {
     // Product with fillMode "grams" stores fillFraction (0–1 of cavity volume).
-    // Fraction 0.5 against the 10g/cavity reference mould = 6g/cavity originally,
+    // Fraction 0.5 against the 10g/cavity reference mould = 5g/cavity originally,
     // but production rescales to each planned mould's actual cavity weight so the
     // fill-to-shell ratio is preserved.
     const product: Product = {
@@ -1383,15 +1383,15 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
       {},
       new Map([["1", product]]),
     );
-    // mould (15 cavities × 10g) × 0.5 × 1.2 + mouldB (24 cavities × 8g) × 0.5 × 1.2
-    // = 90 + 115.2 = 205.2 → rounded 205
-    const expected = Math.round((15 * 10 + 24 * 8) * 0.5 * DENSITY_G_PER_ML);
+    // mould (15 cavities × 10g) × 0.5 + mouldB (24 cavities × 8g) × 0.5
+    // = 75 + 96 = 171
+    const expected = Math.round((15 * 10 + 24 * 8) * 0.5);
     expect(result[0].weightG).toBe(expected);
   });
 
   it("rescales grams-mode fillings when produced on a different mould than the reference", () => {
-    // Recipe authored against the 10g-cavity reference (e.g. user typed 6g per cavity,
-    // stored as 0.5). Producing on the 8g-cavity mouldB instead should yield 4.8g per cavity.
+    // Recipe authored against the 10g-cavity reference (e.g. user typed 5g per cavity,
+    // stored as 0.5). Producing on the 8g-cavity mouldB instead should yield 4g per cavity.
     const product: Product = {
       id: "1", name: "Gram product", createdAt: new Date(), updatedAt: new Date(),
       fillMode: "grams", shellPercentage: 40,
@@ -1407,8 +1407,8 @@ describe("calculateFillingAmounts with alternative mould setup", () => {
       {},
       new Map([["1", product]]),
     );
-    // 24 cavities × 8g × 0.5 × 1.2 = 115.2 → rounded 115
-    const expected = Math.round(24 * 8 * 0.5 * DENSITY_G_PER_ML);
+    // 24 cavities × 8g × 0.5 = 96
+    const expected = Math.round(24 * 8 * 0.5);
     expect(result[0].weightG).toBe(expected);
   });
 });
