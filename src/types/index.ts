@@ -366,11 +366,11 @@ export interface ProductFilling {
   /** Percentage of the fill volume this filling occupies (0–100). Must sum to 100 across
    *  all fillings for a product. Used when `Product.fillMode === "percentage"` (the default). */
   fillPercentage: number;
-  /** Fraction of cavity volume this filling occupies (0–1). Used when
+  /** Mass fraction of the cavity this filling occupies (0–1). Used when
    *  `Product.fillMode === "grams"`. The user enters grams against the product's default
-   *  mould; we store the volume fraction so production on a different mould can rescale
-   *  proportionally (`gramsForMould = fillFraction × mould.cavityWeightG × density`).
-   *  Shell weight is derived as `1 - sum(fillFraction across fillings)` of cavity volume. */
+   *  mould; we store the mass fraction so production on a different mould can rescale
+   *  proportionally (`gramsForMould = fillFraction × mould.cavityWeightG`).
+   *  Shell weight is derived as `1 - sum(fillFraction across fillings)` of cavity mass. */
   fillFraction?: number;
 }
 
@@ -662,7 +662,7 @@ export interface ProductCostSnapshot {
   costPerProduct: number;
   breakdown: string;        // JSON: BreakdownEntry[]
   recordedAt: Date;
-  triggerType: "ingredient_price" | "filling_version" | "mould_change" | "coating_change" | "shell_change" | "manual";
+  triggerType: "ingredient_price" | "filling_version" | "mould_change" | "coating_change" | "shell_change" | "manual" | "correction";
   triggerDetail: string;    // human-readable reason
   mouldId?: string;
   coatingName?: string;

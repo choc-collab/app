@@ -408,7 +408,7 @@ const testMould: Mould = {
   numberOfCavities: 24,
 };
 
-// Shell = 10 * 0.30 = 3g, Cap = 10 * 0.07 = 0.7g, Fill = 10 * 0.63 * 1.2 = 7.56g
+// Shell (37%) = 10 * 0.37 = 3.7g, Fill = 10 * 0.63 = 6.3g
 
 const makeIngredient = (id: string, name: string, nutrition: NutritionData): Ingredient => ({
   id, name, manufacturer: "", source: "", cost: 0, notes: "",
@@ -468,14 +468,14 @@ describe("calculateProductNutrition", () => {
       shellIngredient: coatingIng,
     });
 
-    // Fill weight = 10 * 0.63 * 1.2 = 7.56g
-    // Total = 3.7 (coating) + 7.56 (fill) = 11.26g
-    expect(result.productWeightG).toBeCloseTo(11.26, 1);
+    // Fill weight = 10 * 0.63 = 6.3g
+    // Total = 3.7 (coating) + 6.3 (fill) = 10.0g
+    expect(result.productWeightG).toBeCloseTo(10.0, 1);
 
     // Fat: coating contributes 3.7g × 30/100 = 1.11g fat
-    //      fill contributes 7.56g × 35/100 = 2.646g fat
-    //      total fat = 3.756g in 11.26g → per 100g = 33.4g
-    expect(result.per100g.fat).toBeCloseTo(33.4, 0);
+    //      fill contributes 6.3g × 35/100 = 2.205g fat
+    //      total fat = 3.315g in 10.0g → per 100g = 33.15g
+    expect(result.per100g.fat).toBeCloseTo(33.2, 0);
   });
 
   it("splits fill weight across fillings by fillPercentage", () => {
@@ -500,13 +500,13 @@ describe("calculateProductNutrition", () => {
       shellIngredient: null, // no coating
     });
 
-    // Fill = 7.56g total
-    // Filling 1: 7.56 * 60% = 4.536g of ing1 (protein 20/100g)
-    // Filling 2: 7.56 * 40% = 3.024g of ing2 (protein 40/100g)
-    // protein: 4.536*0.20 + 3.024*0.40 = 0.9072 + 1.2096 = 2.1168g
-    // per 100g of 7.56g: (2.1168 / 7.56) * 100 = 28.0g
+    // Fill = 6.3g total
+    // Filling 1: 6.3 * 60% = 3.78g of ing1 (protein 20/100g)
+    // Filling 2: 6.3 * 40% = 2.52g of ing2 (protein 40/100g)
+    // protein: 3.78*0.20 + 2.52*0.40 = 0.756 + 1.008 = 1.764g
+    // per 100g of 6.3g: (1.764 / 6.3) * 100 = 28.0g (ratio is scale-invariant)
     expect(result.per100g.protein).toBeCloseTo(28.0, 0);
-    expect(result.productWeightG).toBeCloseTo(7.56, 1);
+    expect(result.productWeightG).toBeCloseTo(6.3, 1);
   });
 
   it("tracks ingredient coverage correctly", () => {

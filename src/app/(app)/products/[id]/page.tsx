@@ -10,7 +10,7 @@ import { NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
 import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromFractions, fillFractionToGrams, gramsToFillFraction } from "@/lib/costCalculation";
 import { reachableIngredientIds } from "@/lib/fillingComponents";
 import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition } from "@/lib/nutrition";
-import { calculateShellWeightG, calculateCapWeightG } from "@/lib/costCalculation";
+import { calculateShellWeightG } from "@/lib/costCalculation";
 import type { MarketRegion } from "@/types";
 import { ArrowLeft, Camera, Plus, X, Search, Trash2, Pencil, ChevronRight, StickyNote, RefreshCw, AlertTriangle, Undo2, Copy, Archive, ArchiveRestore, GripVertical, Snowflake } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -2024,6 +2024,7 @@ function CostHistoryChart({ snapshots, sym = "€" }: { snapshots: ProductCostSn
     coating_change: "#065f46",    // green
     shell_change: "#b45309",      // amber
     manual: "#6b7280",            // grey
+    correction: "#0d9488",        // teal
   };
 
   // Date labels: first and last
@@ -2090,7 +2091,7 @@ function CostHistoryChart({ snapshots, sym = "€" }: { snapshots: ProductCostSn
           .map(([type, color]) => (
             <span key={type} className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <span className="inline-block w-2 h-2 rounded-full" style={{ background: color }} />
-              {{ ingredient_price: "ingredient price", filling_version: "filling updated", mould_change: "mould changed", coating_change: "coating changed", shell_change: "shell change", manual: "initial" }[type]}
+              {{ ingredient_price: "ingredient price", filling_version: "filling updated", mould_change: "mould changed", coating_change: "coating changed", shell_change: "shell change", manual: "initial", correction: "bug-fix correction" }[type]}
             </span>
           ))}
       </div>
@@ -2891,9 +2892,9 @@ function ProductNutritionTab({ productId, productFillings, market }: { productId
 
       <p className="text-xs text-muted-foreground mb-3 mt-2">
         Product weight: {productWeightG.toFixed(1)}g
-        {" "}(shell + cap: {mould ? (calculateShellWeightG(mould) + calculateCapWeightG(mould)).toFixed(1) : "?"}g
+        {" "}(shell: {mould ? calculateShellWeightG(mould, effectiveShellPercentage).toFixed(1) : "?"}g
         {shellIngredient ? ` of ${shellIngredient.name}` : ""}
-        {", "}fill: {mould ? (productWeightG - calculateShellWeightG(mould) - calculateCapWeightG(mould)).toFixed(1) : "?"}g)
+        {", "}fill: {mould ? (productWeightG - calculateShellWeightG(mould, effectiveShellPercentage)).toFixed(1) : "?"}g)
         {showPerServing && " · FDA serving: 30g"}
       </p>
 

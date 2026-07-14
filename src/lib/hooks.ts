@@ -2065,7 +2065,8 @@ export async function computeAndSaveProductCostSnapshot(params: {
   const isUserEdit = triggerType === "manual"
     || triggerType === "shell_change"
     || triggerType === "mould_change"
-    || triggerType === "filling_version";
+    || triggerType === "filling_version"
+    || triggerType === "correction";
 
   // Gating for ambient drift (ingredient_price, coating_change) — we want a lean
   // snapshot history:
@@ -2207,6 +2208,30 @@ async function computeSnapshotsForAffectedProducts(
 
 export async function recalculateProductCost(productId: string): Promise<void> {
   await computeAndSaveProductCostSnapshot({ productId, triggerType: "manual", triggerDetail: "Manual recalculation" });
+}
+
+/**
+ * Recompute a fresh cost snapshot for every product. Used for one-off
+ * system-wide corrections (e.g. the filling/shell weight density bug fix), where
+ * the stored snapshots hold now-outdated gram figures and every product needs a
+ * corrected entry. Uses the `"correction"` trigger so the reason is visible in
+ * each product's cost history, and so the ambient-drift gating is bypassed
+ * (unproduced products get corrected too). The per-snapshot dedupe still skips
+ * any product whose cost is byte-for-byte unchanged. Returns the number of
+ * products processed.
+ */
+export async function recalculateAllProductCosts(
+  triggerDetail = "Corrected filling & shell weights (density bug fix)",
+): Promise<number> {
+  const products = await db.products.toArray();
+  await Promise.all(
+    products.map((p) =>
+      p.id
+        ? computeAndSaveProductCostSnapshot({ productId: p.id, triggerType: "correction", triggerDetail })
+        : Promise.resolve(),
+    ),
+  );
+  return products.length;
 }
 
 export async function clearAllProductCostSnapshots(): Promise<number> {
