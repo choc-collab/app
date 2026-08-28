@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap, useFillingCategoryMap } from "@/lib/hooks";
+import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useCurrentCoatingMappings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap, useFillingCategoryMap } from "@/lib/hooks";
+import { resolveCoating } from "@/lib/production";
 import { deriveShopColor, resolveShopColor } from "@/lib/shopColor";
 import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type Product, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
 import { colorToCSS } from "@/lib/colors";
@@ -1476,6 +1477,13 @@ function ProductCostTab({
   const allFillingIngredientsMap = useAllFillingIngredientsByFilling();
   const allFillingComponentsMap = useAllFillingComponentsByFilling();
   const allFillings = useFillings();
+  const currentCoatingMappings = useCurrentCoatingMappings();
+  const coatingNameByIngredientId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const mapping of currentCoatingMappings.values()) map.set(mapping.ingredientId, mapping.coatingName);
+    return map;
+  }, [currentCoatingMappings]);
+  const coating = resolveCoating(product, coatingNameByIngredientId);
 
   const [recalculating, setRecalculating] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -1710,7 +1718,7 @@ function ProductCostTab({
           )}
           <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
             {mould && <span>Mould: {mould.name} ({mould.cavityWeightG}g)</span>}
-            {product.coating && <span className="capitalize">Coating: {product.coating}</span>}
+            {coating && <span className="capitalize">Coating: {coating}</span>}
           </div>
         </div>
         <button
