@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareVersions, decideBanner, parseVersion } from "./version";
+import { compareVersions, crossesVersion, decideBanner, parseVersion } from "./version";
 
 describe("parseVersion", () => {
   it("parses three-segment semver", () => {
@@ -84,5 +84,24 @@ describe("decideBanner", () => {
     expect(
       decideBanner({ currentVersion: CURRENT, lastSeenVersion: "0.2.0", hasUserData: false }),
     ).toEqual({ kind: "hide" });
+  });
+});
+
+describe("crossesVersion", () => {
+  it("is true when the upgrade reaches or passes the target", () => {
+    expect(crossesVersion("0.6.0", "0.6.1", "0.6.1")).toBe(true); // reaches (the cost-correction release)
+    expect(crossesVersion("0.6.0", "0.8.0", "0.6.1")).toBe(true); // passes
+    expect(crossesVersion("0.1.0", "0.6.1", "0.6.1")).toBe(true); // far below
+  });
+
+  it("is false when the target is not reached or was already seen", () => {
+    expect(crossesVersion("0.5.0", "0.6.0", "0.6.1")).toBe(false); // to below target
+    expect(crossesVersion("0.6.1", "0.8.0", "0.6.1")).toBe(false); // from already at target
+    expect(crossesVersion("0.6.2", "0.9.0", "0.6.1")).toBe(false); // from past target
+  });
+
+  it("treats a null from (pre-banner user) as older than everything", () => {
+    expect(crossesVersion(null, "0.6.1", "0.6.1")).toBe(true);
+    expect(crossesVersion(null, "0.6.0", "0.6.1")).toBe(false);
   });
 });

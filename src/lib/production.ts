@@ -10,9 +10,6 @@ export const FILL_FACTOR = 0.63;
  *  37 = old SHELL_FACTOR(30%) + CAP_FACTOR(7%). */
 export const DEFAULT_SHELL_PERCENTAGE = 37;
 
-// Assumed density for filling calculations (g/ml). Ganache ≈ 1.1–1.3 g/ml.
-export const DENSITY_G_PER_ML = 1.2;
-
 export type ProductionStep = {
   key: string;
   label: string;
@@ -594,11 +591,11 @@ export function calculateFillingAmounts(
     const fillFactor = (100 - shellPct) / 100;
 
     // Total fill weight across primary + any additional moulds.
-    // cavityWeightG is cavity volume expressed as grams of water (≈ ml),
-    // multiplied by ganache density to get actual fill weight in grams.
-    const totalCavityVolumeML = slots.reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
+    // cavityWeightG is the manufacturer's stated mass of a fully filled cavity,
+    // so fill + shell reconcile to it directly — no density conversion.
+    const totalCavityWeightG = slots.reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
     const totalCavities = slots.reduce((s, sl) => s + sl.cavityCount, 0);
-    const fillWeightG = totalCavityVolumeML * fillFactor * DENSITY_G_PER_ML;
+    const fillWeightG = totalCavityWeightG * fillFactor;
 
     const productFillings = productFillingsMap.get(pb.productId) ?? [];
 
@@ -627,11 +624,11 @@ export function calculateFillingAmounts(
       const isShelfStable = shelfStableSet.has(filling.category);
       const prevBatch = fillingPreviousBatches[lw.fillingId];
       const isGramsMode = product?.fillMode === "grams" && bl.fillFraction != null;
-      // In grams mode, fillFraction is a fraction of cavity volume — multiply by
-      // each planned slot's cavity volume (not the product's default mould) so
+      // In grams mode, fillFraction is a mass fraction of the cavity — multiply by
+      // each planned slot's cavity weight (not the product's default mould) so
       // production on a different mould rescales the recipe proportionally.
       const fillGramsForPlannedMoulds = isGramsMode
-        ? slots.reduce((s, sl) => s + bl.fillFraction! * sl.mould.cavityWeightG * DENSITY_G_PER_ML * sl.cavityCount, 0)
+        ? slots.reduce((s, sl) => s + bl.fillFraction! * sl.mould.cavityWeightG * sl.cavityCount, 0)
         : 0;
       let weightG: number;
 
@@ -661,7 +658,7 @@ export function calculateFillingAmounts(
         const baseYield = filling.measuredYieldG ?? lw.totalWeight;
         weightG = Math.round(baseYield * multiplier);
       } else if (isGramsMode) {
-        // Grams mode: fillFraction × cavity volume × density, summed per planned slot.
+        // Grams mode: fillFraction × cavity weight, summed per planned slot.
         // This rescales the recipe to the actual moulds being produced — a 0.5
         // fraction means "fill half the cavity," which yields different gram
         // amounts on a 10g vs a 15g cavity but preserves the fill-to-shell ratio.

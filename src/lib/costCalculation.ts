@@ -2,7 +2,6 @@ import type { Mould, ProductFilling, FillingIngredient, FillingComponent, Fillin
 import { costPerGram as deriveIngredientCostPerGram } from "@/types";
 import { flattenFillingToIngredients, rollUpAmounts } from "@/lib/fillingComponents";
 import type { Ingredient } from "@/types";
-import { DENSITY_G_PER_ML } from "@/lib/production";
 
 // ── Legacy factors ──────────────────────────────────────────────────────────
 // Kept as named exports for backward-compatible test assertions and for the
@@ -41,11 +40,11 @@ export function calculateCapWeightG(mould: Mould): number {
 
 /** Weight of a single filling's fill contribution per cavity (in grams).
  *  Fill factor is derived from `shellPercentage`: fillFactor = (100 - shellPercentage) / 100.
- *  cavityWeightG is cavity volume in grams-of-water (≈ ml), so we apply
- *  ganache density to convert to actual fill weight. */
+ *  `cavityWeightG` is the manufacturer's stated mass of a fully filled cavity, so
+ *  filling + shell reconcile to it directly — no density conversion is applied. */
 export function calculateFillingWeightPerCavityG(mould: Mould, fillPercentage: number, shellPercentage: number = DEFAULT_SHELL_PERCENTAGE): number {
   const fillFactor = (100 - shellPercentage) / 100;
-  return mould.cavityWeightG * fillFactor * DENSITY_G_PER_ML * (fillPercentage / 100);
+  return mould.cavityWeightG * fillFactor * (fillPercentage / 100);
 }
 
 /**
@@ -54,20 +53,19 @@ export function calculateFillingWeightPerCavityG(mould: Mould, fillPercentage: n
  * step: the same `fillFraction` produces different gram amounts depending on
  * the mould's cavity weight, preserving the recipe's fill-to-shell ratio.
  *
- * `cavityWeightG` is cavity volume expressed as grams of water (≈ ml), so
- * we multiply by ganache density to get actual filling weight in grams.
+ * `cavityWeightG` is the manufacturer's stated mass of a fully filled cavity, so
+ * the fraction maps straight to grams — filling + shell always sum to cavityWeightG.
  */
 export function fillFractionToGrams(
   fillFraction: number,
   cavityWeightG: number,
-  density: number = DENSITY_G_PER_ML,
 ): number {
-  return fillFraction * cavityWeightG * density;
+  return fillFraction * cavityWeightG;
 }
 
 /**
  * Convert a user-entered grams-per-cavity value to a stored fill fraction
- * (0–1, fraction of cavity volume). Inverse of `fillFractionToGrams`. The
+ * (0–1, mass fraction of the cavity). Inverse of `fillFractionToGrams`. The
  * mould passed here is the *reference* (the user's selected default mould at
  * input time) — the resulting fraction is mould-agnostic and can be rescaled
  * to any other mould later.
@@ -75,19 +73,18 @@ export function fillFractionToGrams(
 export function gramsToFillFraction(
   grams: number,
   cavityWeightG: number,
-  density: number = DENSITY_G_PER_ML,
 ): number {
   if (cavityWeightG <= 0) return 0;
-  return grams / density / cavityWeightG;
+  return grams / cavityWeightG;
 }
 
 /**
  * Derive the shell percentage from fill fractions. In grams mode, each filling
- * stores a `fillFraction` (0–1) of cavity volume; shell = whatever cavity
- * volume remains after subtracting all filling fractions.
+ * stores a `fillFraction` (0–1) of cavity mass; shell = whatever cavity
+ * mass remains after subtracting all filling fractions.
  *
  * Returns a clamped [0, 100] percentage. If the fillings exceed the cavity
- * volume, returns 0 (no room for shell — the UI should warn).
+ * mass, returns 0 (no room for shell — the UI should warn).
  */
 export function deriveShellPercentageFromFractions(totalFillFraction: number): number {
   const shellFraction = 1 - totalFillFraction;
@@ -111,8 +108,8 @@ export interface CostCalculationInput {
    *  In grams mode this is derived from the fill fractions — pass the derived value. */
   shellPercentage?: number;
   /** "percentage" (default) or "grams". In grams mode, each ProductFilling's
-   *  `fillFraction` (0–1 of cavity volume) is converted to grams using the supplied
-   *  mould's `cavityWeightG`, instead of computing weight from `fillPercentage`. */
+   *  `fillFraction` (0–1 mass fraction of the cavity) is converted to grams using the
+   *  supplied mould's `cavityWeightG`, instead of computing weight from `fillPercentage`. */
   fillMode?: "percentage" | "grams";
   /** Optional: nested-filling component edges keyed by host fillingId. When
    *  present, each filling on the product is flattened recursively (child

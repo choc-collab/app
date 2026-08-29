@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-14
+
+### Fixed
+- **Filling & shell weights were overstated (a density bug), throwing off costs and nutrition** — the fill calculation multiplied filling by a ganache-density factor (1.2) but never applied it to the shell, so a filled bonbon's parts no longer added up to the mould's cavity weight (e.g. a 13 g mould showed 9 g filling + 5.5 g shell = 14.5 g, and the shell % was skewed). `cavityWeightG` is the manufacturer's stated mass of a fully filled cavity, so filling + shell now reconcile to it directly with no density conversion — the same 13 g mould correctly shows 9 g filling + 4 g shell. **Products entered by grams keep the exact grams you typed** (a one-time data migration preserves them); percentage-mode products' computed filling drops ~17% to a physically consistent value. Cost and nutrition figures update accordingly.
+
+### Changed
+- **One-tap cost recalculation after the weight fix** — because stored cost snapshots hold the old gram figures, the What's New banner for this release offers a "Recalculate all costs now" button that writes a fresh, corrected cost snapshot for every product. Each product's cost history labels the update as a *bug-fix correction* so the change is traceable, and prior snapshots are preserved as history.
+
 ## [0.6.0] — 2026-05-14
 
 ### Added

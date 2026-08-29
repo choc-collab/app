@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowLeft, Ban, Beaker, Check, ChevronDown, History, Pac
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Product, Mould, PlanProduct, PlanFilling, PlanProductAdditionalMould, FillingPreviousBatch, Filling } from "@/types";
-import { FILL_FACTOR, DENSITY_G_PER_ML, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, expandNestedFillings, attachScaledNestedFillings, getTotalCavities } from "@/lib/production";
+import { FILL_FACTOR, generateBatchSummary, generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, expandNestedFillings, attachScaledNestedFillings, getTotalCavities } from "@/lib/production";
 import { consumeSeedFromTodayList } from "@/lib/todaySeed";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
@@ -1396,7 +1396,7 @@ function BatchSizesPhase({
       if (!mould) continue;
       const cavityWeight = mould.cavityWeightG ?? 0;
       if (cavityWeight <= 0) continue;
-      const fillWeightG = cavityWeight * mould.numberOfCavities * cfg.quantity * FILL_FACTOR * DENSITY_G_PER_ML;
+      const fillWeightG = cavityWeight * mould.numberOfCavities * cfg.quantity * FILL_FACTOR;
       for (const bl of productFillingsMap.get(productId) ?? []) {
         const fillPct = (bl.fillPercentage ?? 100) / 100;
         attribute(bl.fillingId, fillWeightG * fillPct, new Set<string>());

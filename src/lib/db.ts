@@ -481,7 +481,7 @@ db.version(13).stores({}).upgrade(async (tx) => {
     if (m?.id) mouldById.set(m.id, { cavityWeightG: m.cavityWeightG ?? 0 });
   }
 
-  const DENSITY = 1.2; // g/ml — keep in sync with DENSITY_G_PER_ML in production.ts
+  const DENSITY = 1.2; // g/ml — the ganache density this historical (v13) grams→fraction conversion assumed
 
   for (const p of products) {
     if (!p?.id) continue;
@@ -550,6 +550,30 @@ db.version(14).stores({}).upgrade(async (tx) => {
 // `updatedAt` so the gallery can sort by recency.
 db.version(15).stores({
   labelTemplates: "id, name, application, updatedAt",
+});
+
+// v16 — Rescale ProductFilling.fillFraction from a *volume* fraction to a *mass*
+// fraction. The v13 conversion stored `grams / DENSITY / cavityWeightG` (a
+// fraction of cavity *volume*), and the cost/nutrition/production engine then
+// multiplied ganache density back in on the way out. That density round-trip
+// only applied to the filling — never the shell — so filling + shell no longer
+// summed to the mould's stated cavity weight (a 13 g mould showed 9 g fill +
+// 5.5 g shell = 14.5 g, and the derived shell % was skewed). cavityWeightG is a
+// mass ("fully filled solid cavity"), so fractions are now mass fractions and the
+// density factor has been removed from the fill math everywhere. Multiply each
+// stored fraction by DENSITY (1.2) to preserve the grams the user originally
+// entered, clamping to [0, 1] (matches the derived-shell-% clamp for over-fills).
+db.version(16).stores({}).upgrade(async (tx) => {
+  const DENSITY = 1.2; // g/ml — matches the factor removed from the fill math
+  const productFillingsTable = tx.table("productFillings");
+  const rows = await productFillingsTable.toArray();
+  for (const r of rows) {
+    if (!r?.id) continue;
+    const frac = (r as { fillFraction?: number }).fillFraction;
+    if (frac == null) continue;
+    const rescaled = Math.min(1, Math.max(0, frac * DENSITY));
+    await productFillingsTable.update(r.id, { fillFraction: rescaled });
+  }
 });
 
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;

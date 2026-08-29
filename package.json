@@ -1,6 +1,6 @@
 {
   "name": "choc-collab",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A chocolatier's toolkit — manage products, fillings, ingredients, moulds, and production plans. Local-first, runs entirely in the browser.",
   "author": "Choc-collab contributors",
   "license": "MIT",
@@ -42,16 +42,16 @@
     "@types/leaflet": "^1.9.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dexie": "^4.4.3",
+    "dexie": "^4.4.4",
     "dexie-cloud-addon": "^4.4.13",
     "dexie-react-hooks": "^4.4.0",
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
-    "lucide-react": "^1.18.0",
-    "next": "^16.2.7",
+    "lucide-react": "^1.28.0",
+    "next": "^16.2.12",
     "qrcode": "^1.5.4",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "svg2pdf.js": "^2.7.0",
     "tailwind-merge": "^3.6.0"
   },
@@ -59,17 +59,17 @@
     "postcss": "^8.5.13"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
-    "@tailwindcss/postcss": "^4.3.1",
-    "@types/node": "^25.9.3",
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.1.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
-    "@vitest/coverage-v8": "^4.1.8",
-    "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.7",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.12",
     "postcss": "^8.5.13",
-    "tailwindcss": "^4.3.1",
+    "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.10"
   }
 }

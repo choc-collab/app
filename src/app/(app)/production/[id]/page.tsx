@@ -12,7 +12,7 @@ import {
   useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
   useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
 } from "@/lib/hooks";
-import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR, DENSITY_G_PER_ML } from "@/lib/production";
+import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR } from "@/lib/production";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
 import { normalizeApplyAt } from "@/types";
 import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
@@ -395,13 +395,13 @@ function PlanContent({
     for (const pb of planProducts) {
       const slots = getMouldSlots(pb, mouldsMap);
       if (slots.length === 0) continue;
-      const totalCavityVolumeML = slots.reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
+      const totalCavityWeightG = slots.reduce((s, sl) => s + sl.mould.cavityWeightG * sl.cavityCount, 0);
       const rls = productFillingsMap.get(pb.productId) ?? [];
       for (const rl of rls) {
         const prev = fillingPreviousBatches[rl.fillingId];
         if (!prev) continue;
         const fillPct = (rl.fillPercentage ?? 100) / 100;
-        const fillWeightG = totalCavityVolumeML * FILL_FACTOR * DENSITY_G_PER_ML;
+        const fillWeightG = totalCavityWeightG * FILL_FACTOR;
         const neededG = Math.round(fillWeightG * fillPct);
         if (neededG > 0) {
           await deductFillingStock(rl.fillingId, neededG, { includeFrozen: prev.includeFrozen });
