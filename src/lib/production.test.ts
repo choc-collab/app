@@ -599,6 +599,38 @@ describe("generateSteps", () => {
     expect(coatings).toEqual(["dark", "dark", "milk"]);
   });
 
+  it("resolves coating from shellIngredientId via CoatingChocolateMapping when the legacy coating field is unset", () => {
+    const pb1 = makePlanProduct({ id: "1", productId: "1", sortOrder: 0 });
+    const pb2 = makePlanProduct({ id: "2", productId: "2", sortOrder: 1 });
+
+    // New-style products: only shellIngredientId is set, no legacy `coating` string.
+    const darkProduct: Product = { id: "1", name: "Dark", createdAt: new Date(), updatedAt: new Date(), shellIngredientId: "ing-dark" };
+    const milkProduct: Product = { id: "2", name: "Milk", createdAt: new Date(), updatedAt: new Date(), shellIngredientId: "ing-milk" };
+
+    const coatingNameByIngredientId = new Map([["ing-dark", "dark"], ["ing-milk", "milk"]]);
+
+    const steps = generateSteps(
+      [pb1, pb2],
+      new Map([["1", "Dark"], ["2", "Milk"]]),
+      new Map([["1", []], ["2", []]]),
+      [],
+      new Map(),
+      new Map([["1", mould]]),
+      new Map([["1", darkProduct], ["2", milkProduct]]),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      coatingNameByIngredientId,
+    );
+
+    const shellSteps = steps.filter((s) => s.key.startsWith("shell-"));
+    const coatings = shellSteps.map((s) => s.coating);
+    // Without the fix, both would fall into the generic "chocolate" bucket.
+    expect(coatings).toEqual(["dark", "milk"]);
+  });
+
   it("assigns correct groups to steps", () => {
     const pb = makePlanProduct();
     const bl = makeProductFilling();

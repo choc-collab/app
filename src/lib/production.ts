@@ -28,6 +28,19 @@ export type ProductionStep = {
   targetGrams?: number;
 };
 
+/** Resolve a product's coating/chocolate-type label. Prefers the current
+ *  `shellIngredientId` → CoatingChocolateMapping lookup; falls back to the
+ *  deprecated `Product.coating` string for records that predate that FK. */
+export function resolveCoating(
+  product: Pick<Product, "coating" | "shellIngredientId"> | undefined,
+  coatingNameByIngredientId: Map<string, string> = new Map(),
+): string {
+  const fromIngredient = product?.shellIngredientId
+    ? coatingNameByIngredientId.get(product.shellIngredientId)
+    : undefined;
+  return fromIngredient?.trim() || product?.coating?.trim() || "";
+}
+
 export type ColorTask = {
   planProductId: string;
   mouldId: string;
@@ -1063,14 +1076,18 @@ export function generateSteps(
    *  children appear before their hosts — chocolatier ergonomics. Omit to
    *  keep the legacy emission order. */
   fillingComponentsByFilling: ReadonlyMap<string, ReadonlyArray<FillingComponent>> = new Map(),
+  /** Lookup of coating name (e.g. "dark", "milk") by shell ingredient id,
+   *  built from CoatingChocolateMapping. Used to resolve coating for products
+   *  set up via the current `shellIngredientId` field. */
+  coatingNameByIngredientId: Map<string, string> = new Map(),
 ): ProductionStep[] {
   const steps: ProductionStep[] = [];
 
   // planProducts sorted by coating — used for shell and cap steps so the UI
   // groups them correctly without needing extra sorting in the renderer.
   const planProductsByCoating = [...planProducts].sort((a, b) => {
-    const ca = (productsMap.get(a.productId)?.coating?.trim() || "").toLowerCase();
-    const cb = (productsMap.get(b.productId)?.coating?.trim() || "").toLowerCase();
+    const ca = resolveCoating(productsMap.get(a.productId), coatingNameByIngredientId).toLowerCase();
+    const cb = resolveCoating(productsMap.get(b.productId), coatingNameByIngredientId).toLowerCase();
     if (ca !== cb) return ca.localeCompare(cb);
     return a.sortOrder - b.sortOrder;
   });
@@ -1171,7 +1188,7 @@ export function generateSteps(
     const slots = slotsByPb.get(pb.id!) ?? [];
     if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
-    const coating = productsMap.get(pb.productId)?.coating?.trim() || "";
+    const coating = resolveCoating(productsMap.get(pb.productId), coatingNameByIngredientId);
     for (const slot of slots) {
       const slotLabel = slots.length > 1 ? ` (${slot.mould.name})` : "";
       steps.push({
@@ -1277,7 +1294,7 @@ export function generateSteps(
     const slots = slotsByPb.get(pb.id!) ?? [];
     if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
-    const coating = productsMap.get(pb.productId)?.coating?.trim() || "";
+    const coating = resolveCoating(productsMap.get(pb.productId), coatingNameByIngredientId);
     const shellDesign = productsMap.get(pb.productId)?.shellDesign ?? [];
 
     const transferSheetNames: string[] = [];
@@ -1317,7 +1334,7 @@ export function generateSteps(
     const slots = slotsByPb.get(pb.id!) ?? [];
     if (slots.length === 0) continue;
     const productName = productNames.get(pb.productId) ?? "Unknown";
-    const coating = productsMap.get(pb.productId)?.coating?.trim() || "";
+    const coating = resolveCoating(productsMap.get(pb.productId), coatingNameByIngredientId);
     const shellDesign = productsMap.get(pb.productId)?.shellDesign ?? [];
 
     shellDesign.forEach((designStep, i) => {
