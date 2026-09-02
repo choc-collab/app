@@ -1,5 +1,18 @@
-import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, FillingComponent, Mould, Product, FillingPreviousBatch, DecorationMaterial, ProductCategory } from "@/types";
+import type { PlanProduct, PlanFilling, ProductFilling, Filling, FillingIngredient, FillingComponent, Mould, Product, FillingPreviousBatch, DecorationMaterial, ProductCategory, ProductionPlan } from "@/types";
 import { SHELF_STABLE_CATEGORIES, normalizeApplyAt } from "@/types";
+
+/** Display maps for ProductionPlan.status badges — shared by the production
+ *  board and the order detail page's linked-batches list. */
+export const PLAN_STATUS_LABEL: Record<ProductionPlan["status"], string> = {
+  draft: "Not yet started",
+  active: "In progress",
+  done: "Done",
+};
+export const PLAN_STATUS_STYLE: Record<ProductionPlan["status"], string> = {
+  draft: "bg-muted text-muted-foreground",
+  active: "bg-warning-muted text-warning",
+  done: "bg-success-muted text-success",
+};
 
 // Legacy fill factor — used as the default when a product has no per-product
 // shellPercentage set. Equals (100 - 37) / 100 = 0.63, matching the old

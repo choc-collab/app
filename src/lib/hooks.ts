@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, isCloudConfigured } from "@/lib/db";
 import { sanitizeBrand } from "@/lib/brand-sanitize";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -1113,9 +1113,13 @@ export async function saveProductionPlan(plan: Omit<ProductionPlan, "id"> & { id
 }
 
 export async function deleteProductionPlan(id: string) {
-  await db.transaction("rw", [db.productionPlans, db.planProducts, db.planStepStatus], async () => {
+  await db.transaction("rw", [db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.orderProductionLinks], async () => {
     await db.planProducts.where("planId").equals(id).delete();
+    // planFillings was previously missed here, orphaning standalone-filling
+    // rows whenever a fillings-only/hybrid plan was deleted.
+    await db.planFillings.where("planId").equals(id).delete();
     await db.planStepStatus.where("planId").equals(id).delete();
+    await db.orderProductionLinks.where("planId").equals(id).delete();
     await db.productionPlans.delete(id);
   });
 }
@@ -2813,6 +2817,112 @@ export async function deleteCollection(id: string): Promise<void> {
     await db.collectionPackagings.where("collectionId").equals(id).delete();
     await db.collections.delete(id);
   });
+}
+
+// --- Orders & Events ---
+
+export function useOrders() {
+  return useLiveQuery(() =>
+    db.orders.orderBy("eventDate").toArray()
+  ) ?? [];
+}
+
+export function useOrder(id: string | undefined) {
+  return useLiveQuery(() => (id ? db.orders.get(id) : undefined), [id]);
+}
+
+export async function saveOrder(obj: Omit<Order, "id" | "createdAt" | "updatedAt"> & { id?: string; createdAt?: Date; updatedAt?: Date }): Promise<string> {
+  const now = new Date();
+  if (obj.id) {
+    await db.orders.update(obj.id, { ...obj, updatedAt: now });
+    return obj.id;
+  }
+  return db.orders.add({ ...obj, createdAt: now, updatedAt: now } as Order) as Promise<string>;
+}
+
+export async function deleteOrder(id: string): Promise<void> {
+  await db.transaction("rw", [db.orders, db.orderProductionLinks], async () => {
+    await db.orderProductionLinks.where("orderId").equals(id).delete();
+    await db.orders.delete(id);
+  });
+}
+
+// --- Customers ---
+
+export function useCustomers(includeArchived = false) {
+  return useLiveQuery(() =>
+    db.customers.orderBy("name").toArray().then((all) =>
+      includeArchived ? all : all.filter((c) => !c.archived)
+    ),
+    [includeArchived]
+  ) ?? [];
+}
+
+export function useCustomer(id: string | undefined) {
+  return useLiveQuery(() => (id ? db.customers.get(id) : undefined), [id]);
+}
+
+export async function saveCustomer(obj: Omit<Customer, "id" | "createdAt" | "updatedAt"> & { id?: string; createdAt?: Date; updatedAt?: Date }): Promise<string> {
+  const now = new Date();
+  if (obj.id) {
+    await db.customers.update(obj.id, { ...obj, updatedAt: now });
+    return obj.id;
+  }
+  return db.customers.add({ ...obj, createdAt: now, updatedAt: now } as Customer) as Promise<string>;
+}
+
+/** Hard delete — only valid when no orders reference the customer (the UI
+ *  offers Archive instead when they do; this guard is the safety net). */
+export async function deleteCustomer(id: string): Promise<void> {
+  const orderCount = await db.orders.where("customerId").equals(id).count();
+  if (orderCount > 0) {
+    throw new Error(`Customer has ${orderCount} order(s) — archive instead of deleting.`);
+  }
+  await db.customers.delete(id);
+}
+
+export async function archiveCustomer(id: string): Promise<void> {
+  await db.customers.update(id, { archived: true, updatedAt: new Date() });
+}
+
+export async function unarchiveCustomer(id: string): Promise<void> {
+  await db.customers.update(id, { archived: false, updatedAt: new Date() });
+}
+
+/** All orders for one customer, soonest event first. */
+export function useOrdersByCustomer(customerId: string | undefined) {
+  return useLiveQuery(() =>
+    customerId
+      ? db.orders.where("customerId").equals(customerId).toArray().then((all) =>
+          all.sort((a, b) => a.eventDate.localeCompare(b.eventDate))
+        )
+      : Promise.resolve([] as Order[]),
+    [customerId]
+  ) ?? [];
+}
+
+// --- Order ↔ production batch links ---
+
+export function useOrderProductionLinks(orderId: string | undefined) {
+  return useLiveQuery(() =>
+    orderId
+      ? db.orderProductionLinks.where("orderId").equals(orderId).toArray()
+      : Promise.resolve([] as OrderProductionLink[]),
+    [orderId]
+  ) ?? [];
+}
+
+export async function linkOrderToPlan(orderId: string, planId: string): Promise<void> {
+  const existing = await db.orderProductionLinks
+    .where("orderId").equals(orderId)
+    .filter((l) => l.planId === planId)
+    .count();
+  if (existing > 0) return;
+  await db.orderProductionLinks.add({ orderId, planId } as OrderProductionLink);
+}
+
+export async function unlinkOrderFromPlan(linkId: string): Promise<void> {
+  await db.orderProductionLinks.delete(linkId);
 }
 
 export function useAllCollectionProducts() {

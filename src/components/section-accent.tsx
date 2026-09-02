@@ -33,6 +33,7 @@ const ROUTE_ACCENTS: Record<string, string> = {
   "/shop": "cocoa",
   "/shop/giveaways": "lilac",
   "/today": "cocoa",
+  "/orders": "sage",
   // Lab, Observatory, Pricing, Stats, Settings, Shopping → no accent (falls
   // back to black). Add an entry here if a section should get a color.
 };
