@@ -3,7 +3,8 @@
 import { useState, useMemo, useCallback, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { useProductsList, saveProduct, useProductCategories, useProductCategoryUsageCounts, saveProductCategory, useCoatings, useProductProductionMap, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts, useProductFillingsForProducts, useFillings, useMarketRegion } from "@/lib/hooks";
+import { useProductsList, saveProduct, useProductCategories, useProductCategoryUsageCounts, saveProductCategory, useCoatings, useCurrentCoatingMappings, useProductProductionMap, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts, useProductFillingsForProducts, useFillings, useMarketRegion } from "@/lib/hooks";
+import { resolveCoating } from "@/lib/production";
 import { Plus, Search, ChevronRight, ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, ProductStockPills, SegmentedTabs, type SegmentedTabOption, ViewDensityToggle } from "@/components/pantry";
 import { useNShortcut } from "@/lib/use-n-shortcut";
@@ -95,6 +96,12 @@ function ProductsTab() {
   const frozenMap = useProductFrozenMap();
   const productCategories = useProductCategories(true /* include archived for grouping legacy products */);
   const coatings = useCoatings();
+  const currentCoatingMappings = useCurrentCoatingMappings();
+  const coatingNameByIngredientId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const mapping of currentCoatingMappings.values()) map.set(mapping.ingredientId, mapping.coatingName);
+    return map;
+  }, [currentCoatingMappings]);
   const collections = useCollections();
   const allCollectionProducts = useAllCollectionProducts();
   const allFillings = useFillings();
@@ -260,7 +267,7 @@ function ProductsTab() {
   const filtered = useMemo(() => {
     return products.filter((r) => {
       if (f.search && !r.name.toLowerCase().includes(f.search.toLowerCase())) return false;
-      if (f.filterCoating && r.coating !== f.filterCoating) return false;
+      if (f.filterCoating && resolveCoating(r, coatingNameByIngredientId) !== f.filterCoating) return false;
       if (f.filterCategoryId && r.productCategoryId !== f.filterCategoryId) return false;
       if (f.filterMinStars > 0 && (r.popularity ?? 0) < f.filterMinStars) return false;
       if (filterTagsSet.size > 0) {
@@ -299,7 +306,7 @@ function ProductsTab() {
       }
       return true;
     });
-  }, [products, f.search, f.filterCoating, f.filterCategoryId, f.filterMinStars, filterTagsSet, f.collectionState, f.stockState, activeCollectionProductIds, selectedCollectionProductIds, filterIncludeAllergensSet, filterExcludeAllergensSet, productAllergenMap, f.filterFillingCount, productFillingsMap, filterShelfLifeSet, stockBucketByProduct, productHasFrozen]);
+  }, [products, f.search, f.filterCoating, coatingNameByIngredientId, f.filterCategoryId, f.filterMinStars, filterTagsSet, f.collectionState, f.stockState, activeCollectionProductIds, selectedCollectionProductIds, filterIncludeAllergensSet, filterExcludeAllergensSet, productAllergenMap, f.filterFillingCount, productFillingsMap, filterShelfLifeSet, stockBucketByProduct, productHasFrozen]);
 
   // Per-bucket counts for the stock-state segmented tab badges. Computed
   // against the collection-state-scoped product list (same set used to
@@ -653,7 +660,7 @@ function ProductsTab() {
                         const pid = product.id ?? '';
                         const fillingNames = productFillingNamesMap.get(pid) ?? [];
                         const allergens = Array.from(productAllergenMap.get(pid) ?? []);
-                        return <ProductRow key={product.id} product={product} hasBeenProduced={productionMap.has(pid)} pieces={stockMap.get(pid) ?? 0} frozen={frozenMap.get(pid) ?? 0} fillingNames={fillingNames} allergens={allergens} density={density} />;
+                        return <ProductRow key={product.id} product={product} hasBeenProduced={productionMap.has(pid)} pieces={stockMap.get(pid) ?? 0} frozen={frozenMap.get(pid) ?? 0} fillingNames={fillingNames} allergens={allergens} density={density} coatingNameByIngredientId={coatingNameByIngredientId} />;
                       })}
                     </ul>
                   )}
@@ -667,11 +674,12 @@ function ProductsTab() {
   );
 }
 
-function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, allergens, density }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; allergens?: string[]; density: ViewDensity }) {
+function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, allergens, density, coatingNameByIngredientId }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; allergens?: string[]; density: ViewDensity; coatingNameByIngredientId: Map<string, string> }) {
   const isCompact = density === "compact";
   // Row 2: "Milk · filling1 · filling2" — coating capitalised, prefixed if present
+  const coating = resolveCoating(product, coatingNameByIngredientId);
   const subtitleParts = [
-    product.coating ? product.coating.charAt(0).toUpperCase() + product.coating.slice(1) : null,
+    coating ? coating.charAt(0).toUpperCase() + coating.slice(1) : null,
     ...(fillingNames ?? []),
   ].filter((p): p is string => Boolean(p));
 

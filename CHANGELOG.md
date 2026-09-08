@@ -28,6 +28,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **Deleting a production plan no longer strands its standalone-filling rows** — fillings-only and hybrid plans left orphaned `planFillings` rows behind on delete; the cleanup transaction now covers them (and the new order↔batch links).
 - **Best-by date corrections on production batches** (#57).
 - Hosting redirect fixes for the app's static-export routing on Cloudflare Pages and Vercel.
+## [0.6.2] — 2026-08-28
+
+### Fixed
+- **Moulds silently dropped into a generic "Chocolate" group instead of Dark/Milk/White** — the production Shell/Cap tabs, the Products list (coating filter chips, card subtitle, detail-page label), and the cost-breakdown chart's shell-segment colour all grouped/coloured products by the deprecated `Product.coating` free-text field. Products set up via the current shell-ingredient picker never write that field, so they always fell into an "uncategorised" bucket — even when their shell ingredient was properly mapped to Dark/Milk/White under Ingredients → Shell chocolate. All five spots now resolve the coating type from the shell ingredient's mapping first, falling back to the legacy field only for older records that predate it. This also fixes the seed-tempering weight panel on the Shell tab, which used the same broken lookup to decide whether to show itself and which batches to total.
 
 ## [0.6.1] — 2026-07-14
 
