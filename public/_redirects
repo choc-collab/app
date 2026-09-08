@@ -3,13 +3,6 @@
 /app                   /today  302
 /app/                  /today  302
 
-# /lab and /calculator are not yet publicly available — bounce to home.
-# More specific rules first (Cloudflare processes top-to-bottom, first match wins).
-/lab/*                 /  302
-/lab                   /  302
-/calculator/*          /  302
-/calculator            /  302
-
 # SPA rewrites for dynamic routes: user-generated IDs don't exist at build time,
 # so we generate a `_spa` placeholder HTML per route and rewrite any real ID to it.
 # The placeholder hydrates client-side and `useSpaId` reads the actual ID from
@@ -53,18 +46,24 @@
 /production/*/               /production/_spa/                  200
 /production/:id              /production/_spa/                  200
 
-# Calculator nested routes (blocked above, but include for completeness)
+# Calculator nested routes (must come before the /calculator/:id catch-all below)
 /calculator/:id/batch/*   /calculator/_spa/batch/:splat   200
 /calculator/*/batch/      /calculator/_spa/batch/         200
 /calculator/:id/batch     /calculator/_spa/batch/         200
 /calculator/:id/run/*     /calculator/_spa/run/:splat     200
 /calculator/*/run/        /calculator/_spa/run/           200
 /calculator/:id/run       /calculator/_spa/run/           200
+/calculator/:id/*         /calculator/_spa/:splat         200
+/calculator/*/            /calculator/_spa/               200
+/calculator/:id           /calculator/_spa/               200
 
 # Nested category / design detail pages
 /fillings/categories/:id/*           /fillings/categories/_spa/:splat     200
 /fillings/categories/*/              /fillings/categories/_spa/           200
 /fillings/categories/:id             /fillings/categories/_spa/           200
+/orders/customers/:id/*              /orders/customers/_spa/:splat        200
+/orders/customers/*/                 /orders/customers/_spa/              200
+/orders/customers/:id                /orders/customers/_spa/              200
 /ingredients/categories/:id/*        /ingredients/categories/_spa/:splat  200
 /ingredients/categories/*/           /ingredients/categories/_spa/        200
 /ingredients/categories/:id          /ingredients/categories/_spa/        200
@@ -99,6 +98,9 @@
 /moulds/:id/*             /moulds/_spa/:splat             200
 /moulds/*/                /moulds/_spa/                   200
 /moulds/:id               /moulds/_spa/                   200
+/orders/:id/*             /orders/_spa/:splat             200
+/orders/*/                /orders/_spa/                   200
+/orders/:id               /orders/_spa/                   200
 /packaging/:id/*          /packaging/_spa/:splat          200
 /packaging/*/             /packaging/_spa/                200
 /packaging/:id            /packaging/_spa/                200

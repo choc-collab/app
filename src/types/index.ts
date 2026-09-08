@@ -1246,6 +1246,94 @@ export interface Sale {
   customerNote?: string;
 }
 
+// --- Orders & Events ---
+//
+// Corporate orders and event bookings captured months ahead with vague details
+// ("40 bonbons for popup in Wittelte, Dec 20th") that firm up over time. This
+// pass is the capture layer only: lifecycle + calendar date. Line items,
+// production-plan links and stock reservations are later phases.
+
+/** Lifecycle of an order/event. `lead` = tentative inquiry; `confirmed` =
+ *  customer/venue committed; `in_production` = linked production underway
+ *  (manual for now — plan links come in a later phase); `fulfilled` =
+ *  delivered/collected; `cancelled` = won't happen. */
+export type OrderStatus = "lead" | "confirmed" | "in_production" | "fulfilled" | "cancelled";
+
+/** Where the order/event came from. Fixed taxonomy for now; can be made
+ *  user-editable later if needed (mirrors GIVE_AWAY_REASONS). */
+export type OrderSource = "market" | "holiday" | "restaurant" | "private" | "other";
+
+export const ORDER_SOURCES: ReadonlyArray<{ value: OrderSource; label: string }> = [
+  { value: "market", label: "Market" },
+  { value: "holiday", label: "Holiday" }, // e.g. Christmas, Easter, Mother's Day
+  { value: "restaurant", label: "Restaurant" },
+  { value: "private", label: "Private person" },
+  { value: "other", label: "Other" },
+];
+
+export interface Order {
+  id?: string;
+  title: string;
+  /** The day of the event/delivery. ISO date string, e.g. "2026-12-20"
+   *  (day-granularity, timezone-agnostic — same convention as
+   *  Collection.startDate; lexicographic sort = chronological sort). */
+  eventDate: string;
+  status: OrderStatus;
+  /** FK → Customer.id. Replaces the v17 free-text `customerName`, which the
+   *  v18 upgrade materialises into Customer rows. */
+  customerId?: string;
+  venue?: string;
+  notes?: string;
+  source?: OrderSource;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** A person or business that places orders. Archived customers are hidden
+ *  from pickers but preserved on existing orders (same soft-delete pattern
+ *  as categories). */
+export interface Customer {
+  id?: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  /** Delivery/visiting address — free-form, may include multiple lines.
+   *  Unindexed, so adding it needed no schema migration. */
+  address?: string;
+  instagram?: string; // handle, without the @
+  notes?: string;
+  archived?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Join table: which production batches fulfil which order. An order can
+ *  draw from several batches and a batch can serve several orders.
+ *
+ *  A row without `productId` is a "bare" link — the whole batch is loosely
+ *  associated with the order. Setting `productId` + `quantity` refines it
+ *  into a per-product allocation ("20 × Dark caramel from this batch").
+ *  Both fields are unindexed, so legacy bare rows need no migration. */
+export interface OrderProductionLink {
+  id?: string;
+  orderId: string;
+  planId: string; // FK → ProductionPlan.id
+  productId?: string; // FK → Product.id; unset = whole batch, unspecified
+  quantity?: number;  // pieces claimed from this batch for this product
+}
+
+/** One line of what an order needs — "40 bonbons, mix TBD" that firms up
+ *  into real products as the date approaches. `productId` unset = untyped
+ *  placeholder; fulfillment tracking kicks in once it's set. */
+export interface OrderLineItem {
+  id?: string;
+  orderId: string;
+  productId?: string;
+  quantity: number;
+  notes?: string;
+  sortOrder: number;
+}
+
 // --- Give-aways ---
 //
 // Chocolate that leaves the workshop without a sale: samples for buyers,

@@ -10,14 +10,7 @@ import { CollapseControls } from "@/components/pantry";
 import Link from "next/link";
 import { useState, useMemo } from "react";
 import type { ProductionPlan, Product, PlanProduct, PlanFilling, Filling, Mould } from "@/types";
-import { getTotalCavities, formatMouldList, hasAlternativeMouldSetup } from "@/lib/production";
-
-const STATUS_LABEL: Record<string, string> = { draft: "Not yet started", active: "In progress", done: "Done" };
-const STATUS_STYLE: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  active: "bg-warning-muted text-warning",
-  done: "bg-success-muted text-success",
-};
+import { getTotalCavities, formatMouldList, hasAlternativeMouldSetup, PLAN_STATUS_LABEL as STATUS_LABEL, PLAN_STATUS_STYLE as STATUS_STYLE } from "@/lib/production";
 
 type TimeRange = "7d" | "30d" | "90d" | "12mo" | "all";
 const RANGE_DAYS: Record<Exclude<TimeRange, "all">, number> = { "7d": 7, "30d": 30, "90d": 90, "12mo": 365 };

@@ -9,6 +9,7 @@ import { ToMakeList } from "@/components/today/to-make-list";
 import { SellQuickGrid } from "@/components/today/sell-quick-grid";
 import { InProgressTile } from "@/components/today/in-progress-tile";
 import { ExperimentsBrewingTile } from "@/components/today/experiments-brewing-tile";
+import { UpcomingOrdersTile } from "@/components/today/upcoming-orders-tile";
 
 /** Locale-dependent date string deferred to client mount so server and
  *  client agree on the initial HTML (avoids a hydration mismatch warning). */
@@ -52,7 +53,7 @@ export default function TodayPage() {
         <UniversalSearch />
       </div>
 
-      <div className="px-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="px-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
         <StatTile
           label="Shopping list"
           value={signals.pendingShoppingCount}
@@ -63,6 +64,7 @@ export default function TodayPage() {
         />
         <InProgressTile />
         <ExperimentsBrewingTile />
+        <UpcomingOrdersTile />
         <StatTile
           label="Week sales"
           value={`${currency}${formatRevenue(signals.weekRevenue)}`}
