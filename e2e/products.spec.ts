@@ -109,7 +109,7 @@ test.describe("Products", () => {
 
     const table = page.getByRole("table", { name: "Products" });
     await expect(table).toBeVisible();
-    for (const header of ["Product", "Stock", "Coating", "Fillings", "Popularity", "Updated"]) {
+    for (const header of ["Product", "Coating", "Fillings", "Tags", "Stock", "Last batch", "Popularity", "Updated"]) {
       await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
     }
     await expect(page.getByText("Milk Praline")).toBeVisible();

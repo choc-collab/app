@@ -433,7 +433,6 @@ function FillingsTab() {
                     const hasStock = !!totals && (totals.availableG > 0 || totals.frozenG > 0);
                     const usedIn = fillingUsageCounts.get(filling.id ?? "") ?? 0;
                     const lastMade = fillingProductionMap.get(filling.id ?? "");
-                    const noteLine = usedIn === 0 ? "Not used in any product" : !lastMade ? "Never made" : null;
                     return (
                       <PantryTableRow
                         key={filling.id}
@@ -451,7 +450,6 @@ function FillingsTab() {
                             )}
                             {filling.archived && <span className="text-[10px] text-muted-foreground font-normal shrink-0">(archived)</span>}
                           </div>
-                          {noteLine && <p className="text-[11px] text-muted-foreground/80 truncate mt-0.5">{noteLine}</p>}
                         </div>
                         <div>
                           {filling.status ? (

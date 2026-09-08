@@ -41,28 +41,35 @@ export interface PantryTableColumn {
 export function PantryTableHeader({
   columns,
   gridTemplateColumns,
+  hasAction,
 }: {
   columns: PantryTableColumn[];
   gridTemplateColumns: string;
+  /** Set when rows pass a `PantryTableRow` `action` (e.g. a low-stock flag button) —
+   *  reserves matching trailing space so the header's right edge lines up with the
+   *  row's actual right edge instead of ending one action-button-width short. */
+  hasAction?: boolean;
 }) {
   return (
     <div
       role="row"
-      className="grid items-center gap-3 px-3 py-2 bg-muted border-b border-border"
-      style={{ gridTemplateColumns }}
+      className="flex items-center bg-muted border-b border-border border-l-2 border-l-transparent"
     >
-      {columns.map((col) => (
-        <span
-          key={col.key}
-          role="columnheader"
-          className={`text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${
-            col.align === "right" ? "text-right" : "text-left"
-          }`}
-        >
-          {col.label}
-        </span>
-      ))}
-      <span aria-hidden="true" />
+      <div className="grid items-center gap-3 px-3 py-2 flex-1 min-w-0" style={{ gridTemplateColumns }}>
+        {columns.map((col) => (
+          <span
+            key={col.key}
+            role="columnheader"
+            className={`text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${
+              col.align === "right" ? "text-right" : "text-left"
+            }`}
+          >
+            {col.label}
+          </span>
+        ))}
+        <span aria-hidden="true" />
+      </div>
+      {hasAction && <span aria-hidden="true" className="w-10 shrink-0" />}
     </div>
   );
 }
@@ -73,7 +80,11 @@ export function PantryTableHeader({
  *  is restyled to read as a row inside the table card instead of free text
  *  above an indented list. */
 export function PantryTableGroupHeader({ children }: { children: ReactNode }) {
-  return <div className="px-3 py-2 bg-muted/50 border-b border-border [&_button]:mb-0">{children}</div>;
+  return (
+    <div className="px-3 py-2 bg-muted/50 border-b border-border border-l-2 border-l-transparent [&_button]:mb-0">
+      {children}
+    </div>
+  );
 }
 
 export function PantryTableRow({

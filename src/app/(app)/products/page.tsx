@@ -20,12 +20,14 @@ function formatDate(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
 }
 
-const PRODUCTS_GRID = "minmax(200px,1.6fr) minmax(120px,1fr) 90px minmax(140px,1.2fr) 90px 90px 20px";
+const PRODUCTS_GRID = "minmax(180px,1.4fr) 90px minmax(140px,1fr) minmax(100px,0.8fr) 90px 90px 90px 90px 20px";
 const PRODUCTS_COLUMNS: PantryTableColumn[] = [
   { key: "name", label: "Product" },
-  { key: "stock", label: "Stock" },
   { key: "coating", label: "Coating" },
   { key: "fillings", label: "Fillings" },
+  { key: "tags", label: "Tags" },
+  { key: "stock", label: "Stock" },
+  { key: "lastBatch", label: "Last batch", align: "right" },
   { key: "popularity", label: "Popularity" },
   { key: "updated", label: "Updated", align: "right" },
 ];
@@ -679,6 +681,7 @@ function ProductsTab() {
                           key={product.id}
                           product={product}
                           hasBeenProduced={productionMap.has(pid)}
+                          lastProducedAt={productionMap.get(pid)?.lastProducedAt}
                           pieces={stockMap.get(pid) ?? 0}
                           frozen={frozenMap.get(pid) ?? 0}
                           fillingNames={fillingNames}
@@ -698,7 +701,7 @@ function ProductsTab() {
   );
 }
 
-function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, stockBucket, coatingNameByIngredientId }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; stockBucket: StockBucket; coatingNameByIngredientId: Map<string, string> }) {
+function ProductRow({ product, hasBeenProduced, lastProducedAt, pieces, frozen, fillingNames, stockBucket, coatingNameByIngredientId }: { product: ProductSummary; hasBeenProduced: boolean; lastProducedAt?: Date; pieces: number; frozen: number; fillingNames?: string[]; stockBucket: StockBucket; coatingNameByIngredientId: Map<string, string> }) {
   const coating = resolveCoating(product, coatingNameByIngredientId);
 
   return (
@@ -719,6 +722,9 @@ function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, st
           )}
         </h3>
       </div>
+      <span className="text-xs text-muted-foreground truncate capitalize">{coating || "—"}</span>
+      <span className="text-xs text-muted-foreground truncate">{fillingNames && fillingNames.length > 0 ? fillingNames.join(" · ") : "—"}</span>
+      <span className="text-xs text-muted-foreground truncate">{product.tags && product.tags.length > 0 ? product.tags.join(" · ") : "—"}</span>
       <div>
         {(hasBeenProduced || pieces > 0 || frozen > 0) ? (
           <ProductStockPills pieces={pieces} frozen={frozen} threshold={product.lowStockThreshold} />
@@ -726,8 +732,7 @@ function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, st
           <span className="text-xs text-muted-foreground">—</span>
         )}
       </div>
-      <span className="text-xs text-muted-foreground truncate capitalize">{coating || "—"}</span>
-      <span className="text-xs text-muted-foreground truncate">{fillingNames && fillingNames.length > 0 ? fillingNames.join(" · ") : "—"}</span>
+      <span className="text-xs tabular-nums text-muted-foreground text-right">{lastProducedAt ? formatDate(lastProducedAt) : "—"}</span>
       <div>
         {product.popularity ? (
           <div className="flex gap-0.5 shrink-0">

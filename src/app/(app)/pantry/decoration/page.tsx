@@ -342,7 +342,7 @@ function MaterialsTab() {
 
       {filtered.length > 0 && (
         <div role="table" aria-label="Decoration materials" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
-          <PantryTableHeader columns={MATERIALS_COLUMNS} gridTemplateColumns={MATERIALS_GRID} />
+          <PantryTableHeader columns={MATERIALS_COLUMNS} gridTemplateColumns={MATERIALS_GRID} hasAction />
           {grouped.map(({ type, label, items }) => {
             const isCollapsed = !f.search && activeFilterCount === 0 && collapsedGroups.has(type);
             return (

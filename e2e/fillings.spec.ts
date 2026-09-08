@@ -93,8 +93,8 @@ test.describe("Fillings", () => {
     await expect(page.getByText("Hazelnut Praline")).toBeVisible();
     await expect(page.getByText("Mango Gel")).toBeVisible();
 
-    // Both rows show "0" used-in and "Not used in any product" since neither is on a product yet
-    await expect(page.getByText("Not used in any product").first()).toBeVisible();
+    // Both rows show "0" used-in since neither is on a product yet
+    await expect(table.getByText("0", { exact: true }).first()).toBeVisible();
 
     // Collapsing all groups hides both rows; expanding restores them
     await page.getByRole("button", { name: "Collapse all" }).click();

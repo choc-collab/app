@@ -203,7 +203,7 @@ export default function PackagingPage() {
           </p>
         ) : (
           <div role="table" aria-label="Packaging" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
-            <PantryTableHeader columns={PACKAGING_COLUMNS} gridTemplateColumns={PACKAGING_GRID} />
+            <PantryTableHeader columns={PACKAGING_COLUMNS} gridTemplateColumns={PACKAGING_GRID} hasAction />
             {filtered.map((pkg) => {
               const latestOrder = pkg.id ? latestOrderMap.get(pkg.id) : undefined;
               return (

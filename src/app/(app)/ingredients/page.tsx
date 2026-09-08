@@ -491,7 +491,7 @@ function IngredientsTab() {
             <button onClick={() => setF("collapsedCategories", [])} className="text-xs text-muted-foreground">Expand all</button>
           </div>
           <div role="table" aria-label="Ingredients" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
-            <PantryTableHeader columns={INGREDIENTS_COLUMNS} gridTemplateColumns={INGREDIENTS_GRID} />
+            <PantryTableHeader columns={INGREDIENTS_COLUMNS} gridTemplateColumns={INGREDIENTS_GRID} hasAction />
             {grouped.map(({ category, items }) => {
               const isCollapsed = !f.search && activeFilterCount === 0 && collapsedCategories.has(category);
               return (
