@@ -1,4 +1,3 @@
-import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 
 // Why this test exists:
@@ -23,7 +22,7 @@ import { test, expect } from "./fixtures";
 // entity name never appears and the test fails.
 
 async function createAndReload(
-  page: Page,
+  page: Parameters<Parameters<typeof test>[1]>[0]["page"],
   listPath: string,
   spaPath: string,
   addButtonName: string | RegExp,
