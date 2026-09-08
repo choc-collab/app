@@ -28,7 +28,9 @@ import type {
   CollectionPricingSnapshot, DecorationMaterial, FillingStock,
   Sale,
   LabelTemplate, LabelField,
+  Customer, Order, OrderLineItem, OrderProductionLink,
 } from "@/types";
+import { toISODate } from "@/lib/orders";
 
 // Sentinel ingredient name to detect duplicate loads
 const SENTINEL = "Callebaut 823 Milk Chocolate 33.6%";
@@ -2378,6 +2380,75 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   await setDefaultLabelTemplateId("filling-batch", fillingLabelId as string);
   await setDefaultLabelTemplateId("collection-package", boxLabelId as string);
 
+  // ── Orders & customers ─────────────────────────────────────────────────────
+  // Populates the Orders calendar, the customers tab, and the Today
+  // "Upcoming orders" tile: one vague lead, one confirmed corporate order
+  // with line items and a batch allocation, and one fulfilled past order.
+  const demoOrderNow = new Date();
+  const isoDaysFromNow = (days: number) => {
+    const d = new Date(demoOrderNow);
+    d.setDate(d.getDate() + days);
+    return toISODate(d);
+  };
+
+  const cafeCustomerId = await db.customers.add({
+    name: "Grand Café Botermarkt",
+    email: "inkoop@grandcafebotermarkt.example",
+    phone: "+31 6 1234 5678",
+    address: "Botermarkt 3\n9411 KX Beilen",
+    notes: "Prefers dark chocolate; standing order every quarter.",
+    createdAt: demoOrderNow, updatedAt: demoOrderNow,
+  } as Customer) as string;
+
+  const weddingCustomerId = await db.customers.add({
+    name: "Fam. van Dijk",
+    phone: "+31 6 8765 4321",
+    createdAt: demoOrderNow, updatedAt: demoOrderNow,
+  } as Customer) as string;
+
+  await db.orders.add({
+    title: "Winter market Dwingeloo",
+    eventDate: isoDaysFromNow(70),
+    status: "lead",
+    source: "market",
+    venue: "Brink, Dwingeloo",
+    notes: "Stall confirmed verbally — roughly 200 bonbons plus bars. Firm up the mix in November.",
+    createdAt: demoOrderNow, updatedAt: demoOrderNow,
+  } as Order) as string;
+
+  const corporateOrderId = await db.orders.add({
+    title: "Quarterly gift boxes",
+    eventDate: isoDaysFromNow(21),
+    status: "confirmed",
+    source: "restaurant",
+    customerId: cafeCustomerId,
+    venue: "Deliver to the café",
+    createdAt: demoOrderNow, updatedAt: demoOrderNow,
+  } as Order) as string;
+
+  await db.orderLineItems.add({
+    orderId: corporateOrderId, productId: ganacheProductId, quantity: 40, sortOrder: 0,
+  } as OrderLineItem);
+  await db.orderLineItems.add({
+    orderId: corporateOrderId, productId: caramelProductId, quantity: 20,
+    notes: "Extra flaky salt on top", sortOrder: 1,
+  } as OrderLineItem);
+  // Part of the counter-restock batch is earmarked for this order.
+  await db.orderProductionLinks.add({
+    orderId: corporateOrderId, planId: restockPlanId, productId: ganacheProductId, quantity: 20,
+  } as OrderProductionLink);
+
+  await db.orders.add({
+    title: "Wedding favours",
+    eventDate: isoDaysFromNow(-30),
+    status: "fulfilled",
+    source: "private",
+    customerId: weddingCustomerId,
+    venue: "Landgoed Overcinge",
+    notes: "120 pieces in white organza bags. Went down well — keep the recipe notes.",
+    createdAt: demoOrderNow, updatedAt: demoOrderNow,
+  } as Order) as string;
+
   // Seed demo brand info so the labels look complete on a fresh install.
   // Only fills fields the user hasn't already set — never overwrites their
   // own brand. Facility "may contain" likewise stays untouched if populated.
@@ -2414,5 +2485,5 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
     });
   }
 
-  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen), 3 label templates (bonbon tray, filling tub, full box) preset as defaults for each kind. Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
+  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen), 3 label templates (bonbon tray, filling tub, full box) preset as defaults for each kind, 2 customers + 3 orders (a market lead, a confirmed corporate order with line items and a batch allocation, and a fulfilled wedding). Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
 }

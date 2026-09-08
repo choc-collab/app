@@ -6,6 +6,29 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-08
+
+### Added
+- **Orders & Events — capture future demand months ahead, refine it as the date approaches** — a new top-level Orders area (calendar icon in the nav, sage accent) for corporate orders, market stalls, restaurant orders, and private commissions. An order starts as vaguely as a title and a date ("Popup in Wittelte — Dec 20") and firms up over time: lifecycle statuses (Lead → Confirmed → In production → Fulfilled, plus Cancelled) advance with one-tap pills on the detail page, and a source tag (Market / Holiday / Restaurant / Private person / Other) keeps the calendar scannable.
+  - **List view** — upcoming open orders grouped by month, with each card showing the status badge, customer, venue, and how far out the event is ("in 3 months"). Past and closed orders are hidden by default.
+  - **Filter panel** — the same funnel-icon panel as the other list pages: show/hide past & closed orders, bound the window to within 30 days / 90 days / 12 months, and narrow to a single customer via a dropdown. Search covers title, customer, and venue.
+  - **Month calendar view** — a proper month grid (toggle at the top right, same control style as the product list's Default/Compact switch). Orders appear as chips on their day with a status dot; clicking an empty day opens the quick-add prefilled with that date.
+  - **Line items** — itemise what an order needs, as vaguely or precisely as you know it: "40 × (mix TBD, nut-free option)" works fine, and later becomes "40 × Milk Chocolate Ganache". Once a line has a real product, a fulfillment chip tracks how much of it is covered by batch allocations.
+  - **Linked batches with per-product allocations** — tie an order to the production batches that fulfil it. A link starts as a loose "this batch is for this order" association and refines into per-product claims: "20 × Salted Caramel from batch 20260902-001", shown against the batch's output ("of ~112") with a soft warning when you over-allocate. A batch that makes hundreds of pieces across several products can serve several orders at once.
+  - **Today dashboard tile** — "Upcoming orders" joins the dashboard, listing the next few open orders with status badges and dates.
+- **Customers** — a second tab on the Orders page holds the people and businesses behind the orders: name, email, phone, a multi-line address, Instagram handle, and free-form notes. Each customer's detail page shows their **full order history** (upcoming and past). Orders reference customers via a picker with an inline "+ New customer…" quick-create. Deleting follows the familiar pattern: customers with orders are archived (hidden from pickers, preserved on existing orders) rather than deleted; unused ones can be removed after a confirmation.
+- **Demo data** now seeds two customers and three orders (a market lead, a confirmed corporate order with line items and a batch allocation, and a fulfilled wedding) so the Orders area and the new dashboard tile are populated on first load.
+
+### Changed
+- **Batch summary (recall snapshot) lists each filling's recipe inline** — the plain-text summary written when a batch is marked done now breaks down every filling's scaled ingredients and nested-filling components under its header ("500g caramel base + 5g peppermint oil"), while leaf ingredients still aggregate globally in the "Ingredients used" section for recall traceability.
+- The Today dashboard tile row accommodates five tiles on wide screens.
+
+### Fixed
+- **Backups now include Orders data** — the orders, customers, line-items, and batch-link tables are exported, imported, and cleared alongside everything else. (Only relevant within this release cycle — earlier versions had no Orders tables.)
+- **Deleting a production plan no longer strands its standalone-filling rows** — fillings-only and hybrid plans left orphaned `planFillings` rows behind on delete; the cleanup transaction now covers them (and the new order↔batch links).
+- **Best-by date corrections on production batches** (#57).
+- Hosting redirect fixes for the app's static-export routing on Cloudflare Pages and Vercel.
+
 ## [0.6.1] — 2026-07-14
 
 ### Fixed

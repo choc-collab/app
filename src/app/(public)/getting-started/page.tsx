@@ -172,7 +172,7 @@ const SECTIONS: Section[] = [
             <strong>What to watch out for:</strong> data is tied to this one
             browser on this one device. Clear your browser data and it&apos;s
             gone. No sync across iPad + laptop. <strong>Backup is essential</strong>
-            {" "}— see section 17.
+            {" "}— see section 18.
           </li>
         </ul>
         <h3>Hosted (with Dexie Cloud sync)</h3>
@@ -769,7 +769,7 @@ const SECTIONS: Section[] = [
         <ul>
           <li><strong>Pulls from stock.</strong> Filling a box reserves the pieces; selling it commits the deduction. Voiding a prepared box returns them to stock.</li>
           <li><strong>Uses collection pricing.</strong> Retail price comes from the collection × packaging pair you set up in section 12. Change the price on the collection and future boxes pick it up; already-prepared boxes keep the price they were prepared at.</li>
-          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 15 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
+          <li><strong>Feeds the Observatory.</strong> Every sale and give-away flows into the reporting in section 16 — daily revenue, margin trends, and the mismatch between what you made and what you sold.</li>
         </ul>
         <Shot label="Shop landing — today's revenue, KPIs, and ready-to-sell boxes" src="/docs/screenshots/shop-landing.png" />
       </>
@@ -994,8 +994,8 @@ const SECTIONS: Section[] = [
         <h3>Where templates live, and roaming with them</h3>
         <p>
           Templates are stored in IndexedDB on your device alongside everything else. If you use
-          Dexie Cloud sync (section 18), they roam to every device you sign in from. They&apos;re
-          included in every backup file (section 17) so a workshop with five label designs can
+          Dexie Cloud sync (section 19), they roam to every device you sign in from. They&apos;re
+          included in every backup file (section 18) so a workshop with five label designs can
           export them once and import them onto a new machine in seconds.
         </p>
 
@@ -1004,8 +1004,74 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "observatory",
+    id: "orders",
     num: "15",
+    title: "Orders & customers — capture future demand",
+    teaser: "A calendar for corporate orders and events, refined from a vague lead into linked production batches.",
+    render: () => (
+      <>
+        <p className="sub">
+          Orders usually arrive months before the details do — &ldquo;40 bonbons for a popup in
+          December&rdquo; is all you know in September. The Orders area is built around exactly
+          that: capture the date and a title now, and make it concrete as the event approaches.
+        </p>
+
+        <h3>Capturing an order</h3>
+        <p>
+          Open <strong>Orders</strong> in the nav and tap <strong>+</strong> (or press{" "}
+          <code>n</code>). A title, a date, and a status — that&apos;s all a new order needs.
+          Everything else lives on the detail page and can be filled in whenever you learn it:
+          the customer, the venue, a type tag (market, holiday, restaurant, private person),
+          and free-form notes for the early vagueness.
+        </p>
+        <p>
+          The status pills advance the lifecycle in one tap: <strong>Lead</strong> (someone
+          asked) → <strong>Confirmed</strong> (it&apos;s happening) → <strong>In
+          production</strong> (you&apos;re making it) → <strong>Fulfilled</strong> (delivered).
+          Cancelled is the exit for the ones that fall through — they stay in your history.
+        </p>
+
+        <h3>List and calendar views</h3>
+        <p>
+          The list shows open orders grouped by month, soonest first. Past and closed orders
+          are tucked away by default — the filter panel (funnel icon) brings them back, bounds
+          the view to a time window, or narrows to one customer. The toggle at the top right
+          switches to a month calendar where every order sits on its day; clicking an empty
+          day starts a new order on that date.
+        </p>
+
+        <h3>Customers</h3>
+        <p>
+          The <strong>Customers</strong> tab holds the people and businesses behind the
+          orders — contact details, address, and notes. Every customer page lists their full
+          order history, upcoming and past, so &ldquo;what did we make them last year?&rdquo;
+          is one tap away. Customers with order history are archived rather than deleted, so
+          old orders never lose their context.
+        </p>
+
+        <h3>Line items and linked batches</h3>
+        <p>
+          As the order firms up, itemise it: line items start as a quantity and a note
+          (&ldquo;40 × mix TBD, one nut-free&rdquo;) and later point at real products. Then
+          link the production batches you&apos;re making it from — and claim just the pieces
+          this order needs: <em>20 × Salted Caramel from Tuesday&apos;s batch</em>, even when
+          that batch makes hundreds of pieces across several products. Each line item shows
+          how much of it is covered (&ldquo;20/40 allocated&rdquo;), and the app warns —
+          softly — when you promise more than a batch produces.
+        </p>
+        <Callout kind="tip" title="The Today tile keeps you honest">
+          The dashboard&apos;s <em>Upcoming orders</em> tile lists the next few open orders
+          with their status. A &ldquo;Lead&rdquo; badge two weeks out is your nudge to chase
+          the confirmation; &ldquo;Confirmed&rdquo; with nothing allocated means it&apos;s
+          time to plan a batch.
+        </Callout>
+        <Shot label="Orders list — open orders grouped by month, with statuses and customers" src="/docs/screenshots/orders-list.png" />
+      </>
+    ),
+  },
+  {
+    id: "observatory",
+    num: "16",
     title: "The Observatory — your numbers in one place",
     teaser: "Pricing health, production trends, product-cost breakdowns, and shop sales.",
     render: () => (
@@ -1065,7 +1131,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "allergens",
-    num: "16",
+    num: "17",
     title: "Allergens and nutrition",
     teaser: "Enter once at the ingredient level. The app does the rest.",
     render: () => (
@@ -1093,7 +1159,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "backup",
-    num: "17",
+    num: "18",
     title: "Backup, restore, and cloud sync",
     teaser: "Your data is yours. Treat it that way.",
     render: () => (
@@ -1140,7 +1206,7 @@ const SECTIONS: Section[] = [
           Non-technical-friendly, takes about twenty minutes the first time.
         </p>
         <p>
-          Full walkthrough: <strong>Section 15 — Setting up Dexie Cloud sync</strong>.
+          Full walkthrough: <strong>Section 19 — Setting up Dexie Cloud sync</strong>.
         </p>
         <Callout kind="note" title="My own setup">
           I started local-only, but I work across my workshop iPad and a laptop, so I switched to
@@ -1152,7 +1218,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "dexie-cloud",
-    num: "18",
+    num: "19",
     title: "Setting up Dexie Cloud sync (step by step)",
     teaser: "The bit that lets your iPad and laptop see the same data. Twenty minutes, no code.",
     render: () => (
@@ -1490,7 +1556,7 @@ jobs:
   },
   {
     id: "shortcuts",
-    num: "19",
+    num: "20",
     title: "Keyboard shortcuts",
     teaser: "Small, but they add up.",
     render: () => (
@@ -1519,7 +1585,7 @@ jobs:
   },
   {
     id: "faq",
-    num: "20",
+    num: "21",
     title: "Troubleshooting and FAQ",
     teaser: "The things I've been asked most.",
     render: () => (
@@ -1769,7 +1835,7 @@ jobs:
             </li>
             <li>
               <strong>Backups are your responsibility.</strong> The app offers exports and
-              auto-snapshots (see section 17), but I can&apos;t recover data for you. If your
+              auto-snapshots (see section 18), but I can&apos;t recover data for you. If your
               iPad dies and you never exported, the data is gone. Treat a weekly backup like
               closing the till.
             </li>
@@ -1805,14 +1871,14 @@ const HUB_GROUPS = [
   { title: "Get set up", ids: ["welcome", "hosted-or-local", "install", "demo", "preferences"] },
   { title: "Day to day", ids: ["dashboard"] },
   { title: "Build your pantry", ids: ["ingredient", "filling", "product"] },
-  { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "labels", "observatory"] },
+  { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "labels", "orders", "observatory"] },
   { title: "Allergens, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },
 ];
 
 const HUB_ACCENTS: Record<string, string> = {
   welcome: "cocoa", "hosted-or-local": "mint", install: "blue", demo: "butter", dashboard: "lilac", preferences: "taupe",
   ingredient: "sage", filling: "peach", product: "cocoa",
-  production: "terracotta", stock: "taupe", collections: "butter", shop: "peach", labels: "taupe", observatory: "sage",
+  production: "terracotta", stock: "taupe", collections: "butter", shop: "peach", labels: "taupe", orders: "sage", observatory: "sage",
   allergens: "mint", backup: "lilac", "dexie-cloud": "mint", shortcuts: "taupe", faq: "blue",
 };
 
@@ -1831,6 +1897,7 @@ const HUB_ICONS: Record<string, ReactNode> = {
   collections: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
   shop:        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/></svg>,
   labels:      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M6 8h12M6 12h8M6 16h10"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>,
+  orders:      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18M8 15h.01M12 15h.01M16 15h.01"/></svg>,
   observatory: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M4 20h16M6 20V10M10 20V6M14 20v-8M18 20V4"/></svg>,
   allergens:   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M10.3 3.9 1.8 18.2A2 2 0 0 0 3.5 21h17a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg>,
   backup:      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.7 1 6.3 2.7L21 8M21 3v5h-5"/></svg>,
