@@ -20,3 +20,8 @@ updates:
       # Stay on 9.x until upstream catches up.
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
+      # typescript 7 doesn't expose the compiler API Next.js's build-time
+      # typecheck relies on ("does not provide the compiler API required by
+      # Next.js"). Stay on 6.x until Next.js supports it.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
