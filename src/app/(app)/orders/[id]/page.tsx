@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   useOrder, saveOrder, deleteOrder,
   useCustomers, useCustomer, saveCustomer,
-  useOrderProductionLinks, useProductionPlans, linkOrderToPlan, unlinkOrderFromPlan,
 } from "@/lib/hooks";
 import { useSpaId } from "@/lib/use-spa-id";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
@@ -17,10 +16,11 @@ import {
   ORDER_STATUS_LABEL,
   ORDER_STATUS_STYLE,
 } from "@/lib/orders";
-import { PLAN_STATUS_LABEL, PLAN_STATUS_STYLE } from "@/lib/production";
+import { LineItemsSection } from "@/components/orders/line-items-section";
+import { LinkedBatchesSection } from "@/components/orders/linked-batches-section";
 import { ORDER_SOURCES } from "@/types";
 import type { OrderStatus, OrderSource } from "@/types";
-import { ArrowLeft, Pencil, Trash2, CalendarDays, MapPin, User, Factory, X } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, CalendarDays, MapPin, User } from "lucide-react";
 
 /** Sentinel value in the customer select that reveals the quick-create input. */
 const NEW_CUSTOMER = "__new__";
@@ -327,6 +327,8 @@ function OrderDetailPageInner() {
               </div>
             )}
 
+            <LineItemsSection orderId={orderId} />
+
             <LinkedBatchesSection orderId={orderId} />
 
             {/* One-tap lifecycle advance without entering edit mode */}
@@ -383,129 +385,6 @@ function OrderDetailPageInner() {
               )}
             </div>
           </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Read-view section tying the order to the production batches that fulfil
- *  it. Rows link to the batch's board page; unlinking is a two-step inline
- *  confirm (standing rule for removal actions). */
-function LinkedBatchesSection({ orderId }: { orderId: string }) {
-  const links = useOrderProductionLinks(orderId);
-  const plans = useProductionPlans(); // newest first
-  const [selectedPlanId, setSelectedPlanId] = useState("");
-  const [confirmUnlinkId, setConfirmUnlinkId] = useState<string | null>(null);
-
-  const planById = useMemo(() => {
-    const m = new Map<string, (typeof plans)[number]>();
-    for (const p of plans) if (p.id) m.set(p.id, p);
-    return m;
-  }, [plans]);
-
-  const linkedPlanIds = useMemo(() => new Set(links.map((l) => l.planId)), [links]);
-  const linkablePlans = useMemo(
-    () => plans.filter((p) => p.id && !linkedPlanIds.has(p.id)),
-    [plans, linkedPlanIds],
-  );
-
-  async function handleLink() {
-    if (!selectedPlanId) return;
-    await linkOrderToPlan(orderId, selectedPlanId);
-    setSelectedPlanId("");
-  }
-
-  return (
-    <div>
-      <div className="mono-label text-muted-foreground mb-1.5">Linked batches</div>
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-        {links.length === 0 && (
-          <p className="text-xs text-muted-foreground">
-            No batches linked yet — link the production batches you&apos;re making for this order.
-          </p>
-        )}
-
-        {links.length > 0 && (
-          <ul className="space-y-1.5">
-            {links.map((link) => {
-              const plan = planById.get(link.planId);
-              if (!plan) return null; // plan deleted; cleanup removes the link
-              return (
-                <li key={link.id} className="flex items-center gap-2">
-                  <Factory className="w-4 h-4 text-muted-foreground shrink-0" aria-hidden />
-                  <Link
-                    href={`/production/${encodeURIComponent(link.planId)}`}
-                    className="flex-1 min-w-0 text-sm font-medium truncate hover:underline"
-                  >
-                    {plan.name}
-                    {plan.batchNumber && (
-                      <span className="ml-2 font-mono text-[10px] text-muted-foreground font-normal">
-                        {plan.batchNumber}
-                      </span>
-                    )}
-                  </Link>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0 ${PLAN_STATUS_STYLE[plan.status]}`}>
-                    {PLAN_STATUS_LABEL[plan.status]}
-                  </span>
-                  {confirmUnlinkId === link.id ? (
-                    <span className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-xs text-destructive">Remove?</span>
-                      <button
-                        onClick={async () => {
-                          await unlinkOrderFromPlan(link.id!);
-                          setConfirmUnlinkId(null);
-                        }}
-                        className="text-xs font-medium text-destructive hover:underline"
-                      >
-                        Yes
-                      </button>
-                      <button
-                        onClick={() => setConfirmUnlinkId(null)}
-                        className="text-xs text-muted-foreground hover:underline"
-                      >
-                        Cancel
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmUnlinkId(link.id!)}
-                      aria-label={`Unlink ${plan.name}`}
-                      title="Unlink batch"
-                      className="p-1 rounded-full hover:bg-muted transition-colors shrink-0"
-                    >
-                      <X className="w-3.5 h-3.5 text-muted-foreground" />
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {linkablePlans.length > 0 && (
-          <div className="flex gap-2 pt-1">
-            <select
-              className="input flex-1"
-              value={selectedPlanId}
-              onChange={(e) => setSelectedPlanId(e.target.value)}
-              aria-label="Link a batch"
-            >
-              <option value="">Link a batch…</option>
-              {linkablePlans.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}{p.batchNumber ? ` (${p.batchNumber})` : ""}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={handleLink}
-              disabled={!selectedPlanId}
-              className="btn-secondary px-4 py-2"
-            >
-              Link
-            </button>
-          </div>
         )}
       </div>
     </div>

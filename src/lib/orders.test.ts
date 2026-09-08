@@ -11,8 +11,11 @@ import {
   daysUntil,
   relativeToToday,
   normalizeCustomerKey,
+  groupLinksByPlan,
+  allocatedByProduct,
+  lineItemFulfillment,
 } from "./orders";
-import type { Order, OrderStatus } from "@/types";
+import type { Order, OrderStatus, OrderProductionLink, OrderLineItem } from "@/types";
 
 const TODAY = "2026-09-02";
 
@@ -213,6 +216,80 @@ describe("date display helpers", () => {
     expect(relativeToToday("2026-09-23", TODAY)).toBe("in 3 weeks");
     expect(relativeToToday("2026-12-20", TODAY)).toBe("in 4 months");
     expect(relativeToToday("2026-08-28", TODAY)).toBe("5 days ago");
+  });
+});
+
+function link(overrides: Partial<OrderProductionLink>): OrderProductionLink {
+  return { id: "l1", orderId: "o1", planId: "p1", ...overrides };
+}
+
+function lineItem(overrides: Partial<OrderLineItem>): OrderLineItem {
+  return { id: "li1", orderId: "o1", quantity: 40, sortOrder: 0, ...overrides };
+}
+
+describe("groupLinksByPlan", () => {
+  it("returns an empty map for no links", () => {
+    expect(groupLinksByPlan([]).size).toBe(0);
+  });
+
+  it("groups rows by plan, keeping bare and allocation rows together", () => {
+    const groups = groupLinksByPlan([
+      link({ id: "a", planId: "p1" }), // bare
+      link({ id: "b", planId: "p1", productId: "prodA", quantity: 20 }),
+      link({ id: "c", planId: "p2", productId: "prodB", quantity: 10 }),
+    ]);
+    expect(groups.size).toBe(2);
+    expect(groups.get("p1")?.map((l) => l.id)).toEqual(["a", "b"]);
+    expect(groups.get("p2")?.map((l) => l.id)).toEqual(["c"]);
+  });
+});
+
+describe("allocatedByProduct", () => {
+  it("ignores bare rows and rows without a quantity", () => {
+    const map = allocatedByProduct([
+      link({ id: "a" }), // bare
+      link({ id: "b", productId: "prodA" }), // no quantity
+      link({ id: "c", productId: "prodA", quantity: 20 }),
+    ]);
+    expect(map.get("prodA")).toBe(20);
+    expect(map.size).toBe(1);
+  });
+
+  it("sums the same product across multiple plans", () => {
+    const map = allocatedByProduct([
+      link({ id: "a", planId: "p1", productId: "prodA", quantity: 20 }),
+      link({ id: "b", planId: "p2", productId: "prodA", quantity: 15 }),
+      link({ id: "c", planId: "p1", productId: "prodB", quantity: 5 }),
+    ]);
+    expect(map.get("prodA")).toBe(35);
+    expect(map.get("prodB")).toBe(5);
+  });
+});
+
+describe("lineItemFulfillment", () => {
+  const allocated = new Map([["prodA", 10]]);
+
+  it("returns null for untyped line items", () => {
+    expect(lineItemFulfillment(lineItem({}), allocated)).toBeNull();
+  });
+
+  it("reports partial fulfillment", () => {
+    expect(lineItemFulfillment(lineItem({ productId: "prodA", quantity: 40 }), allocated))
+      .toEqual({ allocated: 10, needed: 40 });
+  });
+
+  it("reports complete and over fulfillment", () => {
+    const full = new Map([["prodA", 40]]);
+    expect(lineItemFulfillment(lineItem({ productId: "prodA", quantity: 40 }), full))
+      .toEqual({ allocated: 40, needed: 40 });
+    const over = new Map([["prodA", 50]]);
+    expect(lineItemFulfillment(lineItem({ productId: "prodA", quantity: 40 }), over))
+      .toEqual({ allocated: 50, needed: 40 });
+  });
+
+  it("reports zero when the product has no allocations", () => {
+    expect(lineItemFulfillment(lineItem({ productId: "prodX", quantity: 40 }), allocated))
+      .toEqual({ allocated: 0, needed: 40 });
   });
 });
 

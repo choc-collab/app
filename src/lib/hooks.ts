@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, isCloudConfigured } from "@/lib/db";
 import { sanitizeBrand } from "@/lib/brand-sanitize";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -2841,10 +2841,36 @@ export async function saveOrder(obj: Omit<Order, "id" | "createdAt" | "updatedAt
 }
 
 export async function deleteOrder(id: string): Promise<void> {
-  await db.transaction("rw", [db.orders, db.orderProductionLinks], async () => {
+  await db.transaction("rw", [db.orders, db.orderProductionLinks, db.orderLineItems], async () => {
     await db.orderProductionLinks.where("orderId").equals(id).delete();
+    await db.orderLineItems.where("orderId").equals(id).delete();
     await db.orders.delete(id);
   });
+}
+
+// --- Order line items ---
+
+export function useOrderLineItems(orderId: string | undefined) {
+  return useLiveQuery(() =>
+    orderId
+      ? db.orderLineItems.where("orderId").equals(orderId).toArray().then((rows) =>
+          rows.sort((a, b) => a.sortOrder - b.sortOrder)
+        )
+      : Promise.resolve([] as OrderLineItem[]),
+    [orderId]
+  ) ?? [];
+}
+
+export async function saveOrderLineItem(obj: Omit<OrderLineItem, "id"> & { id?: string }): Promise<string> {
+  if (obj.id) {
+    await db.orderLineItems.update(obj.id, obj);
+    return obj.id;
+  }
+  return db.orderLineItems.add(obj as OrderLineItem) as Promise<string>;
+}
+
+export async function deleteOrderLineItem(id: string): Promise<void> {
+  await db.orderLineItems.delete(id);
 }
 
 // --- Customers ---
@@ -2912,17 +2938,70 @@ export function useOrderProductionLinks(orderId: string | undefined) {
   ) ?? [];
 }
 
+/** Associate a batch with an order via one "bare" link row. No-op when any
+ *  row (bare or allocation) already ties the pair together. */
 export async function linkOrderToPlan(orderId: string, planId: string): Promise<void> {
-  const existing = await db.orderProductionLinks
-    .where("orderId").equals(orderId)
-    .filter((l) => l.planId === planId)
-    .count();
-  if (existing > 0) return;
-  await db.orderProductionLinks.add({ orderId, planId } as OrderProductionLink);
+  await db.transaction("rw", [db.orderProductionLinks], async () => {
+    const existing = await db.orderProductionLinks
+      .where("orderId").equals(orderId)
+      .filter((l) => l.planId === planId)
+      .count();
+    if (existing > 0) return;
+    await db.orderProductionLinks.add({ orderId, planId } as OrderProductionLink);
+  });
 }
 
-export async function unlinkOrderFromPlan(linkId: string): Promise<void> {
-  await db.orderProductionLinks.delete(linkId);
+/** Claim `quantity` pieces of one product from a linked batch. Uniqueness is
+ *  (orderId, planId, productId), enforced in JS — Dexie can't index undefined
+ *  and a compound index would drop legacy bare rows. Re-allocating the same
+ *  product updates its quantity; a bare row is upgraded in place so the group
+ *  doesn't grow a phantom whole-batch row. */
+export async function addOrderPlanAllocation(orderId: string, planId: string, productId: string, quantity: number): Promise<void> {
+  await db.transaction("rw", [db.orderProductionLinks], async () => {
+    const rows = await db.orderProductionLinks
+      .where("orderId").equals(orderId)
+      .filter((l) => l.planId === planId)
+      .toArray();
+    const existing = rows.find((l) => l.productId === productId);
+    if (existing?.id) {
+      await db.orderProductionLinks.update(existing.id, { quantity });
+      return;
+    }
+    const bare = rows.find((l) => l.productId == null);
+    if (bare?.id) {
+      await db.orderProductionLinks.update(bare.id, { productId, quantity });
+      return;
+    }
+    await db.orderProductionLinks.add({ orderId, planId, productId, quantity } as OrderProductionLink);
+  });
+}
+
+/** Remove one per-product allocation. The last row for a plan is downgraded
+ *  back to a bare link (props deleted via `undefined`, v13 precedent) instead
+ *  of deleted, so the batch stays associated with the order. */
+export async function removeOrderPlanAllocation(linkId: string): Promise<void> {
+  await db.transaction("rw", [db.orderProductionLinks], async () => {
+    const row = await db.orderProductionLinks.get(linkId);
+    if (!row) return;
+    const siblings = await db.orderProductionLinks
+      .where("orderId").equals(row.orderId)
+      .filter((l) => l.planId === row.planId && l.id !== linkId)
+      .count();
+    if (siblings > 0) {
+      await db.orderProductionLinks.delete(linkId);
+    } else {
+      await db.orderProductionLinks.update(linkId, { productId: undefined, quantity: undefined });
+    }
+  });
+}
+
+/** Remove the whole batch association — every row (bare + allocations) for
+ *  the (order, plan) pair. */
+export async function unlinkOrderFromPlan(orderId: string, planId: string): Promise<void> {
+  await db.orderProductionLinks
+    .where("orderId").equals(orderId)
+    .filter((l) => l.planId === planId)
+    .delete();
 }
 
 export function useAllCollectionProducts() {

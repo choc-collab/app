@@ -1,4 +1,4 @@
-import type { Order, OrderStatus } from "@/types";
+import type { Order, OrderStatus, OrderProductionLink, OrderLineItem } from "@/types";
 
 // Pure selectors and date math for the Orders & Events feature. Everything
 // here takes `todayISO` as a parameter (never calls `new Date()` internally)
@@ -152,4 +152,38 @@ export function ordersByDate(orders: Order[]): Map<string, Order[]> {
 export function shiftMonth(year: number, month: number, delta: number): { year: number; month: number } {
   const total = year * 12 + month + delta;
   return { year: Math.floor(total / 12), month: ((total % 12) + 12) % 12 };
+}
+
+/** Link rows grouped by plan, preserving row order within each group. A
+ *  group holds the plan's bare link and/or its per-product allocations. */
+export function groupLinksByPlan(links: OrderProductionLink[]): Map<string, OrderProductionLink[]> {
+  const map = new Map<string, OrderProductionLink[]>();
+  for (const l of links) {
+    const group = map.get(l.planId);
+    if (group) group.push(l);
+    else map.set(l.planId, [l]);
+  }
+  return map;
+}
+
+/** Total pieces allocated per product across all linked batches. Bare rows
+ *  (no productId) and rows without a quantity are ignored. */
+export function allocatedByProduct(links: OrderProductionLink[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const l of links) {
+    if (!l.productId || l.quantity == null) continue;
+    map.set(l.productId, (map.get(l.productId) ?? 0) + l.quantity);
+  }
+  return map;
+}
+
+/** Fulfillment progress for one line item, matched by product against the
+ *  order's batch allocations. Null for untyped line items (no productId) —
+ *  nothing to match yet. */
+export function lineItemFulfillment(
+  item: OrderLineItem,
+  allocated: Map<string, number>,
+): { allocated: number; needed: number } | null {
+  if (!item.productId) return null;
+  return { allocated: allocated.get(item.productId) ?? 0, needed: item.quantity };
 }

@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem } from "@/types";
 import { normalizeCustomerKey } from "@/lib/orders";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
@@ -44,6 +44,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   orders: EntityTable<Order, "id">;
   customers: EntityTable<Customer, "id">;
   orderProductionLinks: EntityTable<OrderProductionLink, "id">;
+  orderLineItems: EntityTable<OrderLineItem, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -631,6 +632,17 @@ db.version(18).stores({
   }
 });
 
+// v19 — Order line items ("40 bonbons, mix TBD" that firms up into real
+// products with quantities). Purely additive — no existing rows touched,
+// no upgrade hook required. Indexed on `orderId` for the per-order lookup.
+//
+// (OrderProductionLink also gained optional productId/quantity fields in the
+// same change — unindexed, so no schema restatement needed; legacy bare rows
+// read back with productId undefined, meaning "whole batch, unspecified".)
+db.version(19).stores({
+  orderLineItems: "id, orderId",
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -677,6 +689,7 @@ const AUTO_ID_TABLES = [
   db.orders,
   db.customers,
   db.orderProductionLinks,
+  db.orderLineItems,
 ];
 for (const table of AUTO_ID_TABLES) {
    

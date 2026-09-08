@@ -1305,11 +1305,30 @@ export interface Customer {
 }
 
 /** Join table: which production batches fulfil which order. An order can
- *  draw from several batches and a batch can serve several orders. */
+ *  draw from several batches and a batch can serve several orders.
+ *
+ *  A row without `productId` is a "bare" link — the whole batch is loosely
+ *  associated with the order. Setting `productId` + `quantity` refines it
+ *  into a per-product allocation ("20 × Dark caramel from this batch").
+ *  Both fields are unindexed, so legacy bare rows need no migration. */
 export interface OrderProductionLink {
   id?: string;
   orderId: string;
   planId: string; // FK → ProductionPlan.id
+  productId?: string; // FK → Product.id; unset = whole batch, unspecified
+  quantity?: number;  // pieces claimed from this batch for this product
+}
+
+/** One line of what an order needs — "40 bonbons, mix TBD" that firms up
+ *  into real products as the date approaches. `productId` unset = untyped
+ *  placeholder; fulfillment tracking kicks in once it's set. */
+export interface OrderLineItem {
+  id?: string;
+  orderId: string;
+  productId?: string;
+  quantity: number;
+  notes?: string;
+  sortOrder: number;
 }
 
 // --- Give-aways ---
