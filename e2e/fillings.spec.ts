@@ -27,22 +27,47 @@ test.describe("Fillings", () => {
     await expect(page.getByText("Praline Base")).toBeVisible();
   });
 
-  test("detail page allows editing filling notes", async ({ page }) => {
+  test("detail page autosaves notes as you type, no Save button", async ({ page }) => {
     test.setTimeout(60000);
-    // Create filling — lands in editing mode (?new=1)
     await page.goto("/fillings");
     await page.getByRole("button", { name: "Add filling" }).click();
     await page.getByRole("textbox", { name: "Filling name" }).fill("Caramel Filling");
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
 
-    // Edit form is open — fill Notes (fill() auto-waits for the element, up to test timeout)
-    await page.getByPlaceholder("Notes…").fill("Rich buttery caramel with sea salt");
-    await page.getByPlaceholder("Notes…").blur();
-    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
 
-    // Notes should be visible in non-editing view
-    await expect(page.getByText("Rich buttery caramel with sea salt")).toBeVisible();
+    await page.getByPlaceholder("Tasting notes, substitutions, what to try next time…").fill("Rich buttery caramel with sea salt");
+    await page.getByPlaceholder("Tasting notes, substitutions, what to try next time…").blur();
+
+    // Persists without ever clicking a Save button
+    await page.reload();
+    await expect(page.getByPlaceholder("Tasting notes, substitutions, what to try next time…")).toHaveValue("Rich buttery caramel with sea salt");
+  });
+
+  test("detail page autosaves properties, method, and ingredients with no Save button", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Nougat");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+
+    // Sidebar Properties — Status autosaves on blur
+    const statusInput = page.getByPlaceholder("e.g. testing");
+    await statusInput.fill("testing");
+    await statusInput.blur();
+
+    // Method — starts empty ("No steps yet."); click Add step, then fill the
+    // new row. Step text lives in a textarea's value, not rendered text.
+    await page.getByRole("button", { name: "Add step" }).click();
+    const stepInput = page.getByPlaceholder("Describe this step…");
+    await stepInput.fill("Whisk egg whites to soft peaks.");
+    await stepInput.blur();
+
+    await page.reload();
+    await expect(page.getByPlaceholder("e.g. testing")).toHaveValue("testing");
+    await expect(page.getByPlaceholder("Describe this step…")).toHaveValue("Whisk egg whites to soft peaks.");
   });
 
   test("duplicate filling creates a copy and lands on new detail page", async ({ page }) => {
@@ -53,17 +78,17 @@ test.describe("Fillings", () => {
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
 
-    // Save to exit edit mode
-    await page.getByRole("button", { name: "Save" }).click();
-
-    // Click duplicate — navigates immediately to new filling
+    // Click duplicate — no Save button to click first, actions are always available
     await page.getByRole("button", { name: /Duplicate filling/i }).click();
 
-    // Should land on new filling detail page in edit mode
+    // Should land on new filling detail page. The duplicated name opens
+    // pre-focused in the (still autosaving) rename input — commit it to see
+    // the plain text. Target the input directly (rather than a blind global
+    // keypress) since it needs a moment to mount past the loading skeleton.
     await expect(page).toHaveURL(/\/fillings\/.+/);
-
-    // New filling name should contain "(copy)"
-    await page.getByRole("button", { name: "Save" }).click();
+    const nameInput = page.locator('input[value*="(copy)"]');
+    await nameInput.waitFor({ timeout: 30000 });
+    await nameInput.press("Enter");
     await expect(page.getByText("Original Filling (copy)").first()).toBeVisible({ timeout: 30000 });
   });
 
@@ -80,8 +105,8 @@ test.describe("Fillings", () => {
       await page.getByRole("textbox", { name: "Filling name" }).fill(name);
       await page.keyboard.press("Enter");
       await expect(page).toHaveURL(/\/fillings\/.+/);
-      await page.locator("select.input").first().selectOption(category);
-      await page.getByRole("button", { name: "Save" }).click();
+      // Category lives in the sidebar Properties card and autosaves on change.
+      await page.locator("select").first().selectOption(category);
     }
 
     await page.goto("/fillings");
@@ -121,8 +146,8 @@ test.describe("Fillings", () => {
       await page.getByRole("textbox", { name: "Filling name" }).fill(name);
       await page.keyboard.press("Enter");
       await expect(page).toHaveURL(/\/fillings\/.+/);
-      await page.locator("select.input").first().selectOption(category);
-      await page.getByRole("button", { name: "Save" }).click();
+      // Category lives in the sidebar Properties card and autosaves on change.
+      await page.locator("select").first().selectOption(category);
     }
 
     await page.goto("/fillings");
@@ -151,13 +176,18 @@ test.describe("Fillings", () => {
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
 
-    // Click Done to exit editing mode without a full page reload
-    await page.getByRole("button", { name: "Save" }).click();
-
     await page.getByRole("button", { name: /Delete filling/i }).click();
     await page.getByRole("button", { name: /Yes, delete filling/i }).click();
 
     await expect(page).toHaveURL("/fillings/");
     await expect(page.getByText("Delete Me")).not.toBeVisible();
+  });
+
+  test("shows a distinct not-found state for a missing filling, not the loading string", async ({ page }) => {
+    await page.goto("/fillings/does-not-exist");
+    await expect(page.getByText(/This filling doesn.t exist\./)).toBeVisible();
+    await expect(page.getByText("Loading…")).not.toBeVisible();
+    await page.getByRole("link", { name: "Back to Fillings" }).click();
+    await expect(page).toHaveURL(/\/fillings\/?$/);
   });
 });

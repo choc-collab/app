@@ -182,12 +182,13 @@ test.describe("Filling-in-filling — Phase 1 (foundation)", () => {
     await expect(row).toContainText("Caramel base");
     await expect(row.getByTestId("nested-filling-amount")).toHaveValue("50");
 
-    // Reload — the row is still there, sourced from IndexedDB. View mode
-    // renders the static "{amount}{unit}" form, so we can match "50g" again.
+    // Reload — the row is still there, sourced from IndexedDB. Nested-filling
+    // rows are always editable (no page-level edit mode to reset), so the
+    // amount is still the inline input, not static text.
     await page.goto(hostUrl);
     const reloadedRow = page.getByTestId("nested-filling-row").first();
     await expect(reloadedRow).toContainText("Caramel base");
-    await expect(reloadedRow).toContainText("50g");
+    await expect(reloadedRow.getByTestId("nested-filling-amount")).toHaveValue("50");
   });
 
   test("save rejects cycles (self-ref, 2-hop, 3-hop)", async ({ page }) => {
@@ -198,18 +199,9 @@ test.describe("Filling-in-filling — Phase 1 (foundation)", () => {
     const bUrl = await createFilling(page, "Filling B");
     const cUrl = await createFilling(page, "Filling C");
 
-    async function enterEditMode() {
-      // The detail page lands in view mode for non-new visits; flip to edit
-      // before touching the nested-filling controls. Wait for the toggle
-      // (state can take a tick to hydrate after navigation).
-      const editBtn = page.getByRole("button", { name: "Edit filling" });
-      await editBtn.waitFor({ state: "visible" });
-      await editBtn.click();
-    }
-
-    // b contains c (b → c)
+    // b contains c (b → c). Nested-filling composition is always addable —
+    // no edit-mode gate.
     await page.goto(bUrl);
-    await enterEditMode();
     await page.getByTestId("add-filling-component-btn").click();
     await page.getByTestId("add-filling-component-search").fill("Filling C");
     await page.getByRole("button", { name: "Filling C" }).click();
@@ -219,7 +211,6 @@ test.describe("Filling-in-filling — Phase 1 (foundation)", () => {
 
     // a contains b (a → b → c)
     await page.goto(aUrl);
-    await enterEditMode();
     await page.getByTestId("add-filling-component-btn").click();
     await page.getByTestId("add-filling-component-search").fill("Filling B");
     await page.getByRole("button", { name: "Filling B" }).click();
@@ -230,7 +221,6 @@ test.describe("Filling-in-filling — Phase 1 (foundation)", () => {
     // In C's picker: A and B should both be cycle-disabled. (C → A would
     // close C → A → B → C; C → B would close C → B → C.) C itself is "Self".
     await page.goto(cUrl);
-    await enterEditMode();
     await page.getByTestId("add-filling-component-btn").click();
 
     // Picker shows all three; each is disabled with the right reason.
@@ -395,12 +385,8 @@ test.describe("Filling-in-filling — Phase 3 (lifecycle + planner)", () => {
     const innerUrl = await createFilling(page, "P3 Archive Inner");
     const outerUrl = await createFilling(page, "P3 Archive Outer");
 
-    // Add Inner as a nested component of Outer. Visiting the bare URL lands
-    // in view mode — flip to edit before touching the nested-filling
-    // controls. waitFor is necessary because the toggle hydrates after nav.
+    // Add Inner as a nested component of Outer — always addable, no edit-mode gate.
     await page.goto(outerUrl);
-    await page.getByRole("button", { name: "Edit filling" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Edit filling" }).click();
     await page.getByTestId("add-filling-component-btn").click();
     await page.getByTestId("add-filling-component-search").fill("P3 Archive Inner");
     await page.getByRole("button", { name: "P3 Archive Inner" }).click();
@@ -477,10 +463,8 @@ test.describe("Filling-in-filling — Phase 3 (lifecycle + planner)", () => {
     const innerUrl = await createFilling(page, "P3 Fork Inner");
     const outerUrl = await createFilling(page, "P3 Fork Outer");
 
-    // Outer nests Inner. Bare URL lands in view mode; flip to edit first.
+    // Outer nests Inner. Nested-filling composition is always addable — no edit-mode gate.
     await page.goto(outerUrl);
-    await page.getByRole("button", { name: "Edit filling" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Edit filling" }).click();
     await page.getByTestId("add-filling-component-btn").click();
     await page.getByTestId("add-filling-component-search").fill("P3 Fork Inner");
     await page.getByRole("button", { name: "P3 Fork Inner" }).click();
@@ -688,8 +672,6 @@ test.describe("Filling-in-filling — Phase 4 (data portability)", () => {
 
     // Outer nests Inner.
     await page.goto(outerUrl);
-    await page.getByRole("button", { name: "Edit filling" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Edit filling" }).click();
     await page.getByTestId("add-filling-component-btn").click();
     await page.getByTestId("add-filling-component-search").fill("P4 Backup Inner");
     await page.getByRole("button", { name: "P4 Backup Inner" }).click();
@@ -718,7 +700,7 @@ test.describe("Filling-in-filling — Phase 4 (data portability)", () => {
     await page.goto(outerUrl);
     const row = page.getByTestId("nested-filling-row").first();
     await expect(row).toContainText("P4 Backup Inner");
-    await expect(row).toContainText("75g");
+    await expect(row.getByTestId("nested-filling-amount")).toHaveValue("75");
   });
 
   test("import validates polymorphic refs and reports unknown filling IDs", async ({ page }) => {

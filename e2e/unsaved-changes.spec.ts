@@ -18,19 +18,6 @@ async function expectGuardAndLeave(page: Page) {
   });
 }
 
-// Helper: create a filling and wait for detail page to stabilise in read mode
-async function createFillingAndSave(page: Page, name: string) {
-  await page.goto("/fillings");
-  await page.getByRole("button", { name: "Add filling" }).click();
-  await page.getByRole("textbox", { name: "Filling name" }).fill(name);
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/fillings\/.+/);
-  // Save exits edit mode and strips ?new=1 via router.replace
-  await page.getByRole("button", { name: "Save" }).click();
-  // Wait for read mode to stabilise (Edit filling button appears once re-render is done)
-  await page.getByRole("button", { name: "Edit filling" }).waitFor({ timeout: 30000 });
-}
-
 // Helper: create a product and wait for detail page to stabilise in read mode
 async function createShellChocolateIngredient(page: Page) {
   await page.goto("/ingredients");
@@ -73,66 +60,31 @@ async function createProductAndSave(page: Page, name: string) {
 }
 
 // ── Fillings ─────────────────────────────────────────────────────────────────
+//
+// The Fillings detail page has no page-level "Edit mode"/Save step — every
+// field autosaves individually as it's changed (see fillings.spec.ts), so
+// there's no "unsaved changes" state to guard here at all. This is a
+// deliberate divergence from every other detail page in the app (Products
+// included, below), not a gap: confirm no warning dialog ever appears.
 
-test.describe("Unsaved changes — Fillings", () => {
-  test("warns when navigating away via Back with unsaved changes", async ({ page }) => {
+test.describe("Unsaved changes — Fillings (autosave, no guard expected)", () => {
+  test("never warns when navigating away, since every field autosaves", async ({ page }) => {
     test.setTimeout(60000);
-    await createFillingAndSave(page, "Guard Test Filling");
-
-    // Re-enter editing mode
-    await page.getByRole("button", { name: "Edit filling" }).click();
-    // Modify a field without saving
-    await page.getByPlaceholder("Notes…").fill("Unsaved note");
-
-    // Attempt to go Back — dialog should appear; dismiss (stay)
-    const { didSee } = await expectGuardAndStay(page);
-    await page.getByRole("button", { name: "Back", exact: true }).click();
-    expect(didSee()).toBe(true);
-
-    // Should still be on the detail page
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("No Guard Filling");
+    await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
-  });
 
-  test("no warning when navigating away after saving", async ({ page }) => {
-    test.setTimeout(60000);
-    await createFillingAndSave(page, "Clean Save Filling");
+    await page.getByPlaceholder("Tasting notes, substitutions, what to try next time…").fill("Changed but never explicitly saved");
 
     let dialogSeen = false;
     page.on("dialog", () => { dialogSeen = true; });
 
     await page.getByRole("button", { name: "Back", exact: true }).click();
 
-    // Should have navigated without a dialog
     expect(dialogSeen).toBe(false);
     await expect(page).toHaveURL("/fillings/");
-  });
-
-  test("allows leaving when user confirms discard", async ({ page }) => {
-    test.setTimeout(60000);
-    await createFillingAndSave(page, "Discard Test Filling");
-
-    await page.getByRole("button", { name: "Edit filling" }).click();
-    await page.getByPlaceholder("Notes…").fill("Will be discarded");
-
-    await expectGuardAndLeave(page);
-    await page.getByRole("button", { name: "Back", exact: true }).click();
-
-    await expect(page).toHaveURL("/fillings/");
-  });
-
-  test("warns when clicking side nav with unsaved changes", async ({ page }) => {
-    test.setTimeout(60000);
-    await createFillingAndSave(page, "Side Nav Test Filling");
-
-    await page.getByRole("button", { name: "Edit filling" }).click();
-    await page.getByPlaceholder("Notes…").fill("Changed for nav test");
-
-    const { didSee } = await expectGuardAndStay(page);
-    await page.getByRole("link", { name: "Products" }).click();
-    expect(didSee()).toBe(true);
-
-    // Should still be on the filling detail page
-    await expect(page).toHaveURL(/\/fillings\/.+/);
   });
 });
 

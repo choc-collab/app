@@ -267,6 +267,17 @@ export async function saveFilling(filling: Omit<Filling, "id"> & { id?: string }
   return db.fillings.add({ ...filling, updatedAt: now } as Filling);
 }
 
+/** Merge just the given fields into an existing filling, via Dexie's partial
+ *  `.update()` — unlike `saveFilling` (which re-sends the whole object the
+ *  caller had in hand), this only touches the listed keys. Needed once
+ *  several independently-autosaving fields on the same record (Properties,
+ *  Method, Notes) can commit concurrently: two callers each spreading a
+ *  stale full `Filling` snapshot into `.update()` would silently clobber
+ *  each other's most recent field. */
+export async function updateFillingFields(id: string, changes: Partial<Omit<Filling, "id">>): Promise<void> {
+  await db.fillings.update(id, { ...changes, updatedAt: new Date() });
+}
+
 export async function deleteFilling(id: string) {
   await db.transaction("rw", [db.fillings, db.fillingIngredients, db.productFillings, db.productFillingHistory], async () => {
     await db.fillingIngredients.where("fillingId").equals(id).delete();

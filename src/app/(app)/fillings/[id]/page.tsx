@@ -1,32 +1,51 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useFilling, useFillingIngredients, useFillingComponents, useFillings, useIngredients, saveFilling, deleteFilling, deleteFillingWithCleanup, archiveFillingWithCleanup, unarchiveFilling, cascadeAllergensFromFilling, useFillingUsage, reorderFillingIngredients, useFillingVersionHistory, forkFillingVersion, getFillingForkImpact, getFillingDeleteImpact, hasProductBeenProduced, hasFillingBeenProduced, getFillingArchiveImpact, useProductsList, saveProduct, addFillingToProduct, duplicateFilling, useAllFillingStatuses } from "@/lib/hooks";
+import Link from "next/link";
+import {
+  useFilling, useFillingIngredients, useFillingComponents, useFillings, useIngredients,
+  saveFilling, updateFillingFields, deleteFilling, deleteFillingWithCleanup,
+  archiveFillingWithCleanup, unarchiveFilling, cascadeAllergensFromFilling, useFillingUsage,
+  reorderFillingIngredients, useFillingVersionHistory, forkFillingVersion,
+  getFillingForkImpact, getFillingDeleteImpact, hasProductBeenProduced, hasFillingBeenProduced,
+  getFillingArchiveImpact, useProductsList, saveProduct, addFillingToProduct, duplicateFilling,
+  useAllFillingStatuses, useCurrencySymbol,
+} from "@/lib/hooks";
+import { db } from "@/lib/db";
 import { useSpaId } from "@/lib/use-spa-id";
 import type { FillingArchiveImpact, FillingDeleteImpact } from "@/lib/hooks";
+import { computeFillingRecipeCost } from "@/lib/fillingCost";
 import { SortableFillingIngredientRow } from "@/components/sortable-filling-ingredient-row";
 import { AddFillingIngredient } from "@/components/add-filling-ingredient";
 import { AddFillingComponent } from "@/components/add-filling-component";
 import { NestedFillingList } from "@/components/nested-filling-list";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import type { DragEndEvent } from "@dnd-kit/core";
+import type { DragEndEvent, SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import { CategoryPicker } from "@/components/category-picker";
-import { ArrowLeft, Pencil, Trash2, Lock, LockOpen, GitBranch, Plus, Search, Copy, ArchiveRestore, Archive } from "lucide-react";
+import { ArrowLeft, Trash2, Lock, LockOpen, GitBranch, Plus, Search, Copy, ArchiveRestore, Archive } from "lucide-react";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DuplicatedToast } from "@/components/duplicated-toast";
-import { StepListEditor, StepList } from "@/components/step-list-editor";
-import { useNavigationGuard } from "@/lib/useNavigationGuard";
-import type { Ingredient, Product } from "@/types";
+import { StepListEditor } from "@/components/step-list-editor";
+import type { Ingredient, Product, Filling, FillingIngredient } from "@/types";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
+
+function toGrams(amount: number, unit: string): number | null {
+  if (unit === "g" || unit === "ml") return amount;
+  if (unit === "kg" || unit === "L") return amount * 1000;
+  return null;
+}
+
+function fmtG(n: number): string {
+  return n % 1 === 0 ? String(n) : n.toFixed(1);
+}
 
 export default function FillingDetailPage() {
   const fillingId = useSpaId("fillings");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isNew = searchParams.get("new") === "1";
   const isForked = searchParams.get("forked") === "1";
   const [isDuplicate] = useState(() => searchParams.get("duplicate") === "1");
   const filling = useFilling(fillingId);
@@ -38,16 +57,8 @@ export default function FillingDetailPage() {
   const statusSuggestions = [...new Set([...DEFAULT_FILLING_STATUSES, ...existingStatuses])].sort();
 
   const [activeTab, setActiveTab] = useState<"ingredients" | "history">("ingredients");
-  const [editing, setEditing] = useState(isNew);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [unlocked, setUnlocked] = useState(isForked);
-  const [category, setCategory] = useState("");
-  const [description, setDescription] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [status, setStatus] = useState("");
-  const [shelfLifeWeeks, setShelfLifeWeeks] = useState<string>("");
-  const [measuredYieldG, setMeasuredYieldG] = useState<string>("");
-  const [syncedId, setSyncedId] = useState<string | null>(null);
 
   // Fork state
   const [showForkPanel, setShowForkPanel] = useState(false);
@@ -56,7 +67,7 @@ export default function FillingDetailPage() {
   // Host fillings that nest the current filling. Forking does NOT touch
   // their component edges — listed for context so the user knows what stays
   // on the old version.
-  const [forkNestedHosts, setForkNestedHosts] = useState<import("@/types").Filling[]>([]);
+  const [forkNestedHosts, setForkNestedHosts] = useState<Filling[]>([]);
   const [forking, setForking] = useState(false);
 
   // Duplicate state
@@ -75,28 +86,29 @@ export default function FillingDetailPage() {
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
 
+  // Loading vs. not-found — `useFilling`'s live query returns `undefined` both
+  // while pending and when the row genuinely doesn't exist, so a one-shot
+  // direct read resolves which one it actually is.
+  const [status, setStatus] = useState<"loading" | "found" | "not-found">("loading");
+  useEffect(() => {
+    if (!fillingId) return;
+    let cancelled = false;
+    db.fillings.get(fillingId).then((f) => {
+      if (!cancelled) setStatus(f ? "found" : "not-found");
+    });
+    return () => { cancelled = true; };
+  }, [fillingId]);
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (showForkPanel) { setShowForkPanel(false); setForkNotes(""); setForkImpact(null); setForkNestedHosts([]); }
       else if (showArchivePanel) { setShowArchivePanel(false); setArchiveImpact(null); }
       else if (confirmDelete) { setConfirmDelete(false); }
-      else if (editing) { handleCancel(); }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [showForkPanel, showArchivePanel, confirmDelete, editing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Sync form state when filling loads (also on new fillings, which start in edit mode)
-  if (filling && filling.id && filling.id !== syncedId && (!editing || isNew)) {
-    setCategory(filling.category || "");
-    setDescription(filling.description || "");
-    setInstructions(filling.instructions || "");
-    setStatus(filling.status || "");
-    setShelfLifeWeeks(filling.shelfLifeWeeks != null ? String(filling.shelfLifeWeeks) : "");
-    setMeasuredYieldG(filling.measuredYieldG != null ? String(filling.measuredYieldG) : "");
-    setSyncedId(filling.id);
-  }
+  }, [showForkPanel, showArchivePanel, confirmDelete]);
 
   // Check production status on load to determine Archive vs Delete
   useEffect(() => {
@@ -105,34 +117,9 @@ export default function FillingDetailPage() {
     }
   }, [filling?.id, filling?.archived]);
 
-  const [savedOnce, setSavedOnce] = useState(false);
-  const formDirty = editing && filling != null && (
-    category !== (filling.category || "") ||
-    description !== (filling.description || "") ||
-    instructions !== (filling.instructions || "") ||
-    status !== (filling.status || "") ||
-    shelfLifeWeeks !== (filling.shelfLifeWeeks != null ? String(filling.shelfLifeWeeks) : "") ||
-    measuredYieldG !== (filling.measuredYieldG != null ? String(filling.measuredYieldG) : "")
-  );
-  const isDirty = (isNew && !savedOnce) || formDirty;
-
-  const handleConfirmLeave = useCallback(async () => {
-    if (isNew && filling?.id) {
-      await deleteFilling(filling.id);
-    }
-  }, [isNew, filling?.id]);
-
-  const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
-
   const ingredientMap = new Map<string, Ingredient>();
   for (const ing of allIngredients) {
     if (ing.id != null) ingredientMap.set(ing.id, ing);
-  }
-
-  function toGrams(amount: number, unit: string): number | null {
-    if (unit === "g" || unit === "ml") return amount;
-    if (unit === "kg" || unit === "L") return amount * 1000;
-    return null;
   }
 
   // Subscribe at the top level so the recipe total here can include nested
@@ -179,53 +166,6 @@ export default function FillingDetailPage() {
     await reorderFillingIngredients(reordered);
   }
 
-  if (!fillingId || !filling) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading…</p>
-      </div>
-    );
-  }
-
-  async function handleSave() {
-    if (!fillingId) return;
-    const parsedShelfLife = parseFloat(shelfLifeWeeks);
-    const parsedYield = parseFloat(measuredYieldG);
-    await saveFilling({
-      ...filling!,
-      category: category || "",
-      description: (description || "").trim(),
-      instructions: (instructions || "").trim(),
-      status: status.trim() || undefined,
-      shelfLifeWeeks: !isNaN(parsedShelfLife) && parsedShelfLife > 0 ? parsedShelfLife : undefined,
-      measuredYieldG: !isNaN(parsedYield) && parsedYield > 0 ? parsedYield : undefined,
-    });
-    setEditing(false);
-    setSavedOnce(true);
-    if (isNew) router.replace(`/fillings/${encodeURIComponent(fillingId)}`);
-  }
-
-  function handleCancel() {
-    setCategory(filling!.category);
-    setDescription(filling!.description);
-    setInstructions(filling!.instructions);
-    setStatus(filling!.status || "");
-    setShelfLifeWeeks(filling!.shelfLifeWeeks != null ? String(filling!.shelfLifeWeeks) : "");
-    setMeasuredYieldG(filling!.measuredYieldG != null ? String(filling!.measuredYieldG) : "");
-    setEditing(false);
-    if (isNew && fillingId) router.replace(`/fillings/${encodeURIComponent(fillingId)}`);
-  }
-
-  function startEditing() {
-    setCategory(filling!.category);
-    setDescription(filling!.description);
-    setInstructions(filling!.instructions);
-    setStatus(filling!.status || "");
-    setShelfLifeWeeks(filling!.shelfLifeWeeks != null ? String(filling!.shelfLifeWeeks) : "");
-    setMeasuredYieldG(filling!.measuredYieldG != null ? String(filling!.measuredYieldG) : "");
-    setEditing(true);
-  }
-
   async function handleOpenForkPanel() {
     if (!fillingId) return;
     const { products, nestedInsideFillings } = await getFillingForkImpact(fillingId);
@@ -247,557 +187,356 @@ export default function FillingDetailPage() {
     }
   }
 
+  if (!fillingId || status === "loading" || (status === "found" && !filling)) {
+    return <FillingDetailSkeleton />;
+  }
+  if (status === "not-found" || !filling) {
+    return <FillingNotFound />;
+  }
+
   const versionLabel = filling.version != null ? `v${filling.version}` : null;
   // Show history tab only if this filling is part of a version chain
   const hasVersionHistory = versionHistory.length > 1 || filling.rootId != null;
+  const locked = filling.status === "confirmed" && !unlocked;
 
   return (
     <div>
       <div className="px-4 pt-6 pb-2">
         <button
-          onClick={() => safeBack()}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground mb-3"
+          onClick={() => router.push("/fillings")}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
         </button>
       </div>
 
-      <div className="px-4 pb-4 space-y-4">
+      <div className="px-4 pb-4">
         <DuplicatedToast active={isDuplicate} />
-        {/* Name row — always visible, inline-editable via pencil on name */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <InlineNameEditor
-              name={filling.name}
-              onSave={async (n) => { await saveFilling({ ...filling, name: n }); }}
-              className="text-xl font-bold"
-              initialEditing={isDuplicate}
-            />
-            {versionLabel && (
-              <span className="text-xs font-mono bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
-                {versionLabel}
-              </span>
-            )}
-            {filling.archived && (
-              <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-medium flex items-center gap-1">
-                <Archive className="w-3 h-3" /> Archived
-              </span>
-            )}
+
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <InlineNameEditor
+                name={filling.name}
+                onSave={async (n) => { await saveFilling({ ...filling, name: n }); }}
+                className="text-xl font-bold"
+                initialEditing={isDuplicate}
+              />
+              {versionLabel && (
+                <span className="text-xs font-mono bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
+                  {versionLabel}
+                </span>
+              )}
+              {filling.archived && (
+                <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-medium flex items-center gap-1">
+                  <Archive className="w-3 h-3" /> Archived
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              {filling.category || "Uncategorised"}
+              {totalGrams > 0 && ` · ${fmtG(totalGrams)}g recipe`}
+              {` · used in ${products.length} ${products.length === 1 ? "product" : "products"}`}
+            </p>
           </div>
-          {!editing && (
+          {!filling.supersededAt && !showForkPanel && (
             <button
-              onClick={startEditing}
-              aria-label="Edit filling"
-              className="p-1.5 rounded-full hover:bg-muted transition-colors shrink-0"
+              onClick={handleOpenForkPanel}
+              className="btn-primary px-3.5 py-1.5 text-sm inline-flex items-center gap-1.5 shrink-0"
+              title="Create a new version of this filling, archiving the current one"
             >
-              <Pencil aria-hidden="true" className="w-4 h-4 text-muted-foreground" />
+              <GitBranch aria-hidden="true" className="w-4 h-4" /> Create new version
             </button>
           )}
         </div>
 
-        {/* Category subtitle — shown below name in read mode */}
-        {!editing && filling.category && (
-          <p className="text-sm text-primary -mt-2">
-            {filling.category}
-          </p>
-        )}
-
-        {editing ? (
-          /* ── Edit form (all fields except name) ── */
-          <div className="space-y-3">
-            <CategoryPicker
-              category={category}
-              onCategoryChange={(cat) => setCategory(cat)}
-            />
-            <div>
-              <label className="label">Notes</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Notes…"
-                rows={3}
-                className="input resize-none"
-              />
+        {showForkPanel && (
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3 mt-3">
+            <div className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4 text-muted-foreground shrink-0" />
+              <p className="text-sm font-medium">Create new version of &ldquo;{filling.name}&rdquo;</p>
             </div>
             <div>
-              <label className="label">Status</label>
+              <label className="label">What changed? (optional)</label>
               <input
                 type="text"
-                list="filling-status-list"
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
+                value={forkNotes}
+                onChange={(e) => setForkNotes(e.target.value)}
+                placeholder="e.g. switched to Valrhona Caraïbe 66%"
                 className="input"
-                placeholder="e.g. to try, testing, confirmed"
+                autoFocus
               />
-              {statusSuggestions.length > 0 && (
-                <datalist id="filling-status-list">
-                  {statusSuggestions.map((s) => (
-                    <option key={s} value={s} />
+            </div>
+            {forkImpact !== null && (
+              forkImpact.length > 0 ? (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">
+                    The following {forkImpact.length === 1 ? "product" : `${forkImpact.length} products`} will be updated to use the new version:
+                  </p>
+                  <ul className="space-y-1">
+                    {forkImpact.map((r) => (
+                      <li key={r.id} className="text-xs font-medium flex items-center gap-1.5">
+                        <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
+                        {r.name}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">This filling isn&rsquo;t used in any products yet — only the filling record will be versioned.</p>
+              )
+            )}
+            {forkNestedHosts.length > 0 && (
+              <div className="rounded-md bg-muted/50 px-3 py-2 text-xs space-y-1" data-testid="fork-nested-hosts-notice">
+                <p className="font-medium">
+                  Nested in {forkNestedHosts.length === 1 ? "1 filling" : `${forkNestedHosts.length} fillings`} — these will keep using the old version:
+                </p>
+                <ul className="space-y-0.5 pl-3">
+                  {forkNestedHosts.map((f) => (
+                    <li key={f.id} className="list-disc">{f.name}</li>
                   ))}
-                </datalist>
-              )}
-            </div>
-            <div>
-              <label className="label">Shelf life (weeks)</label>
-              <input
-                type="number"
-                min="0.5"
-                step="0.5"
-                value={shelfLifeWeeks}
-                onChange={(e) => setShelfLifeWeeks(e.target.value)}
-                placeholder="e.g. 8"
-                className="input w-32"
-              />
-              <p className="text-xs text-muted-foreground mt-1">How long this filling stays fresh. Used to auto-suggest product shelf life and track previous batch freshness.</p>
-            </div>
-            <div>
-              <label className="label">Measured yield (g)</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={measuredYieldG}
-                onChange={(e) => setMeasuredYieldG(e.target.value)}
-                placeholder="e.g. 503"
-                className="input w-32"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Cooked weight after reducing — weigh the pan full, subtract the empty pan.
-                Leave blank for fillings that don&rsquo;t cook down (ganaches, pralinés); the raw
-                ingredient total will be used for scaling instead.
-              </p>
-            </div>
-            <div>
-              <label className="label">Instructions</label>
-              <StepListEditor
-                value={instructions}
-                onChange={setInstructions}
-                placeholder="Describe this step…"
-              />
-            </div>
-            <div className="flex gap-2">
+                </ul>
+                <p className="text-[11px] text-muted-foreground">
+                  Edit{" "}
+                  {forkNestedHosts.length === 1 ? "that filling" : "those fillings"}
+                  {" "}separately if you want to swap in the new version.
+                </p>
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
               <button
-                onClick={handleSave}
-                className="btn-primary px-3 py-1.5"
+                onClick={handleFork}
+                disabled={forking}
+                className="btn-primary px-3 py-1.5 text-sm disabled:opacity-50"
               >
-                Save
+                {forking ? "Creating…" : "Create new version"}
               </button>
               <button
-                onClick={handleCancel}
-                className="btn-secondary px-3 py-1.5"
+                onClick={() => { setShowForkPanel(false); setForkImpact(null); setForkNotes(""); setForkNestedHosts([]); }}
+                className="btn-secondary px-3 py-1.5 text-sm"
               >
                 Cancel
               </button>
             </div>
           </div>
-        ) : (
-          /* ── Read-only view ── */
-          <>
-            {filling.description && (
-              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{filling.description}</p>
-            )}
-            {filling.status && (
-              <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                filling.status === "confirmed" ? "bg-success-muted text-success" :
-                filling.status === "testing"   ? "bg-warning-muted text-warning" :
-                filling.status === "to try"    ? "bg-muted text-muted-foreground" :
-                                                 "bg-sky-50 text-sky-700 border border-sky-200"
-              }`}>
-                {filling.status.charAt(0).toUpperCase() + filling.status.slice(1)}
-              </span>
-            )}
-            {filling.shelfLifeWeeks != null && (
-              <p className="text-xs text-muted-foreground">Shelf life: {filling.shelfLifeWeeks} weeks</p>
-            )}
-            {filling.allergens.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {filling.allergens.map((a) => (
-                  <span
-                    key={a}
-                    className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-2 py-0.5 text-xs"
-                  >
-                    {allergenLabel(a)}
-                  </span>
-                ))}
-              </div>
-            )}
-            {filling.instructions && (
-              <div>
-                <h2 className="text-sm font-medium text-muted-foreground mb-1">Instructions</h2>
-                <StepList text={filling.instructions} />
-              </div>
-            )}
-          </>
         )}
       </div>
 
-      {/* Tab strip — only shown when not editing */}
-      {!editing && hasVersionHistory && (
-        <div className="flex border-b border-border mb-2 px-4">
-          {(["ingredients", "history"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-                activeTab === tab
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {tab === "ingredients" ? "Ingredients" : "Versions"}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Ingredients tab */}
-      {(!editing && activeTab === "history") ? (
-        <FillingVersionHistoryTab versions={versionHistory} currentId={fillingId} />
-      ) : (
-        <div className="px-4 pb-6">
-          <div className="flex items-baseline justify-between mb-2">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Ingredients ({fillingIngredients.length})
-            </h2>
-            {totalGrams > 0 && (
-              <div className="text-right">
-                <div className="text-xs text-muted-foreground">
-                  Total: {totalGrams % 1 === 0 ? totalGrams : totalGrams.toFixed(1)}g
-                  {filling.measuredYieldG != null && " raw"}
-                </div>
-                {filling.measuredYieldG != null && (() => {
-                  const loss = totalGrams - filling.measuredYieldG;
-                  const pct = (loss / totalGrams) * 100;
-                  return (
-                    <div className="text-xs text-muted-foreground">
-                      → {filling.measuredYieldG}g cooked
-                      {loss > 0 && (
-                        <span className="text-warning"> · −{loss % 1 === 0 ? loss : loss.toFixed(1)}g ({pct.toFixed(1)}%)</span>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-          {editing && filling.status === "confirmed" && (
-            <div className={`flex items-center justify-between rounded-lg px-3 py-2 mb-2 text-xs ${unlocked ? "bg-warning-muted text-warning border border-warning/30" : "bg-muted text-muted-foreground"}`}>
-              {unlocked ? (
-                <>
-                  <span className="flex items-center gap-1.5"><LockOpen aria-hidden="true" className="w-3.5 h-3.5" /> Unlocked — be careful editing a confirmed filling</span>
-                  <button onClick={() => setUnlocked(false)} className="font-medium underline underline-offset-2 ml-3 shrink-0">Lock</button>
-                </>
-              ) : (
-                <>
-                  <span className="flex items-center gap-1.5"><Lock aria-hidden="true" className="w-3.5 h-3.5" /> Ingredients locked (confirmed)</span>
-                  <button onClick={() => setUnlocked(true)} className="font-medium underline underline-offset-2 ml-3 shrink-0">Unlock</button>
-                </>
-              )}
+      <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+        {/* Main column */}
+        <div className="min-w-0">
+          {hasVersionHistory && (
+            <div className="flex border-b border-border mb-4">
+              {(["ingredients", "history"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                    activeTab === tab
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tab === "ingredients" ? "Recipe" : "History"}
+                </button>
+              ))}
             </div>
           )}
-          {fillingIngredients.length > 0 ? (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={fillingIngredients.map((li) => li.id!)} strategy={verticalListSortingStrategy}>
-                <div className="divide-y divide-border rounded-lg border border-border bg-card px-3">
-                  {fillingIngredients.map((li) => {
-                    const g = toGrams(li.amount, li.unit);
-                    const pct = totalGrams > 0 && g != null ? (g / totalGrams) * 100 : undefined;
-                    return (
-                      <SortableFillingIngredientRow
-                        key={li.id}
-                        li={li}
-                        ingredient={ingredientMap.get(li.ingredientId)}
-                        pct={pct}
-                        onChanged={handleIngredientChanged}
-                        readonly={!editing || (filling.status === "confirmed" && !unlocked)}
-                      />
-                    );
-                  })}
-                </div>
-              </SortableContext>
-            </DndContext>
+
+          {activeTab === "history" && hasVersionHistory ? (
+            <FillingVersionHistoryTab versions={versionHistory} currentId={fillingId} />
           ) : (
-            <p className="text-xs text-muted-foreground mb-2">No ingredients added yet.</p>
-          )}
-          {editing && (
-            <div className="mt-2">
-              <AddFillingIngredient fillingId={fillingId} onAdded={handleIngredientChanged} />
+            <div className="space-y-4">
+              <IngredientsCard
+                fillingId={fillingId}
+                filling={filling}
+                fillingIngredients={fillingIngredients}
+                ingredientMap={ingredientMap}
+                totalGrams={totalGrams}
+                locked={locked}
+                unlocked={unlocked}
+                onToggleLock={setUnlocked}
+                onIngredientChanged={handleIngredientChanged}
+                sensors={sensors}
+                onDragEnd={handleDragEnd}
+              />
+              <MethodCard filling={filling} />
+              <NotesCard key={filling.id} filling={filling} />
             </div>
           )}
 
-          {/* Nested fillings (filling-in-filling, Phase 1). Visible read-only
-              when there are any rows; the add-and-remove controls only show
-              while editing. Sits below the ingredient list because reads are
-              additive — most fillings won't use nested components today. */}
-          <NestedFillingSection fillingId={fillingId} editing={editing} totalGrams={totalGrams} />
-        </div>
-      )}
-
-      {!editing && activeTab === "ingredients" && (
-        <FillingProductSection fillingId={fillingId} products={products} />
-      )}
-
-      {!editing && (
-        <div className="px-4 pb-8 border-t border-border pt-4 space-y-4">
-          {/* Create new version */}
-          {showForkPanel ? (
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <GitBranch className="w-4 h-4 text-muted-foreground shrink-0" />
-                <p className="text-sm font-medium">Create new version of &ldquo;{filling.name}&rdquo;</p>
-              </div>
-              <div>
-                <label className="label">What changed? (optional)</label>
-                <input
-                  type="text"
-                  value={forkNotes}
-                  onChange={(e) => setForkNotes(e.target.value)}
-                  placeholder="e.g. switched to Valrhona Caraïbe 66%"
-                  className="input"
-                  autoFocus
-                />
-              </div>
-              {forkImpact !== null && (
-                forkImpact.length > 0 ? (
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1.5">
-                      The following {forkImpact.length === 1 ? "product" : `${forkImpact.length} products`} will be updated to use the new version:
-                    </p>
-                    <ul className="space-y-1">
-                      {forkImpact.map((r) => (
-                        <li key={r.id} className="text-xs font-medium flex items-center gap-1.5">
-                          <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
-                          {r.name}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">This filling isn&rsquo;t used in any products yet — only the filling record will be versioned.</p>
-                )
-              )}
-              {forkNestedHosts.length > 0 && (
-                <div className="rounded-md bg-muted/50 px-3 py-2 text-xs space-y-1" data-testid="fork-nested-hosts-notice">
-                  <p className="font-medium">
-                    Nested in {forkNestedHosts.length === 1 ? "1 filling" : `${forkNestedHosts.length} fillings`} — these will keep using the old version:
-                  </p>
-                  <ul className="space-y-0.5 pl-3">
-                    {forkNestedHosts.map((f) => (
-                      <li key={f.id} className="list-disc">{f.name}</li>
-                    ))}
-                  </ul>
-                  <p className="text-[11px] text-muted-foreground">
-                    Edit{" "}
-                    {forkNestedHosts.length === 1 ? "that filling" : "those fillings"}
-                    {" "}separately if you want to swap in the new version.
-                  </p>
-                </div>
-              )}
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleFork}
-                  disabled={forking}
-                  className="btn-primary px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  {forking ? "Creating…" : "Create new version"}
-                </button>
-                <button
-                  onClick={() => { setShowForkPanel(false); setForkImpact(null); setForkNotes(""); setForkNestedHosts([]); }}
-                  className="btn-secondary px-3 py-1.5 text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            !filling.supersededAt && (
-              <button
-                onClick={handleOpenForkPanel}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                title="Create a new version of this filling, archiving the current one"
-              >
-                <GitBranch className="w-4 h-4" /> Create new version
-              </button>
-            )
-          )}
-
-          {/* Duplicate */}
-          <button
-            onClick={async () => {
-              setDuplicating(true);
-              try {
-                const newId = await duplicateFilling(fillingId);
-                router.push(`/fillings/${encodeURIComponent(newId)}?new=1&duplicate=1`);
-              } finally {
-                setDuplicating(false);
-              }
-            }}
-            disabled={duplicating}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Copy className="w-4 h-4" /> {duplicating ? "Duplicating…" : "Duplicate filling"}
-          </button>
-
-          {/* Unarchive (for archived fillings) */}
-          {filling.archived && (
-            <button
-              onClick={async () => { await unarchiveFilling(fillingId); }}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArchiveRestore className="w-4 h-4" /> Unarchive filling
-            </button>
-          )}
-
-          {/* Archive (for produced fillings) */}
-          {!filling.archived && showArchivePanel && archiveImpact ? (
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Archive className="w-4 h-4 text-muted-foreground shrink-0" />
-                <p className="text-sm font-medium">Archive &ldquo;{filling.name}&rdquo;</p>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                This filling has been used in production and cannot be deleted. Archiving will hide it from lists but preserve it for production history.
-              </p>
-
-              {/* Block archive while this filling is nested inside others.
-                  We don't cascade-remove component edges silently — that would
-                  be a surprising side-effect, so the user has to clear the
-                  edges manually first. */}
-              {archiveImpact.nestedInsideFillings.length > 0 && (
-                <div
-                  className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive space-y-1"
-                  data-testid="archive-blocked-nested"
-                  role="alert"
-                >
-                  <p className="font-medium">
-                    Can&rsquo;t archive — nested inside{" "}
-                    {archiveImpact.nestedInsideFillings.length === 1 ? "another filling" : "other fillings"}.
-                  </p>
-                  <ul className="space-y-0.5 pl-3">
-                    {archiveImpact.nestedInsideFillings.map((f) => (
-                      <li key={f.id} className="list-disc">{f.name}</li>
-                    ))}
-                  </ul>
-                  <p className="text-[11px] opacity-80">
-                    Remove this filling as a nested component on{" "}
-                    {archiveImpact.nestedInsideFillings.length === 1 ? "that filling" : "those fillings"} first.
-                  </p>
-                </div>
-              )}
-
-              {archiveError && (
-                <p className="text-xs text-destructive" role="alert">{archiveError}</p>
-              )}
-
-              {archiveImpact.soleFillingProducts.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    {archiveImpact.soleFillingProducts.length === 1
-                      ? `"${archiveImpact.soleFillingProducts[0].name}" uses only this filling and will have no filling.`
-                      : `${archiveImpact.soleFillingProducts.length} products use only this filling and will have no filling:`}
-                  </p>
-                  {archiveImpact.soleFillingProducts.length > 1 && (
-                    <ul className="space-y-1">
-                      {archiveImpact.soleFillingProducts.map((r) => (
-                        <li key={r.id} className="text-xs font-medium flex items-center gap-1.5">
-                          <span className="w-1 h-1 rounded-full bg-warning shrink-0" />
-                          {r.name}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={archiveSoleProducts}
-                      onChange={(e) => setArchiveSoleProducts(e.target.checked)}
-                      className="rounded border-border"
-                    />
-                    Archive {archiveImpact.soleFillingProducts.length === 1 ? "this product" : "these products"} too
-                  </label>
-                </div>
-              )}
-
-              {archiveImpact.multiFillingProducts.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    {archiveImpact.multiFillingProducts.length === 1
-                      ? `"${archiveImpact.multiFillingProducts[0].name}" has other fillings — this filling can be removed and fill percentages redistributed.`
-                      : `${archiveImpact.multiFillingProducts.length} products have other fillings — this filling can be removed and fill percentages redistributed:`}
-                  </p>
-                  {archiveImpact.multiFillingProducts.length > 1 && (
-                    <ul className="space-y-1">
-                      {archiveImpact.multiFillingProducts.map((r) => (
-                        <li key={r.id} className="text-xs font-medium flex items-center gap-1.5">
-                          <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
-                          {r.name}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={removeFromMultiProducts}
-                      onChange={(e) => setRemoveFromMultiProducts(e.target.checked)}
-                      className="rounded border-border"
-                    />
-                    Remove from {archiveImpact.multiFillingProducts.length === 1 ? "this product" : "these products"} and redistribute fill %
-                  </label>
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={async () => {
-                    setArchiving(true);
-                    setArchiveError(null);
-                    try {
-                      await archiveFillingWithCleanup(fillingId, {
-                        archiveSoleProducts,
-                        removeFromMultiProducts,
-                      });
-                      router.replace("/fillings");
-                    } catch (err) {
-                      setArchiveError(err instanceof Error ? err.message : "Archive failed");
-                    } finally {
-                      setArchiving(false);
-                    }
-                  }}
-                  disabled={archiving || archiveImpact.nestedInsideFillings.length > 0}
-                  className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
-                >
-                  {archiving ? "Archiving…" : "Archive filling"}
-                </button>
-                <button
-                  onClick={() => { setShowArchivePanel(false); setArchiveImpact(null); setArchiveSoleProducts(true); setRemoveFromMultiProducts(true); setArchiveError(null); }}
-                  className="btn-secondary px-4 py-2"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : !filling.archived && !showArchivePanel && fillingProduced && (
+          {/* Destructive actions */}
+          <div className="mt-6 pt-4 border-t border-border space-y-3">
             <button
               onClick={async () => {
-                const impact = await getFillingArchiveImpact(fillingId);
-                setArchiveImpact(impact);
-                setArchiveSoleProducts(true);
-                setRemoveFromMultiProducts(true);
-                setShowArchivePanel(true);
-                setConfirmDelete(false);
-                setShowForkPanel(false);
+                setDuplicating(true);
+                try {
+                  const newId = await duplicateFilling(fillingId);
+                  router.push(`/fillings/${encodeURIComponent(newId)}?new=1&duplicate=1`);
+                } finally {
+                  setDuplicating(false);
+                }
               }}
+              disabled={duplicating}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Archive className="w-4 h-4" /> Archive filling
+              <Copy className="w-4 h-4" /> {duplicating ? "Duplicating…" : "Duplicate filling"}
             </button>
-          )}
 
-          {/* Delete (only for non-archived, non-produced fillings) */}
-          {!filling.archived && !fillingProduced && (
-            <>
-              {confirmDelete ? (
+            {filling.archived ? (
+              <button
+                onClick={async () => { await unarchiveFilling(fillingId); }}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ArchiveRestore className="w-4 h-4" /> Unarchive filling
+              </button>
+            ) : showArchivePanel && archiveImpact ? (
+              <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Archive className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <p className="text-sm font-medium">Archive &ldquo;{filling.name}&rdquo;</p>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  This filling has been used in production and cannot be deleted. Archiving will hide it from lists but preserve it for production history.
+                </p>
+
+                {/* Block archive while this filling is nested inside others.
+                    We don't cascade-remove component edges silently — that would
+                    be a surprising side-effect, so the user has to clear the
+                    edges manually first. */}
+                {archiveImpact.nestedInsideFillings.length > 0 && (
+                  <div
+                    className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive space-y-1"
+                    data-testid="archive-blocked-nested"
+                    role="alert"
+                  >
+                    <p className="font-medium">
+                      Can&rsquo;t archive — nested inside{" "}
+                      {archiveImpact.nestedInsideFillings.length === 1 ? "another filling" : "other fillings"}.
+                    </p>
+                    <ul className="space-y-0.5 pl-3">
+                      {archiveImpact.nestedInsideFillings.map((f) => (
+                        <li key={f.id} className="list-disc">{f.name}</li>
+                      ))}
+                    </ul>
+                    <p className="text-[11px] opacity-80">
+                      Remove this filling as a nested component on{" "}
+                      {archiveImpact.nestedInsideFillings.length === 1 ? "that filling" : "those fillings"} first.
+                    </p>
+                  </div>
+                )}
+
+                {archiveError && (
+                  <p className="text-xs text-destructive" role="alert">{archiveError}</p>
+                )}
+
+                {archiveImpact.soleFillingProducts.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      {archiveImpact.soleFillingProducts.length === 1
+                        ? `"${archiveImpact.soleFillingProducts[0].name}" uses only this filling and will have no filling.`
+                        : `${archiveImpact.soleFillingProducts.length} products use only this filling and will have no filling:`}
+                    </p>
+                    {archiveImpact.soleFillingProducts.length > 1 && (
+                      <ul className="space-y-1">
+                        {archiveImpact.soleFillingProducts.map((r) => (
+                          <li key={r.id} className="text-xs font-medium flex items-center gap-1.5">
+                            <span className="w-1 h-1 rounded-full bg-warning shrink-0" />
+                            {r.name}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={archiveSoleProducts}
+                        onChange={(e) => setArchiveSoleProducts(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      Archive {archiveImpact.soleFillingProducts.length === 1 ? "this product" : "these products"} too
+                    </label>
+                  </div>
+                )}
+
+                {archiveImpact.multiFillingProducts.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      {archiveImpact.multiFillingProducts.length === 1
+                        ? `"${archiveImpact.multiFillingProducts[0].name}" has other fillings — this filling can be removed and fill percentages redistributed.`
+                        : `${archiveImpact.multiFillingProducts.length} products have other fillings — this filling can be removed and fill percentages redistributed:`}
+                    </p>
+                    {archiveImpact.multiFillingProducts.length > 1 && (
+                      <ul className="space-y-1">
+                        {archiveImpact.multiFillingProducts.map((r) => (
+                          <li key={r.id} className="text-xs font-medium flex items-center gap-1.5">
+                            <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
+                            {r.name}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={removeFromMultiProducts}
+                        onChange={(e) => setRemoveFromMultiProducts(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      Remove from {archiveImpact.multiFillingProducts.length === 1 ? "this product" : "these products"} and redistribute fill %
+                    </label>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={async () => {
+                      setArchiving(true);
+                      setArchiveError(null);
+                      try {
+                        await archiveFillingWithCleanup(fillingId, {
+                          archiveSoleProducts,
+                          removeFromMultiProducts,
+                        });
+                        router.replace("/fillings");
+                      } catch (err) {
+                        setArchiveError(err instanceof Error ? err.message : "Archive failed");
+                      } finally {
+                        setArchiving(false);
+                      }
+                    }}
+                    disabled={archiving || archiveImpact.nestedInsideFillings.length > 0}
+                    className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
+                  >
+                    {archiving ? "Archiving…" : "Archive filling"}
+                  </button>
+                  <button
+                    onClick={() => { setShowArchivePanel(false); setArchiveImpact(null); setArchiveSoleProducts(true); setRemoveFromMultiProducts(true); setArchiveError(null); }}
+                    className="btn-secondary px-4 py-2"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : fillingProduced && (
+              <button
+                onClick={async () => {
+                  const impact = await getFillingArchiveImpact(fillingId);
+                  setArchiveImpact(impact);
+                  setArchiveSoleProducts(true);
+                  setRemoveFromMultiProducts(true);
+                  setShowArchivePanel(true);
+                  setConfirmDelete(false);
+                  setShowForkPanel(false);
+                }}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Archive className="w-4 h-4" /> Archive filling
+              </button>
+            )}
+
+            {!filling.archived && !fillingProduced && (
+              confirmDelete ? (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
                   <p className="text-sm font-medium text-destructive">Delete this filling?</p>
                   <p className="text-xs text-muted-foreground">This will permanently remove the filling and all its ingredient data. This cannot be undone.</p>
@@ -919,14 +658,421 @@ export default function FillingDetailPage() {
                 >
                   <Trash2 className="w-4 h-4" /> Delete filling
                 </button>
-              )}
-            </>
-          )}
+              )
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div className="lg:sticky lg:top-4 space-y-4">
+          <PropertiesCard key={filling.id} fillingId={fillingId} filling={filling} statusSuggestions={statusSuggestions} />
+          <DerivedCard
+            filling={filling}
+            totalGrams={totalGrams}
+            fillingIngredients={fillingIngredients}
+            ingredientMap={ingredientMap}
+            hasNestedComponents={ownComponents.length > 0}
+          />
+          <div className="rounded-lg border border-border bg-card p-3.5">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Used in</h3>
+            <FillingProductSection fillingId={fillingId} products={products} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Ingredients card (main column) ─────────────────────────────────────────
+
+function IngredientsCard({
+  fillingId,
+  filling,
+  fillingIngredients,
+  ingredientMap,
+  totalGrams,
+  locked,
+  unlocked,
+  onToggleLock,
+  onIngredientChanged,
+  sensors,
+  onDragEnd,
+}: {
+  fillingId: string;
+  filling: Filling;
+  fillingIngredients: FillingIngredient[];
+  ingredientMap: Map<string, Ingredient>;
+  totalGrams: number;
+  locked: boolean;
+  unlocked: boolean;
+  onToggleLock: (next: boolean) => void;
+  onIngredientChanged: () => void;
+  sensors: SensorDescriptor<SensorOptions>[];
+  onDragEnd: (event: DragEndEvent) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-sm font-semibold">Ingredients</h2>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {filling.status === "confirmed" && (
+          <div className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${unlocked ? "bg-warning-muted text-warning border border-warning/30" : "bg-muted text-muted-foreground"}`}>
+            {unlocked ? (
+              <>
+                <span className="flex items-center gap-1.5"><LockOpen aria-hidden="true" className="w-3.5 h-3.5" /> Unlocked — be careful editing a confirmed filling</span>
+                <button onClick={() => onToggleLock(false)} className="font-medium underline underline-offset-2 ml-3 shrink-0">Lock</button>
+              </>
+            ) : (
+              <>
+                <span className="flex items-center gap-1.5"><Lock aria-hidden="true" className="w-3.5 h-3.5" /> Ingredients locked (confirmed)</span>
+                <button onClick={() => onToggleLock(true)} className="font-medium underline underline-offset-2 ml-3 shrink-0">Unlock</button>
+              </>
+            )}
+          </div>
+        )}
+
+        {fillingIngredients.length > 0 ? (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={fillingIngredients.map((li) => li.id!)} strategy={verticalListSortingStrategy}>
+              <div className="divide-y divide-border rounded-lg border border-border px-3">
+                {fillingIngredients.map((li) => {
+                  const g = toGrams(li.amount, li.unit);
+                  const pct = totalGrams > 0 && g != null ? (g / totalGrams) * 100 : undefined;
+                  return (
+                    <SortableFillingIngredientRow
+                      key={li.id}
+                      li={li}
+                      ingredient={ingredientMap.get(li.ingredientId)}
+                      pct={pct}
+                      onChanged={onIngredientChanged}
+                      readonly={locked}
+                    />
+                  );
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
+        ) : (
+          <p className="text-xs text-muted-foreground">No ingredients added yet.</p>
+        )}
+
+        {!locked && (
+          <AddFillingIngredient fillingId={fillingId} onAdded={onIngredientChanged} />
+        )}
+
+        <NestedFillingSection fillingId={fillingId} locked={locked} totalGrams={totalGrams} />
+      </div>
+
+      {totalGrams > 0 && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-muted/50 border-t border-border text-xs">
+          <span className="font-medium">Total</span>
+          <div className="text-right">
+            <div className="tabular-nums">
+              {fmtG(totalGrams)}g{filling.measuredYieldG != null && " raw"}
+            </div>
+            {filling.measuredYieldG != null && (() => {
+              const loss = totalGrams - filling.measuredYieldG;
+              const pct = (loss / totalGrams) * 100;
+              return (
+                <div className="text-muted-foreground tabular-nums">
+                  → {filling.measuredYieldG}g cooked
+                  {loss > 0 && <span className="text-warning"> · −{fmtG(loss)}g ({pct.toFixed(1)}%)</span>}
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+function NestedFillingSection({
+  fillingId,
+  locked,
+  totalGrams,
+}: {
+  fillingId: string;
+  locked: boolean;
+  totalGrams: number;
+}) {
+  const components = useFillingComponents(fillingId);
+  const allFillings = useFillings(/* includeArchived */ true);
+  // Reads "all" fillings (including archived) so a row whose child got
+  // archived after being linked still resolves to a name. The picker
+  // (AddFillingComponent) filters archived fillings out of its list.
+  const fillingsById = new Map(allFillings.filter((f) => f.id != null).map((f) => [f.id!, f]));
+  const existingChildIds = components.map((c) => c.childFillingId);
+
+  // Collapse to nothing when there's no list and it's locked — keeps the
+  // card clean for fillings that don't use this feature at all.
+  if (components.length === 0 && locked) return null;
+
+  return (
+    <div className="pt-1">
+      <h3 className="text-xs font-medium text-muted-foreground mb-2">
+        Nested fillings ({components.length})
+      </h3>
+      <NestedFillingList
+        components={components}
+        fillingsById={fillingsById}
+        editable={!locked}
+        totalGrams={totalGrams}
+      />
+      {!locked && (
+        <AddFillingComponent
+          fillingId={fillingId}
+          existingChildIds={existingChildIds}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Method card (main column) ──────────────────────────────────────────────
+
+function MethodCard({ filling }: { filling: Filling }) {
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-sm font-semibold">Method</h2>
+      </div>
+      <div className="p-4">
+        <StepListEditor
+          value={filling.instructions}
+          onChange={(next) => { updateFillingFields(filling.id!, { instructions: next }); }}
+          placeholder="Describe this step…"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Notes card (main column) ───────────────────────────────────────────────
+
+function NotesCard({ filling }: { filling: Filling }) {
+  // Keyed by `filling.id` at the call site, so this only remounts (resetting
+  // local state) when navigating to a genuinely different filling — not on
+  // every autosave-triggered re-render of the same record.
+  const [value, setValue] = useState(filling.description ?? "");
+  const lastSavedRef = useRef(filling.description ?? "");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function commit(next: string) {
+    if (next === lastSavedRef.current) return;
+    lastSavedRef.current = next;
+    updateFillingFields(filling.id!, { description: next });
+  }
+
+  function handleChange(next: string) {
+    setValue(next);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => commit(next), 600);
+  }
+
+  function handleBlur() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    commit(value);
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-sm font-semibold">Notes</h2>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => handleChange(e.target.value)}
+        onBlur={handleBlur}
+        placeholder="Tasting notes, substitutions, what to try next time…"
+        rows={4}
+        className="w-full resize-y border-0 bg-transparent px-4 py-3 text-sm focus:outline-none placeholder:text-muted-foreground/50"
+      />
+    </div>
+  );
+}
+
+// ─── Sidebar: Properties card ───────────────────────────────────────────────
+
+function PropertiesCard({
+  fillingId,
+  filling,
+  statusSuggestions,
+}: {
+  fillingId: string;
+  filling: Filling;
+  statusSuggestions: string[];
+}) {
+  // Keyed by `filling.id` at the call site, so this only remounts (resetting
+  // local state) when navigating to a genuinely different filling — not on
+  // every autosave-triggered re-render of the same record.
+  const [status, setStatus] = useState(filling.status ?? "");
+  const [shelfLifeWeeks, setShelfLifeWeeks] = useState(filling.shelfLifeWeeks != null ? String(filling.shelfLifeWeeks) : "");
+  const [measuredYieldG, setMeasuredYieldG] = useState(filling.measuredYieldG != null ? String(filling.measuredYieldG) : "");
+
+  function commitStatus() {
+    const trimmed = status.trim();
+    if (trimmed === (filling.status ?? "")) return;
+    updateFillingFields(fillingId, { status: trimmed || undefined });
+  }
+
+  function commitShelfLife() {
+    const parsed = parseFloat(shelfLifeWeeks);
+    const next = !isNaN(parsed) && parsed > 0 ? parsed : undefined;
+    if (next === filling.shelfLifeWeeks) return;
+    updateFillingFields(fillingId, { shelfLifeWeeks: next });
+  }
+
+  function commitYield() {
+    const parsed = parseFloat(measuredYieldG);
+    const next = !isNaN(parsed) && parsed > 0 ? parsed : undefined;
+    if (next === filling.measuredYieldG) return;
+    updateFillingFields(fillingId, { measuredYieldG: next });
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-3.5">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Properties</h3>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5 -mx-2 rounded-md hover:bg-muted/60 transition-colors">
+          <span className="text-xs text-muted-foreground shrink-0">Category</span>
+          <CategoryPicker
+            category={filling.category}
+            onCategoryChange={(cat) => updateFillingFields(fillingId, { category: cat })}
+            hideLabel
+            selectClassName="text-sm font-medium bg-transparent text-right border-0 focus:outline-none max-w-[65%]"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5 -mx-2 rounded-md hover:bg-muted/60 transition-colors">
+          <span className="text-xs text-muted-foreground shrink-0">Status</span>
+          <input
+            type="text"
+            list="filling-status-list"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            onBlur={commitStatus}
+            placeholder="e.g. testing"
+            className="text-sm font-medium bg-transparent text-right border-0 focus:outline-none max-w-[65%] placeholder:font-normal placeholder:text-muted-foreground/50"
+          />
+          {statusSuggestions.length > 0 && (
+            <datalist id="filling-status-list">
+              {statusSuggestions.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5 -mx-2 rounded-md hover:bg-muted/60 transition-colors">
+          <span className="text-xs text-muted-foreground shrink-0">Shelf life</span>
+          <div className="flex items-baseline gap-1">
+            <input
+              type="number"
+              min="0.5"
+              step="0.5"
+              value={shelfLifeWeeks}
+              onChange={(e) => setShelfLifeWeeks(e.target.value)}
+              onBlur={commitShelfLife}
+              placeholder="—"
+              className="w-12 text-sm font-medium bg-transparent text-right border-0 focus:outline-none"
+            />
+            <span className="text-xs text-muted-foreground">weeks</span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5 -mx-2 rounded-md hover:bg-muted/60 transition-colors">
+          <span className="text-xs text-muted-foreground shrink-0">Measured yield</span>
+          <div className="flex items-baseline gap-1">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={measuredYieldG}
+              onChange={(e) => setMeasuredYieldG(e.target.value)}
+              onBlur={commitYield}
+              placeholder="—"
+              className="w-14 text-sm font-medium bg-transparent text-right border-0 focus:outline-none"
+            />
+            <span className="text-xs text-muted-foreground">g</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sidebar: Derived card ───────────────────────────────────────────────────
+
+function DerivedCard({
+  filling,
+  totalGrams,
+  fillingIngredients,
+  ingredientMap,
+  hasNestedComponents,
+}: {
+  filling: Filling;
+  totalGrams: number;
+  fillingIngredients: FillingIngredient[];
+  ingredientMap: Map<string, Ingredient>;
+  hasNestedComponents: boolean;
+}) {
+  const currencySymbol = useCurrencySymbol();
+  // Nested-filling cost rollup isn't implemented yet — showing a partial total
+  // from only the direct ingredients would be misleading, so we don't.
+  const recipeCost = hasNestedComponents ? null : computeFillingRecipeCost(fillingIngredients, ingredientMap);
+  const costPerKg = recipeCost && totalGrams > 0 ? (recipeCost.totalCost / totalGrams) * 1000 : null;
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/50 p-3.5 space-y-3">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Derived</h3>
+
+      {filling.allergens.length > 0 && (
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Allergens</p>
+          <div className="flex flex-wrap gap-1">
+            {filling.allergens.map((a) => (
+              <span
+                key={a}
+                className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-2 py-0.5 text-[11px]"
+              >
+                {allergenLabel(a)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-muted-foreground">Recipe weight</span>
+        <span className="font-medium tabular-nums">
+          {totalGrams > 0 ? `${fmtG(totalGrams)}g` : "—"}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-muted-foreground">Cost per kg</span>
+        <span className="font-medium tabular-nums">
+          {costPerKg != null ? `${currencySymbol}${costPerKg.toFixed(2)}` : "—"}
+        </span>
+      </div>
+      {recipeCost && recipeCost.missingIngredientNames.length > 0 && (
+        <p className="text-[11px] text-status-warn bg-status-warn-bg rounded-md px-2 py-1">
+          Missing pricing for {recipeCost.missingIngredientNames.join(", ")} — cost is incomplete.
+        </p>
+      )}
+      {hasNestedComponents && (
+        <p className="text-[11px] text-muted-foreground/80">
+          Cost isn&rsquo;t shown — this recipe nests other fillings, which aren&rsquo;t costed yet.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Sidebar: Used-in / add-to-product section ──────────────────────────────
 
 function FillingProductSection({ fillingId, products }: { fillingId: string; products: Product[] }) {
   const router = useRouter();
@@ -979,7 +1125,7 @@ function FillingProductSection({ fillingId, products }: { fillingId: string; pro
   }, [action]);
 
   return (
-    <div className="px-4 pb-6">
+    <div>
       <UsedInPanel
         singular="product"
         plural="products"
@@ -993,7 +1139,7 @@ function FillingProductSection({ fillingId, products }: { fillingId: string; pro
       />
 
       {action === "none" && (
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-1.5">
           <button
             onClick={() => setAction("create")}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -1001,15 +1147,12 @@ function FillingProductSection({ fillingId, products }: { fillingId: string; pro
             <Plus className="w-3.5 h-3.5" /> New product with this filling
           </button>
           {allProducts.length > 0 && (
-            <>
-              <span className="text-xs text-border">|</span>
-              <button
-                onClick={() => setAction("add")}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add to existing product
-              </button>
-            </>
+            <button
+              onClick={() => setAction("add")}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add to existing product
+            </button>
           )}
         </div>
       )}
@@ -1082,16 +1225,18 @@ function FillingProductSection({ fillingId, products }: { fillingId: string; pro
   );
 }
 
-function FillingVersionHistoryTab({ versions, currentId }: { versions: import("@/types").Filling[]; currentId: string }) {
+// ─── History tab ─────────────────────────────────────────────────────────────
+
+function FillingVersionHistoryTab({ versions, currentId }: { versions: Filling[]; currentId: string }) {
   if (versions.length === 0) {
-    return <p className="text-sm text-muted-foreground px-4 pb-8">No version history yet.</p>;
+    return <p className="text-sm text-muted-foreground">No version history yet.</p>;
   }
 
   // Show newest first
   const sorted = [...versions].sort((a, b) => (b.version ?? 1) - (a.version ?? 1));
 
   return (
-    <ul className="space-y-2 px-4 pb-8">
+    <ul className="space-y-2">
       {sorted.map((v) => {
         const isCurrent = v.id === currentId;
         const dateStr = v.createdAt
@@ -1133,44 +1278,38 @@ function FillingVersionHistoryTab({ versions, currentId }: { versions: import("@
   );
 }
 
-function NestedFillingSection({
-  fillingId,
-  editing,
-  totalGrams,
-}: {
-  fillingId: string;
-  editing: boolean;
-  totalGrams: number;
-}) {
-  const components = useFillingComponents(fillingId);
-  const allFillings = useFillings(/* includeArchived */ true);
-  // Reads "all" fillings (including archived) so a row whose child got
-  // archived after being linked still resolves to a name. The picker
-  // (AddFillingComponent) filters archived fillings out of its list.
-  const fillingsById = new Map(allFillings.filter((f) => f.id != null).map((f) => [f.id!, f]));
-  const existingChildIds = components.map((c) => c.childFillingId);
+// ─── Loading / not-found states ──────────────────────────────────────────────
 
-  // Collapse to nothing when there's no list and we're not editing — keeps
-  // the page clean for fillings that don't use this feature at all.
-  if (components.length === 0 && !editing) return null;
-
+function FillingDetailSkeleton() {
   return (
-    <div className="mt-6">
-      <h2 className="text-sm font-medium text-muted-foreground mb-2">
-        Nested fillings ({components.length})
-      </h2>
-      <NestedFillingList
-        components={components}
-        fillingsById={fillingsById}
-        editable={editing}
-        totalGrams={totalGrams}
-      />
-      {editing && (
-        <AddFillingComponent
-          fillingId={fillingId}
-          existingChildIds={existingChildIds}
-        />
-      )}
+    <div className="px-4 pt-6 pb-8 animate-pulse" aria-busy="true" aria-label="Loading filling">
+      <div className="h-4 w-16 bg-muted rounded mb-4" />
+      <div className="h-7 w-48 bg-muted rounded mb-2" />
+      <div className="h-4 w-64 bg-muted rounded mb-6" />
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5">
+        <div className="space-y-4">
+          <div className="h-40 bg-muted rounded-lg" />
+          <div className="h-24 bg-muted rounded-lg" />
+          <div className="h-24 bg-muted rounded-lg" />
+        </div>
+        <div className="space-y-4">
+          <div className="h-32 bg-muted rounded-lg" />
+          <div className="h-24 bg-muted rounded-lg" />
+          <div className="h-28 bg-muted rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FillingNotFound() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[50vh] px-4 text-center gap-1.5">
+      <p className="text-sm font-medium">This filling doesn&rsquo;t exist.</p>
+      <p className="text-sm text-muted-foreground">It may have been deleted.</p>
+      <Link href="/fillings" className="text-sm text-primary underline underline-offset-2 mt-2">
+        Back to Fillings
+      </Link>
     </div>
   );
 }
