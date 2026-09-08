@@ -41,6 +41,25 @@ test.describe("Collections", () => {
     await expect(page.getByText("Summer Treats")).not.toBeVisible();
   });
 
+  test("list renders as a table with column headers", async ({ page }) => {
+    await page.goto("/collections");
+    await page.getByRole("button", { name: "Add collection" }).click();
+    await page.getByPlaceholder("Collection name *").fill("Valentine Box");
+    await page.getByRole("button", { name: "Create Collection" }).click();
+    await expect(page).toHaveURL(/\/collections\/.+/);
+
+    await page.goto("/collections");
+    const table = page.getByRole("table", { name: "Collections" });
+    await expect(table).toBeVisible();
+    for (const header of ["Collection", "Status", "Date range", "Products", "Description", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Valentine Box")).toBeVisible();
+
+    await page.getByText("Valentine Box").click();
+    await expect(page).toHaveURL(/\/collections\/.+/);
+  });
+
   test("cancel add form hides without creating", async ({ page }) => {
     await page.goto("/collections");
     await page.getByRole("button", { name: "Add collection" }).click();

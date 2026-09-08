@@ -29,10 +29,20 @@ test.describe("Product Categories", () => {
 
   test("seeded categories show their range and default", async ({ page }) => {
     await openCategoriesTab(page);
-    // "shell 15%–50%" matches both `moulded` and `snack bar` rows; scope to
+    // "15%–50%" matches both `moulded` and `snack bar` rows; scope to
     // the moulded link so the assertion is unambiguous.
-    await expect(page.getByRole("link", { name: /^moulded\b.*shell 15%–50%/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: /^bar\b.*shell 0%–100%/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^moulded\b.*15%–50%/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^bar\b.*0%–100%/ })).toBeVisible();
+  });
+
+  test("list renders as a table with column headers", async ({ page }) => {
+    await openCategoriesTab(page);
+    const table = page.getByRole("table", { name: "Product categories" });
+    await expect(table).toBeVisible();
+    for (const header of ["Category", "Shell range", "Default %", "Products", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("moulded", { exact: true })).toBeVisible();
   });
 
   test("creates a new category and lands on the detail page", async ({ page }) => {

@@ -41,6 +41,25 @@ test.describe("Moulds", () => {
     await expect(page.getByText("Heart Silicone")).not.toBeVisible();
   });
 
+  test("list renders as a table with column headers", async ({ page }) => {
+    await page.goto("/moulds");
+    await page.getByRole("button", { name: "Add mould" }).click();
+    await page.getByPlaceholder("Mould name *").fill("Bonbon Frame");
+    await page.getByRole("button", { name: "Create Mould" }).click();
+    await expect(page).toHaveURL(/\/moulds\/.+/);
+
+    await page.goto("/moulds");
+    const table = page.getByRole("table", { name: "Moulds" });
+    await expect(table).toBeVisible();
+    for (const header of ["Mould", "Brand", "Cavity weight & count", "Owned", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Bonbon Frame")).toBeVisible();
+
+    await page.getByText("Bonbon Frame").click();
+    await expect(page).toHaveURL(/\/moulds\/.+/);
+  });
+
   test("cancel add form hides without creating", async ({ page }) => {
     await page.goto("/moulds");
     await page.getByRole("button", { name: "Add mould" }).click();

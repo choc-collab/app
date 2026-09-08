@@ -67,6 +67,83 @@ test.describe("Fillings", () => {
     await expect(page.getByText("Original Filling (copy)").first()).toBeVisible({ timeout: 30000 });
   });
 
+  test("list renders as a table with column headers and group collapse", async ({ page }) => {
+    test.setTimeout(60000);
+
+    // Create two fillings in different categories so the list has two groups
+    for (const [name, category] of [
+      ["Hazelnut Praline", "Pralines & Giandujas (Nut-Based)"],
+      ["Mango Gel", "Fruit-Based (Pectins & Acids)"],
+    ] as const) {
+      await page.goto("/fillings");
+      await page.getByRole("button", { name: "Add filling" }).click();
+      await page.getByRole("textbox", { name: "Filling name" }).fill(name);
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(/\/fillings\/.+/);
+      await page.locator("select.input").first().selectOption(category);
+      await page.getByRole("button", { name: "Save" }).click();
+    }
+
+    await page.goto("/fillings");
+    const table = page.getByRole("table", { name: "Fillings" });
+    await expect(table).toBeVisible();
+    for (const header of ["Filling", "Status", "In stock", "Used in", "Last made", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Hazelnut Praline")).toBeVisible();
+    await expect(page.getByText("Mango Gel")).toBeVisible();
+
+    // Both rows show "0" used-in and "Not used in any product" since neither is on a product yet
+    await expect(page.getByText("Not used in any product").first()).toBeVisible();
+
+    // Collapsing all groups hides both rows; expanding restores them
+    await page.getByRole("button", { name: "Collapse all" }).click();
+    await expect(page.getByText("Hazelnut Praline")).not.toBeVisible();
+    await expect(page.getByText("Mango Gel")).not.toBeVisible();
+    await page.getByRole("button", { name: "Expand all" }).click();
+    await expect(page.getByText("Hazelnut Praline")).toBeVisible();
+    await expect(page.getByText("Mango Gel")).toBeVisible();
+
+    // Clicking a row navigates to its detail page
+    await page.getByText("Hazelnut Praline").click();
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+  });
+
+  test("group collapse state persists across navigation and reload", async ({ page }) => {
+    test.setTimeout(60000);
+
+    for (const [name, category] of [
+      ["Hazelnut Praline", "Pralines & Giandujas (Nut-Based)"],
+      ["Mango Gel", "Fruit-Based (Pectins & Acids)"],
+    ] as const) {
+      await page.goto("/fillings");
+      await page.getByRole("button", { name: "Add filling" }).click();
+      await page.getByRole("textbox", { name: "Filling name" }).fill(name);
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(/\/fillings\/.+/);
+      await page.locator("select.input").first().selectOption(category);
+      await page.getByRole("button", { name: "Save" }).click();
+    }
+
+    await page.goto("/fillings");
+    // Collapse just the Pralines group (leave Fruit-Based expanded)
+    await page.getByRole("button", { name: /Pralines/ }).click();
+    await expect(page.getByText("Hazelnut Praline")).not.toBeVisible();
+    await expect(page.getByText("Mango Gel")).toBeVisible();
+
+    // Navigate to a detail page and back — collapse state should survive
+    await page.getByText("Mango Gel").click();
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+    await page.goBack();
+    await expect(page.getByText("Hazelnut Praline")).not.toBeVisible();
+    await expect(page.getByText("Mango Gel")).toBeVisible();
+
+    // Reloading the page should also preserve it (sessionStorage, not component state)
+    await page.reload();
+    await expect(page.getByText("Hazelnut Praline")).not.toBeVisible();
+    await expect(page.getByText("Mango Gel")).toBeVisible();
+  });
+
   test("delete filling from detail page returns to list", async ({ page }) => {
     await page.goto("/fillings");
     await page.getByRole("button", { name: "Add filling" }).click();

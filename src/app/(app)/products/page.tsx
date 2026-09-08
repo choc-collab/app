@@ -5,17 +5,39 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { useProductsList, saveProduct, useProductCategories, useProductCategoryUsageCounts, saveProductCategory, useCoatings, useCurrentCoatingMappings, useProductProductionMap, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts, useProductFillingsForProducts, useFillings, useMarketRegion } from "@/lib/hooks";
 import { resolveCoating } from "@/lib/production";
-import { Plus, Search, ChevronRight, ChevronDown, SlidersHorizontal, X } from "lucide-react";
-import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, ProductStockPills, SegmentedTabs, type SegmentedTabOption, ViewDensityToggle } from "@/components/pantry";
+import { Plus, Search, SlidersHorizontal, X } from "lucide-react";
+import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ProductStockPills, SegmentedTabs, type SegmentedTabOption, GroupHeader, PantryTableHeader, PantryTableGroupHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { formatCategoryRange } from "@/lib/productCategories";
-import Link from "next/link";
 import type { Product } from "@/types";
 import { getAllergensByRegion, allergenLabel } from "@/types";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
-import { usePersistedDensity, type ViewDensity } from "@/lib/use-persisted-density";
 import { shelfLifeBucket, SHELF_LIFE_BUCKET_LABELS, SHELF_LIFE_BUCKET_ORDER, type ShelfLifeBucket } from "@/lib/shelfLifeBuckets";
 type ProductSummary = Omit<Product, "photo">;
+type StockBucket = "in-stock" | "frozen" | "low-out" | "none";
+
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
+}
+
+const PRODUCTS_GRID = "minmax(200px,1.6fr) minmax(120px,1fr) 90px minmax(140px,1.2fr) 90px 90px 20px";
+const PRODUCTS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Product" },
+  { key: "stock", label: "Stock" },
+  { key: "coating", label: "Coating" },
+  { key: "fillings", label: "Fillings" },
+  { key: "popularity", label: "Popularity" },
+  { key: "updated", label: "Updated", align: "right" },
+];
+
+const PRODUCT_CATEGORIES_GRID = "minmax(180px,1.4fr) 110px 90px 90px 90px 20px";
+const PRODUCT_CATEGORIES_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Category" },
+  { key: "shellRange", label: "Shell range" },
+  { key: "defaultPct", label: "Default %" },
+  { key: "products", label: "Products", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 type ProductsMainTab = "products" | "categories";
 const TABS: { id: ProductsMainTab; label: string }[] = [
@@ -89,6 +111,7 @@ function ProductsTab() {
     filterExcludeAllergens: [] as string[],
     filterFillingCount: "",
     filterShelfLife: [] as ShelfLifeBucket[],
+    collapsedTypes: [] as string[],
   });
   const products = useProductsList(f.collectionState === "archived");
   const productionMap = useProductProductionMap();
@@ -114,8 +137,7 @@ function ProductsTab() {
   }, [allFillings]);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
-  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  const [density, setDensity] = usePersistedDensity("products");
+  const collapsedTypes = useMemo(() => new Set(f.collapsedTypes), [f.collapsedTypes]);
   const marketRegion = useMarketRegion();
 
   const filterTagsSet = useMemo(() => new Set(f.filterTags), [f.filterTags]);
@@ -242,7 +264,6 @@ function ProductsTab() {
 
   // Bucket each product by stock state. Mirrors the pill logic in
   // ProductStockPills so the filter and the visible chip agree.
-  type StockBucket = "in-stock" | "frozen" | "low-out" | "none";
   const stockBucketByProduct = useMemo(() => {
     const m = new Map<string, StockBucket>();
     for (const p of products) {
@@ -359,11 +380,9 @@ function ProductsTab() {
   }, [filtered, productCategories]);
 
   function toggleType(type: string) {
-    setCollapsedTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type); else next.add(type);
-      return next;
-    });
+    const next = new Set(collapsedTypes);
+    if (next.has(type)) next.delete(type); else next.add(type);
+    setF("collapsedTypes", Array.from(next));
   }
 
   async function handleAdd(e: React.FormEvent) {
@@ -633,40 +652,45 @@ function ProductsTab() {
               : "No products match your search."}
           </p>
         ) : (
-          <div className="space-y-4">
-            <div className="flex justify-end">
-              <ViewDensityToggle value={density} onChange={setDensity} />
-            </div>
+          <div className="space-y-3">
             <div className="flex justify-end gap-3">
-              <button onClick={() => setCollapsedTypes(new Set(grouped.map((g) => g.type)))} className="text-xs text-muted-foreground">Collapse all</button>
-              <button onClick={() => setCollapsedTypes(new Set())} className="text-xs text-muted-foreground">Expand all</button>
+              <button onClick={() => setF("collapsedTypes", grouped.map((g) => g.type))} className="text-xs text-muted-foreground">Collapse all</button>
+              <button onClick={() => setF("collapsedTypes", [])} className="text-xs text-muted-foreground">Expand all</button>
             </div>
-            {grouped.map(({ type, label, products: groupProducts }) => {
-              const isCollapsed = collapsedTypes.has(type);
-              return (
-                <div key={type}>
-                  <button
-                    onClick={() => toggleType(type)}
-                    aria-expanded={!isCollapsed}
-                    className="flex items-center gap-2 w-full text-left mb-2"
-                  >
-                    <ChevronDown aria-hidden="true" className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
-                    <h2 className="text-sm font-semibold text-primary">{label}</h2>
-                    <span className="text-xs text-muted-foreground">({groupProducts.length})</span>
-                  </button>
-                  {!isCollapsed && (
-                    <ul className="space-y-2 ml-6">
-                      {groupProducts.map((product) => {
-                        const pid = product.id ?? '';
-                        const fillingNames = productFillingNamesMap.get(pid) ?? [];
-                        const allergens = Array.from(productAllergenMap.get(pid) ?? []);
-                        return <ProductRow key={product.id} product={product} hasBeenProduced={productionMap.has(pid)} pieces={stockMap.get(pid) ?? 0} frozen={frozenMap.get(pid) ?? 0} fillingNames={fillingNames} allergens={allergens} density={density} coatingNameByIngredientId={coatingNameByIngredientId} />;
-                      })}
-                    </ul>
-                  )}
-                </div>
-              );
-            })}
+            <div role="table" aria-label="Products" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+              <PantryTableHeader columns={PRODUCTS_COLUMNS} gridTemplateColumns={PRODUCTS_GRID} />
+              {grouped.map(({ type, label, products: groupProducts }) => {
+                const isCollapsed = collapsedTypes.has(type);
+                return (
+                  <div key={type}>
+                    <PantryTableGroupHeader>
+                      <GroupHeader
+                        label={label}
+                        count={groupProducts.length}
+                        isCollapsed={isCollapsed}
+                        onToggle={() => toggleType(type)}
+                      />
+                    </PantryTableGroupHeader>
+                    {!isCollapsed && groupProducts.map((product) => {
+                      const pid = product.id ?? '';
+                      const fillingNames = productFillingNamesMap.get(pid) ?? [];
+                      return (
+                        <ProductRow
+                          key={product.id}
+                          product={product}
+                          hasBeenProduced={productionMap.has(pid)}
+                          pieces={stockMap.get(pid) ?? 0}
+                          frozen={frozenMap.get(pid) ?? 0}
+                          fillingNames={fillingNames}
+                          stockBucket={stockBucketByProduct.get(pid) ?? "none"}
+                          coatingNameByIngredientId={coatingNameByIngredientId}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -674,78 +698,51 @@ function ProductsTab() {
   );
 }
 
-function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, allergens, density, coatingNameByIngredientId }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; allergens?: string[]; density: ViewDensity; coatingNameByIngredientId: Map<string, string> }) {
-  const isCompact = density === "compact";
-  // Row 2: "Milk · filling1 · filling2" — coating capitalised, prefixed if present
+function ProductRow({ product, hasBeenProduced, pieces, frozen, fillingNames, stockBucket, coatingNameByIngredientId }: { product: ProductSummary; hasBeenProduced: boolean; pieces: number; frozen: number; fillingNames?: string[]; stockBucket: StockBucket; coatingNameByIngredientId: Map<string, string> }) {
   const coating = resolveCoating(product, coatingNameByIngredientId);
-  const subtitleParts = [
-    coating ? coating.charAt(0).toUpperCase() + coating.slice(1) : null,
-    ...(fillingNames ?? []),
-  ].filter((p): p is string => Boolean(p));
-
-  const hasTags = (product.tags ?? []).length > 0;
-  const hasAllergens = (allergens ?? []).length > 0;
 
   return (
-    <li
-      className={`rounded-lg border bg-card ${product.archived ? "border-border/50 opacity-60" : "border-border"}`}
-      style={{ contentVisibility: "auto", containIntrinsicSize: isCompact ? "0 40px" : "0 64px" }}
+    <PantryTableRow
+      href={`/products/${encodeURIComponent(product.id ?? '')}`}
+      archived={product.archived}
+      lowStock={stockBucket === "low-out"}
+      gridTemplateColumns={PRODUCTS_GRID}
     >
-      <Link href={`/products/${encodeURIComponent(product.id ?? '')}`} className={`flex items-center gap-2.5 px-3 ${isCompact ? "py-1.5" : "py-2.5"} min-w-0`}>
-        {!isCompact && (
-          <div className="w-8 h-8 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground text-sm font-medium">
-            {product.name.charAt(0)}
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          {/* Row 1: name + stock pills + stars */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-medium text-sm truncate min-w-0">
-              {product.name}
-              {product.archived && (
-                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>
-              )}
-            </h3>
-            {(hasBeenProduced || pieces > 0 || frozen > 0) && (
-              <ProductStockPills
-                pieces={pieces}
-                frozen={frozen}
-                threshold={product.lowStockThreshold}
-              />
-            )}
-            {!isCompact && product.popularity && (
-              <div className="flex gap-0.5 shrink-0 ml-auto">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <svg key={star} className={`w-2.5 h-2.5 ${product.popularity! >= star ? "text-primary fill-primary" : "text-border fill-transparent"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
-                  </svg>
-                ))}
-              </div>
-            )}
-          </div>
-          {/* Row 2: coating · fillings */}
-          {!isCompact && subtitleParts.length > 0 && (
-            <p className="text-xs text-muted-foreground truncate mt-0.5">{subtitleParts.join(" · ")}</p>
-          )}
-          {/* Row 3: tags + allergens together */}
-          {!isCompact && (hasTags || hasAllergens) && (
-            <div className="flex flex-wrap gap-1 mt-0.5">
-              {(product.tags ?? []).map((tag) => (
-                <span key={tag} className="rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-[10px] capitalize">
-                  {tag}
-                </span>
-              ))}
-              {(allergens ?? []).map((a) => (
-                <span key={a} className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-2 py-0.5 text-[10px]">
-                  {allergenLabel(a)}
-                </span>
-              ))}
-            </div>
-          )}
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className="w-7 h-7 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground text-xs font-medium">
+          {product.name.charAt(0)}
         </div>
-        <ChevronRight aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0" />
-      </Link>
-    </li>
+        <h3 className="font-medium text-sm truncate min-w-0">
+          {product.name}
+          {product.archived && (
+            <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>
+          )}
+        </h3>
+      </div>
+      <div>
+        {(hasBeenProduced || pieces > 0 || frozen > 0) ? (
+          <ProductStockPills pieces={pieces} frozen={frozen} threshold={product.lowStockThreshold} />
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
+      </div>
+      <span className="text-xs text-muted-foreground truncate capitalize">{coating || "—"}</span>
+      <span className="text-xs text-muted-foreground truncate">{fillingNames && fillingNames.length > 0 ? fillingNames.join(" · ") : "—"}</span>
+      <div>
+        {product.popularity ? (
+          <div className="flex gap-0.5 shrink-0">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <svg key={star} className={`w-2.5 h-2.5 ${product.popularity! >= star ? "text-primary fill-primary" : "text-border fill-transparent"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+              </svg>
+            ))}
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
+      </div>
+      <span className="text-xs tabular-nums text-muted-foreground text-right">{product.updatedAt ? formatDate(product.updatedAt) : "—"}</span>
+    </PantryTableRow>
   );
 }
 
@@ -851,36 +848,29 @@ function ProductCategoriesTab() {
       )}
 
       {filtered.length > 0 && (
-        <ul className="space-y-2">
+        <div role="table" aria-label="Product categories" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+          <PantryTableHeader columns={PRODUCT_CATEGORIES_COLUMNS} gridTemplateColumns={PRODUCT_CATEGORIES_GRID} />
           {filtered.map((c) => {
             const usage = usageCounts.get(c.id!) ?? 0;
             return (
-              <ListItemCard
+              <PantryTableRow
                 key={c.id}
                 href={`/products/categories/${encodeURIComponent(c.id!)}`}
                 archived={c.archived}
+                gridTemplateColumns={PRODUCT_CATEGORIES_GRID}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm capitalize truncate">{c.name}</span>
-                    {c.archived && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
-                    )}
-                    <span className="text-[11px] font-mono text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 shrink-0">
-                      shell {formatCategoryRange(c)}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground/80 shrink-0">
-                      default {c.defaultShellPercent}%
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {usage === 0 ? "Not in use" : `${usage} product${usage === 1 ? "" : "s"}`}
-                  </div>
-                </div>
-              </ListItemCard>
+                <h3 className="font-medium text-sm capitalize truncate">
+                  {c.name}
+                  {c.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle normal-case">archived</span>}
+                </h3>
+                <span className="text-xs font-mono text-muted-foreground">{formatCategoryRange(c)}</span>
+                <span className="text-xs text-muted-foreground">{c.defaultShellPercent}%</span>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{usage}</span>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{c.updatedAt ? formatDate(c.updatedAt) : "—"}</span>
+              </PantryTableRow>
             );
           })}
-        </ul>
+        </div>
       )}
     </div>
   );

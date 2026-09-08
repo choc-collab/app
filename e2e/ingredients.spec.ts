@@ -27,6 +27,27 @@ test.describe("Ingredients", () => {
     await expect(page.getByText("Butter")).toBeVisible();
   });
 
+  test("list renders as a table with column headers", async ({ page }) => {
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByRole("textbox", { name: "Ingredient name" }).fill("Cocoa Butter");
+    await page.getByRole("button", { name: "Create Ingredient" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+
+    await page.goto("/ingredients");
+    const table = page.getByRole("table", { name: "Ingredients" });
+    await expect(table).toBeVisible();
+    for (const header of ["Ingredient", "Stock", "Manufacturer", "Composition", "Cost/g", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Cocoa Butter")).toBeVisible();
+    await expect(page.getByText("no composition")).toBeVisible();
+    await expect(page.getByText("no pricing")).toBeVisible();
+
+    await page.getByText("Cocoa Butter").click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+  });
+
   test("detail page allows editing purchase cost", async ({ page }) => {
     test.setTimeout(60000);
     // Create ingredient — lands on edit form (?new=1 = editing mode)
@@ -147,5 +168,28 @@ test.describe("Ingredients", () => {
     // Scope to h3 list-item headings to avoid matching any other element that may contain these names
     await expect(page.getByRole("heading", { name: "Glucose Syrup" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Hazelnut Paste" })).not.toBeVisible();
+  });
+});
+
+test.describe("Ingredients — Categories", () => {
+  test("Categories tab list renders as a table and supports create", async ({ page }) => {
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    await page.getByRole("button", { name: /Add ingredient category/i }).click();
+    await page.getByPlaceholder(/Category name/).fill("Emulsifiers");
+    await page.getByRole("button", { name: "Create Category" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/categories\/.+/);
+
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    const table = page.getByRole("table", { name: "Ingredient categories" });
+    await expect(table).toBeVisible();
+    for (const header of ["Category", "Ingredients", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Emulsifiers")).toBeVisible();
+
+    await page.getByText("Emulsifiers").click();
+    await expect(page).toHaveURL(/\/ingredients\/categories\/.+/);
   });
 });

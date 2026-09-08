@@ -41,6 +41,25 @@ test.describe("Packaging", () => {
     await expect(page.getByText("Black Tray 16")).not.toBeVisible();
   });
 
+  test("list renders as a table with column headers", async ({ page }) => {
+    await page.goto("/packaging");
+    await page.getByRole("button", { name: "Add packaging" }).click();
+    await page.getByPlaceholder("Packaging name *").fill("Truffle Tray 12");
+    await page.getByRole("button", { name: "Create Packaging" }).click();
+    await expect(page).toHaveURL(/\/packaging\/.+/);
+
+    await page.goto("/packaging");
+    const table = page.getByRole("table", { name: "Packaging" });
+    await expect(table).toBeVisible();
+    for (const header of ["Packaging", "Stock", "Capacity", "Manufacturer", "Price/unit", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Truffle Tray 12")).toBeVisible();
+
+    await page.getByText("Truffle Tray 12").click();
+    await expect(page).toHaveURL(/\/packaging\/.+/);
+  });
+
   test("cancel add form hides without creating", async ({ page }) => {
     await page.goto("/packaging");
     await page.getByRole("button", { name: "Add packaging" }).click();

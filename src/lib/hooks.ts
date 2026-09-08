@@ -259,11 +259,12 @@ export function useFilling(id: string | undefined) {
 }
 
 export async function saveFilling(filling: Omit<Filling, "id"> & { id?: string }) {
+  const now = new Date();
   if (filling.id) {
-    await db.fillings.update(filling.id, filling);
+    await db.fillings.update(filling.id, { ...filling, updatedAt: now });
     return filling.id;
   }
-  return db.fillings.add(filling as Filling);
+  return db.fillings.add({ ...filling, updatedAt: now } as Filling);
 }
 
 export async function deleteFilling(id: string) {
@@ -356,7 +357,7 @@ export async function unarchiveProduct(id: string) {
 }
 
 export async function archiveFilling(id: string) {
-  await db.fillings.update(id, { archived: true });
+  await db.fillings.update(id, { archived: true, updatedAt: new Date() });
 }
 
 export interface FillingArchiveImpact {
@@ -469,7 +470,7 @@ export async function archiveFillingWithCleanup(
 }
 
 export async function unarchiveFilling(id: string) {
-  await db.fillings.update(id, { archived: undefined });
+  await db.fillings.update(id, { archived: undefined, updatedAt: new Date() });
 }
 
 export async function hasFillingBeenProduced(fillingId: string): Promise<boolean> {
@@ -661,6 +662,7 @@ export async function forkFillingVersion(fillingId: string, versionNotes?: strin
       rootId,
       version: currentVersion + 1,
       createdAt: now,
+      updatedAt: now,
       supersededAt: undefined,
       versionNotes: versionNotes?.trim() || undefined,
       status: "testing",
@@ -1040,11 +1042,12 @@ export function useMould(id: string | undefined) {
 }
 
 export async function saveMould(mould: Omit<Mould, "id"> & { id?: string }) {
+  const now = new Date();
   if (mould.id) {
-    await db.moulds.update(mould.id, mould);
+    await db.moulds.update(mould.id, { ...mould, updatedAt: now });
     return mould.id;
   }
-  return db.moulds.add(mould as Mould);
+  return db.moulds.add({ ...mould, createdAt: now, updatedAt: now } as Mould);
 }
 
 export async function deleteMould(id: string) {
@@ -1052,11 +1055,11 @@ export async function deleteMould(id: string) {
 }
 
 export async function archiveMould(id: string) {
-  await db.moulds.update(id, { archived: true });
+  await db.moulds.update(id, { archived: true, updatedAt: new Date() });
 }
 
 export async function unarchiveMould(id: string) {
-  await db.moulds.update(id, { archived: undefined });
+  await db.moulds.update(id, { archived: undefined, updatedAt: new Date() });
 }
 
 /** Returns true if the mould is referenced by any product or production plan. */
@@ -1842,6 +1845,44 @@ export function useFillingUsageCounts(): Map<string, number> {
     }
     const result = new Map<string, number>();
     for (const [fillingId, productIds] of counts) result.set(fillingId, productIds.size);
+    return result;
+  }) ?? new Map();
+}
+
+/** Returns a map of fillingId → the most recent completed-batch date among products
+ *  that use the filling directly (not counting nested sub-fillings). Used to show
+ *  "last made" on the fillings list — an approximation, since a filling only used
+ *  as a component of another filling isn't tracked here. */
+export function useFillingProductionMap(): Map<string, Date> {
+  return useLiveQuery(async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    if (donePlans.length === 0) return new Map();
+    const planCompletedAt = new Map<string, Date>(donePlans.map((p) => [p.id!, p.completedAt!]));
+    const producedProductIds = new Set(
+      (await db.planProducts.where("planId").anyOf(donePlans.map((p) => p.id!)).toArray())
+        .map((pb) => pb.productId)
+    );
+    if (producedProductIds.size === 0) return new Map();
+
+    // Re-derive lastProducedAt per product (mirrors useProductProductionMap) since we
+    // need it keyed by product before folding into per-filling.
+    const productLastProduced = new Map<string, Date>();
+    const allPlanProducts = await db.planProducts.where("planId").anyOf(donePlans.map((p) => p.id!)).toArray();
+    for (const pb of allPlanProducts) {
+      const completedAt = planCompletedAt.get(pb.planId);
+      if (!completedAt) continue;
+      const existing = productLastProduced.get(pb.productId);
+      if (!existing || completedAt > existing) productLastProduced.set(pb.productId, completedAt);
+    }
+
+    const productFillings = await db.productFillings.where("productId").anyOf([...producedProductIds]).toArray();
+    const result = new Map<string, Date>();
+    for (const rl of productFillings) {
+      const producedAt = productLastProduced.get(rl.productId);
+      if (!producedAt) continue;
+      const existing = result.get(rl.fillingId);
+      if (!existing || producedAt > existing) result.set(rl.fillingId, producedAt);
+    }
     return result;
   }) ?? new Map();
 }
@@ -2733,6 +2774,22 @@ export function useShellDesign(id: string | undefined) {
 }
 
 /** Returns products that use this design technique in their shellDesign steps. */
+/** Reactive Map<designName, product count> for the shell designs list table —
+ *  a bulk counterpart to useShellDesignUsage, safe to call once per page instead
+ *  of once per row (which would violate the rules of hooks). */
+export function useShellDesignUsageCounts(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const products = await db.products.toArray();
+    const counts = new Map<string, number>();
+    for (const product of products) {
+      for (const step of product.shellDesign ?? []) {
+        counts.set(step.technique, (counts.get(step.technique) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }) ?? new Map();
+}
+
 export function useShellDesignUsage(designName: string | undefined) {
   return useLiveQuery(async () => {
     if (!designName) return [];
@@ -2800,6 +2857,16 @@ export function useCollections() {
 
 export function useCollection(id: string | undefined) {
   return useLiveQuery(() => (id ? db.collections.get(id) : undefined), [id]);
+}
+
+/** Reactive Map<collectionId, product count> for the collections list table. */
+export function useCollectionProductCounts(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const all = await db.collectionProducts.toArray();
+    const counts = new Map<string, number>();
+    for (const cp of all) counts.set(cp.collectionId, (counts.get(cp.collectionId) ?? 0) + 1);
+    return counts;
+  }) ?? new Map();
 }
 
 export async function saveCollection(obj: Omit<Collection, "id"> & { id?: string }): Promise<string> {

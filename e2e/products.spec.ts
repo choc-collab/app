@@ -95,6 +95,36 @@ test.describe("Products", () => {
     await expect(page.getByText("Original Product (copy)").first()).toBeVisible({ timeout: 30000 });
   });
 
+  test("list renders as a table with column headers and group collapse", async ({ page }) => {
+    test.setTimeout(60000);
+
+    await page.goto("/products");
+    for (const name of ["Milk Praline", "Dark Caramel"]) {
+      await page.getByRole("button", { name: "Add new product" }).click();
+      await page.getByRole("textbox", { name: "Product name" }).fill(name);
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(/\/products\/.+/);
+      await page.goto("/products");
+    }
+
+    const table = page.getByRole("table", { name: "Products" });
+    await expect(table).toBeVisible();
+    for (const header of ["Product", "Stock", "Coating", "Fillings", "Popularity", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Milk Praline")).toBeVisible();
+    await expect(page.getByText("Dark Caramel")).toBeVisible();
+
+    // Both products land in "Uncategorised" since neither was assigned a category
+    await page.getByRole("button", { name: "Collapse all" }).click();
+    await expect(page.getByText("Milk Praline")).not.toBeVisible();
+    await page.getByRole("button", { name: "Expand all" }).click();
+    await expect(page.getByText("Milk Praline")).toBeVisible();
+
+    await page.getByText("Dark Caramel").click();
+    await expect(page).toHaveURL(/\/products\/.+/);
+  });
+
   test("delete product from detail page returns to list", async ({ page }) => {
     await page.goto("/products");
     await page.getByRole("button", { name: "Add new product" }).click();
