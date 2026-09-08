@@ -11,7 +11,8 @@ async function createOrder(
   page: Page,
   { title, date, save = true }: { title: string; date?: string; save?: boolean },
 ) {
-  await page.goto("/orders");
+  // Explicit ?tab=orders: a previous step may have persisted the Customers tab.
+  await page.goto("/orders?tab=orders");
   await page.getByRole("button", { name: "Add order" }).click();
   await page.getByLabel("Order title").fill(title);
   if (date) await page.getByLabel("Event date").fill(date);
@@ -156,5 +157,65 @@ test.describe("Orders — Today dashboard tile", () => {
     await expect(page.getByText("Nothing planned — add an order →")).toBeVisible();
     await page.getByRole("link", { name: "Nothing planned — add an order →" }).click();
     await expect(page).toHaveURL(/\/orders\/?$/);
+  });
+});
+
+test.describe("Orders — filter panel", () => {
+  test("past orders are hidden by default; filters reveal them and bound the period", async ({ page }) => {
+    await createOrder(page, { title: "Past popup", date: isoFromToday(-10) });
+    await createOrder(page, { title: "Near event", date: isoFromToday(5) });
+    await createOrder(page, { title: "Far event", date: isoFromToday(200) });
+    await page.goto("/orders");
+
+    // Default: open orders only — the past order is invisible
+    await expect(page.getByRole("link", { name: /Near event/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Far event/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Past popup/ })).not.toBeVisible();
+    await expect(page.getByText(/Past & closed/)).not.toBeVisible();
+
+    // Show past & closed via the filter panel
+    await page.getByRole("button", { name: "Filters" }).click();
+    await page.getByRole("button", { name: "Show", exact: true }).click();
+    await expect(page.getByText("Past & closed (1)")).toBeVisible();
+    await expect(page.getByRole("link", { name: /Past popup/ })).toBeVisible();
+
+    // Bound the window: the far-future order drops out, near + recent past stay
+    await page.getByRole("button", { name: "Within 30 days" }).click();
+    await expect(page.getByRole("link", { name: /Far event/ })).not.toBeVisible();
+    await expect(page.getByRole("link", { name: /Near event/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Past popup/ })).toBeVisible();
+
+    // Clear all filters → defaults restored (past hidden, all dates)
+    await page.getByRole("button", { name: "Clear all filters" }).click();
+    await expect(page.getByRole("link", { name: /Far event/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Past popup/ })).not.toBeVisible();
+  });
+
+  test("customer filter narrows the list to that customer's orders", async ({ page }) => {
+    // Create a customer via the Customers tab quick-add
+    await page.goto("/orders?tab=customers");
+    await page.getByRole("button", { name: "Add customer" }).click();
+    await page.getByLabel("Customer name").fill("Filter Klant");
+    await page.getByRole("button", { name: "Create Customer" }).click();
+    await expect(page).toHaveURL(/\/orders\/customers\/[^/]+\/?\?new=1/);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Edit customer" })).toBeVisible();
+
+    // One order assigned to the customer, one without
+    await createOrder(page, { title: "Assigned order", date: isoFromToday(7) });
+    await page.getByRole("button", { name: "Edit order" }).click();
+    await page.getByLabel("Customer").selectOption({ label: "Filter Klant" });
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await createOrder(page, { title: "Unassigned order", date: isoFromToday(8) });
+
+    await page.goto("/orders");
+    await page.getByRole("button", { name: "Filters" }).click();
+    await page.getByLabel("Filter by customer").selectOption({ label: "Filter Klant" });
+    await expect(page.getByRole("link", { name: /Assigned order/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Unassigned order/ })).not.toBeVisible();
+
+    // Selecting "All customers" restores the full list
+    await page.getByLabel("Filter by customer").selectOption({ label: "All customers" });
+    await expect(page.getByRole("link", { name: /Unassigned order/ })).toBeVisible();
   });
 });

@@ -154,6 +154,22 @@ export function shiftMonth(year: number, month: number, delta: number): { year: 
   return { year: Math.floor(total / 12), month: ((total % 12) + 12) % 12 };
 }
 
+/** Time-window options for the Orders list filter panel. Measured as
+ *  distance from today in either direction, so "30d" shows events within
+ *  the next 30 days — and, when past orders are shown, the last 30 too. */
+export type OrderPeriod = "30d" | "90d" | "12mo" | "all";
+
+const PERIOD_DAYS: Record<Exclude<OrderPeriod, "all">, number> = {
+  "30d": 30,
+  "90d": 90,
+  "12mo": 365,
+};
+
+export function isWithinPeriod(eventDate: string, todayISO: string, period: OrderPeriod): boolean {
+  if (period === "all") return true;
+  return Math.abs(daysUntil(eventDate, todayISO)) <= PERIOD_DAYS[period];
+}
+
 /** Link rows grouped by plan, preserving row order within each group. A
  *  group holds the plan's bare link and/or its per-product allocations. */
 export function groupLinksByPlan(links: OrderProductionLink[]): Map<string, OrderProductionLink[]> {

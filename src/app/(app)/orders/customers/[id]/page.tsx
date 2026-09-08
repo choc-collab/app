@@ -11,7 +11,7 @@ import { useSpaId } from "@/lib/use-spa-id";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { groupOrdersForList, toISODate } from "@/lib/orders";
 import { OrderCard } from "@/components/orders/order-card";
-import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore, Mail, Phone, AtSign } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore, Mail, Phone, AtSign, MapPin } from "lucide-react";
 
 export default function CustomerDetailPage() {
   return (
@@ -38,6 +38,7 @@ function CustomerDetailPageInner() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
   const [instagram, setInstagram] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -56,6 +57,7 @@ function CustomerDetailPageInner() {
     setName(customer.name);
     setEmail(customer.email || "");
     setPhone(customer.phone || "");
+    setAddress(customer.address || "");
     setInstagram(customer.instagram || "");
     setNotes(customer.notes || "");
     setSyncedId(customer.id);
@@ -65,6 +67,7 @@ function CustomerDetailPageInner() {
     name !== customer.name ||
     email !== (customer.email || "") ||
     phone !== (customer.phone || "") ||
+    address !== (customer.address || "") ||
     instagram !== (customer.instagram || "") ||
     notes !== (customer.notes || "")
   );
@@ -101,6 +104,7 @@ function CustomerDetailPageInner() {
       name: name.trim(),
       email: email.trim() || undefined,
       phone: phone.trim() || undefined,
+      address: address.trim() || undefined,
       instagram: instagram.trim().replace(/^@/, "") || undefined,
       notes: notes.trim() || undefined,
     });
@@ -113,6 +117,7 @@ function CustomerDetailPageInner() {
     setName(customer!.name);
     setEmail(customer!.email || "");
     setPhone(customer!.phone || "");
+    setAddress(customer!.address || "");
     setInstagram(customer!.instagram || "");
     setNotes(customer!.notes || "");
     setEditing(false);
@@ -172,6 +177,16 @@ function CustomerDetailPageInner() {
               </div>
             </div>
             <div>
+              <label className="label" htmlFor="customer-address">Address</label>
+              <textarea
+                id="customer-address"
+                className="input w-full min-h-16"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder={"Street and number\nPostcode, town"}
+              />
+            </div>
+            <div>
               <label className="label" htmlFor="customer-instagram">Instagram</label>
               <input
                 id="customer-instagram"
@@ -224,7 +239,7 @@ function CustomerDetailPageInner() {
               </button>
             </div>
 
-            {(customer.email || customer.phone || customer.instagram) && (
+            {(customer.email || customer.phone || customer.address || customer.instagram) && (
               <div className="rounded-lg border border-border bg-card p-4 space-y-2.5">
                 {customer.email && (
                   <div className="flex items-center gap-2 text-sm">
@@ -236,6 +251,12 @@ function CustomerDetailPageInner() {
                   <div className="flex items-center gap-2 text-sm">
                     <Phone className="w-4 h-4 text-muted-foreground shrink-0" aria-hidden />
                     <a href={`tel:${customer.phone}`} className="hover:underline">{customer.phone}</a>
+                  </div>
+                )}
+                {customer.address && (
+                  <div className="flex items-start gap-2 text-sm">
+                    <MapPin className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden />
+                    <span className="whitespace-pre-wrap">{customer.address}</span>
                   </div>
                 )}
                 {customer.instagram && (

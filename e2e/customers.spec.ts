@@ -99,10 +99,13 @@ test.describe("Customers — tab & detail", () => {
     await expect(page.getByLabel("Name")).toHaveValue("Bakkerij Jansen");
     await page.getByLabel("Email").fill("info@bakkerijjansen.nl");
     await page.getByLabel("Phone").fill("+31 6 12345678");
+    await page.getByLabel("Address").fill("Dorpsstraat 12\n7991 AB Dwingeloo");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Bakkerij Jansen" })).toBeVisible();
     await expect(page.getByText("info@bakkerijjansen.nl")).toBeVisible();
     await expect(page.getByText("+31 6 12345678")).toBeVisible();
+    // Multi-line address renders with line breaks preserved
+    await expect(page.getByText(/Dorpsstraat 12\s+7991 AB Dwingeloo/)).toBeVisible();
     // And it shows on the customers tab list
     await page.goto("/orders?tab=customers");
     await expect(page.getByRole("link", { name: /Bakkerij Jansen/ })).toBeVisible();

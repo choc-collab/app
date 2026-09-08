@@ -1297,6 +1297,9 @@ export interface Customer {
   name: string;
   email?: string;
   phone?: string;
+  /** Delivery/visiting address — free-form, may include multiple lines.
+   *  Unindexed, so adding it needed no schema migration. */
+  address?: string;
   instagram?: string; // handle, without the @
   notes?: string;
   archived?: boolean;

@@ -13,9 +13,9 @@
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { LayoutList, CalendarDays } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { ListToolbar, QuickAddForm, EmptyState, ListItemCard } from "@/components/pantry";
+import { ListToolbar, QuickAddForm, EmptyState, ListItemCard, FilterPanel, FilterChipGroup } from "@/components/pantry";
 import { MonthGrid } from "@/components/orders/month-grid";
 import { OrderCard } from "@/components/orders/order-card";
 import { useOrders, saveOrder, useCustomers, saveCustomer } from "@/lib/hooks";
@@ -25,6 +25,8 @@ import {
   shiftMonth,
   monthLabel,
   ORDER_STATUS_LABEL,
+  isWithinPeriod,
+  type OrderPeriod,
 } from "@/lib/orders";
 import type { Order, OrderStatus, Customer } from "@/types";
 import { useNShortcut } from "@/lib/use-n-shortcut";
@@ -39,10 +41,52 @@ const TABS: { id: OrdersPageTab; label: string }[] = [
 
 type OrdersView = "list" | "calendar";
 
-const VIEWS: { id: OrdersView; label: string }[] = [
-  { id: "list", label: "List" },
-  { id: "calendar", label: "Calendar" },
-];
+/** Two-button segmented toggle between the list and month-calendar views —
+ *  same shape and placement as the products page's ViewDensityToggle. */
+function OrdersViewToggle({
+  value,
+  onChange,
+}: {
+  value: OrdersView;
+  onChange: (next: OrdersView) => void;
+}) {
+  return (
+    <div
+      className="inline-flex rounded-full border border-border bg-card p-0.5"
+      role="group"
+      aria-label="Orders view"
+    >
+      <button
+        type="button"
+        onClick={() => onChange("list")}
+        aria-pressed={value === "list"}
+        title="List view — upcoming orders grouped by month"
+        className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+          value === "list"
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <LayoutList aria-hidden="true" className="w-3.5 h-3.5" />
+        List
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("calendar")}
+        aria-pressed={value === "calendar"}
+        title="Calendar view — orders on a month grid"
+        className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+          value === "calendar"
+            ? "bg-accent text-accent-foreground"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <CalendarDays aria-hidden="true" className="w-3.5 h-3.5" />
+        Calendar
+      </button>
+    </div>
+  );
+}
 
 /** Statuses offered at creation time — an order that's already fulfilled or
  *  cancelled isn't worth capturing, and "in production" starts on the detail
@@ -129,6 +173,10 @@ function OrdersTab() {
   const [f, setF] = usePersistedFilters("orders", {
     view: "list" as OrdersView,
     search: "",
+    showFilters: false,
+    includePast: false,
+    period: "all" as OrderPeriod,
+    filterCustomer: "", // customer id; "" = all customers
   });
   const orders = useOrders();
   const customers = useCustomers(true);
@@ -138,7 +186,6 @@ function OrdersTab() {
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState(todayISO);
   const [newStatus, setNewStatus] = useState<OrderStatus>("lead");
-  const [showPast, setShowPast] = useState(false);
   const [cal, setCal] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
@@ -152,23 +199,42 @@ function OrdersTab() {
     return m;
   }, [customers]);
 
+  const activeFilterCount =
+    (f.includePast ? 1 : 0) +
+    (f.period !== "all" ? 1 : 0) +
+    (f.filterCustomer ? 1 : 0);
+
+  function clearFilters() {
+    setF("includePast", false);
+    setF("period", "all");
+    setF("filterCustomer", "");
+  }
+
   const searchLower = f.search.toLowerCase();
-  const filtered = useMemo(
+  // Search + customer filter — feeds both views (the calendar keeps its own
+  // month navigation, so the period window applies to the list only).
+  const baseFiltered = useMemo(
     () =>
-      f.search
-        ? orders.filter(
-            (o) =>
-              o.title.toLowerCase().includes(searchLower) ||
-              (customerNameById.get(o.customerId ?? "") ?? "").toLowerCase().includes(searchLower) ||
-              (o.venue ?? "").toLowerCase().includes(searchLower),
-          )
-        : orders,
-    [orders, f.search, searchLower, customerNameById],
+      orders.filter((o) => {
+        if (f.filterCustomer && o.customerId !== f.filterCustomer) return false;
+        if (!f.search) return true;
+        return (
+          o.title.toLowerCase().includes(searchLower) ||
+          (customerNameById.get(o.customerId ?? "") ?? "").toLowerCase().includes(searchLower) ||
+          (o.venue ?? "").toLowerCase().includes(searchLower)
+        );
+      }),
+    [orders, f.search, searchLower, customerNameById, f.filterCustomer],
+  );
+
+  const listFiltered = useMemo(
+    () => (f.period === "all" ? baseFiltered : baseFiltered.filter((o) => isWithinPeriod(o.eventDate, todayISO, f.period))),
+    [baseFiltered, f.period, todayISO],
   );
 
   const { upcoming, past } = useMemo(
-    () => groupOrdersForList(filtered, todayISO),
-    [filtered, todayISO],
+    () => groupOrdersForList(listFiltered, todayISO),
+    [listFiltered, todayISO],
   );
 
   // Section the upcoming list by month ("December 2026") for scanability.
@@ -201,21 +267,8 @@ function OrdersTab() {
 
   return (
     <div className="px-4 space-y-3 pb-6">
-      <div className="flex gap-1">
-        {VIEWS.map(({ id, label }) => (
-          <button
-            key={id}
-            onClick={() => setF("view", id)}
-            aria-pressed={f.view === id}
-            className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-              f.view === id
-                ? "bg-accent text-accent-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex justify-end">
+        <OrdersViewToggle value={f.view} onChange={(v) => setF("view", v)} />
       </div>
 
       <ListToolbar
@@ -226,7 +279,56 @@ function OrdersTab() {
         onAdd={() => setShowAdd(true)}
         addAriaLabel="Add order"
         addTitle="Add order (n)"
+        showFilters
+        filterPanelOpen={f.showFilters}
+        onToggleFilters={() => setF("showFilters", !f.showFilters)}
+        activeFilterCount={activeFilterCount}
       />
+
+      {f.showFilters && (
+        <FilterPanel activeFilterCount={activeFilterCount} onClearAll={clearFilters}>
+          <FilterChipGroup
+            label="Past & closed orders"
+            options={[
+              { value: "hide", label: "Hide" },
+              { value: "show", label: "Show" },
+            ]}
+            value={f.includePast ? "show" : "hide"}
+            defaultValue="hide"
+            onChange={(v) => setF("includePast", v === "show")}
+          />
+          <FilterChipGroup
+            label="Event date"
+            options={[
+              { value: "30d", label: "Within 30 days" },
+              { value: "90d", label: "Within 90 days" },
+              { value: "12mo", label: "Within 12 months" },
+              { value: "all", label: "All dates" },
+            ]}
+            value={f.period}
+            defaultValue="all"
+            onChange={(v) => setF("period", v as OrderPeriod)}
+          />
+          {customers.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Customer</p>
+              <select
+                className="input sm:!w-64"
+                value={f.filterCustomer}
+                onChange={(e) => setF("filterCustomer", e.target.value)}
+                aria-label="Filter by customer"
+              >
+                <option value="">All customers</option>
+                {customers.filter((c) => c.id).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.archived ? " (archived)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </FilterPanel>
+      )}
 
       {showAdd && (
         <QuickAddForm
@@ -276,7 +378,7 @@ function OrdersTab() {
         <MonthGrid
           year={cal.year}
           month={cal.month}
-          orders={filtered}
+          orders={baseFiltered}
           todayISO={todayISO}
           onPrev={() => setCal((c) => shiftMonth(c.year, c.month, -1))}
           onNext={() => setCal((c) => shiftMonth(c.year, c.month, 1))}
@@ -288,11 +390,11 @@ function OrdersTab() {
         />
       ) : (
         <>
-          {filtered.length === 0 && (
+          {upcoming.length === 0 && (!f.includePast || past.length === 0) && (
             <EmptyState
               hasData={orders.length > 0}
               emptyMessage="No orders yet. Tap + to capture your first order or event."
-              filteredMessage="No orders match your search."
+              filteredMessage="No orders match your search or filters."
             />
           )}
 
@@ -312,27 +414,21 @@ function OrdersTab() {
             </div>
           ))}
 
-          {past.length > 0 && (
+          {f.includePast && past.length > 0 && (
             <div className="pt-2">
-              <button
-                onClick={() => setShowPast((v) => !v)}
-                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showPast ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <h2 className="mono-label text-muted-foreground">
                 Past &amp; closed ({past.length})
-              </button>
-              {showPast && (
-                <div className="space-y-2 mt-2 opacity-70">
-                  {past.map((o) => (
-                    <OrderCard
-                      key={o.id}
-                      order={o}
-                      todayISO={todayISO}
-                      customerName={customerNameById.get(o.customerId ?? "")}
-                    />
-                  ))}
-                </div>
-              )}
+              </h2>
+              <div className="space-y-2 mt-2 opacity-70">
+                {past.map((o) => (
+                  <OrderCard
+                    key={o.id}
+                    order={o}
+                    todayISO={todayISO}
+                    customerName={customerNameById.get(o.customerId ?? "")}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </>

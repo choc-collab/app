@@ -14,6 +14,7 @@ import {
   groupLinksByPlan,
   allocatedByProduct,
   lineItemFulfillment,
+  isWithinPeriod,
 } from "./orders";
 import type { Order, OrderStatus, OrderProductionLink, OrderLineItem } from "@/types";
 
@@ -226,6 +227,30 @@ function link(overrides: Partial<OrderProductionLink>): OrderProductionLink {
 function lineItem(overrides: Partial<OrderLineItem>): OrderLineItem {
   return { id: "li1", orderId: "o1", quantity: 40, sortOrder: 0, ...overrides };
 }
+
+describe("isWithinPeriod", () => {
+  it("always passes for 'all'", () => {
+    expect(isWithinPeriod("2030-01-01", TODAY, "all")).toBe(true);
+    expect(isWithinPeriod("2020-01-01", TODAY, "all")).toBe(true);
+  });
+
+  it("bounds the window symmetrically around today", () => {
+    expect(isWithinPeriod("2026-09-30", TODAY, "30d")).toBe(true);   // +28 days
+    expect(isWithinPeriod("2026-10-15", TODAY, "30d")).toBe(false);  // +43 days
+    expect(isWithinPeriod("2026-08-10", TODAY, "30d")).toBe(true);   // -23 days
+    expect(isWithinPeriod("2026-07-01", TODAY, "30d")).toBe(false);  // -63 days
+  });
+
+  it("treats the boundary day as inside", () => {
+    expect(isWithinPeriod("2026-10-02", TODAY, "30d")).toBe(true);   // exactly +30
+    expect(isWithinPeriod("2026-12-01", TODAY, "90d")).toBe(true);   // exactly +90
+  });
+
+  it("uses 365 days for '12mo'", () => {
+    expect(isWithinPeriod("2027-08-01", TODAY, "12mo")).toBe(true);
+    expect(isWithinPeriod("2027-09-15", TODAY, "12mo")).toBe(false);
+  });
+});
 
 describe("groupLinksByPlan", () => {
   it("returns an empty map for no links", () => {
