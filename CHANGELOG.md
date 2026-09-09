@@ -4,7 +4,7 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
-## [Unreleased]
+## [0.8.0] — 2026-09-09
 
 ### Added
 - **A product's nutrition tab now tells you whether it's ready for a label** — the panel already warned when some ingredients had no nutrition data, but not whether the totals actually satisfy what your market requires on a printed label; those are different questions and only the second one blocks printing something compliant. It now says either "All nutrients required for an EU label are present" or names exactly what's missing and where to add it. The ingredient pages have carried the same check for a while; this brings the product roll-up in line, which matters now that Shop boxes print nutrition labels.
