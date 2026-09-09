@@ -121,3 +121,47 @@ test("sweep: narrow viewport collapses every detail page to one column", async (
   expect(overflow).toBeLessThanOrEqual(0);
   expect(real(errors)).toEqual([]);
 });
+
+test("sweep: category detail pages put Used in beside the editable panels", async ({ page }) => {
+  test.setTimeout(120000);
+  const errors = collectErrors(page);
+
+  // Product categories — Shop appearance + Shell percentage on the left,
+  // Used in on the right.
+  await page.goto("/products");
+  await page.getByRole("button", { name: /^Categories$/ }).click();
+  await page.getByRole("button", { name: /Add product category/i }).click();
+  await page.getByPlaceholder(/Category name/).fill("Sweep Category");
+  await page.getByRole("button", { name: "Create Category" }).click();
+  await expect(page).toHaveURL(/\/products\/categories\/.+/);
+
+  await expect(page.getByRole("heading", { name: "Shop appearance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shell percentage" })).toBeVisible();
+  const usedIn = page.getByRole("heading", { name: "Used in" });
+  await expect(usedIn).toBeVisible();
+  // The panel's own "Used in no products" heading must not double up with the
+  // card title above it.
+  await expect(page.getByRole("heading", { name: /^Used in no products$/ })).toHaveCount(0);
+
+  // Side by side at desktop width: the card starts to the right of the
+  // editable column, not underneath it.
+  const shellBox = await page.getByRole("heading", { name: "Shell percentage" }).boundingBox();
+  const usedInBox = await usedIn.boundingBox();
+  expect(usedInBox!.x).toBeGreaterThan(shellBox!.x);
+
+  // Filling categories — same treatment.
+  await page.goto("/fillings");
+  await page.getByRole("button", { name: /^Categories$/ }).click();
+  await page.getByRole("button", { name: /Add filling category/i }).click();
+  await page.getByPlaceholder(/Category name/).fill("Sweep Filling Category");
+  await page.getByRole("button", { name: "Create Category" }).click();
+  await expect(page).toHaveURL(/\/fillings\/categories\/.+/);
+
+  const fUsedIn = page.getByRole("heading", { name: "Used in" });
+  await expect(fUsedIn).toBeVisible();
+  const toggleBox = await page.getByText("Treat as shelf-stable").boundingBox();
+  const fUsedInBox = await fUsedIn.boundingBox();
+  expect(fUsedInBox!.x).toBeGreaterThan(toggleBox!.x);
+
+  expect(real(errors)).toEqual([]);
+});

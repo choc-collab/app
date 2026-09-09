@@ -16,11 +16,14 @@
 /** A sidebar card. `tinted` switches to the Derived treatment. */
 export function SidebarCard({
   title,
+  meta,
   tinted = false,
   children,
   className = "",
 }: {
   title: string;
+  /** Small right-aligned read-out beside the title, e.g. a count or total. */
+  meta?: React.ReactNode;
   tinted?: boolean;
   children: React.ReactNode;
   className?: string;
@@ -29,9 +32,14 @@ export function SidebarCard({
     <div
       className={`rounded-lg border border-border p-3.5 ${tinted ? "bg-muted/50" : "bg-card"} ${className}`}
     >
-      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-        {title}
-      </h3>
+      <div className="flex items-baseline justify-between gap-2 mb-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </h3>
+        {meta != null && (
+          <span className="text-[11px] text-muted-foreground tabular-nums">{meta}</span>
+        )}
+      </div>
       {children}
     </div>
   );

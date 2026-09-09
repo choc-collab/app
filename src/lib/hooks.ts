@@ -1730,6 +1730,27 @@ export async function saveProductCategory(category: Omit<ProductCategory, "id" |
   return db.productCategories.add({ ...category, createdAt: now, updatedAt: now } as ProductCategory) as Promise<string>;
 }
 
+/** Merge just the given fields into an existing product category.
+ *
+ *  Deliberately does NOT run `validateCategoryRange` the way `saveProductCategory`
+ *  does. That check spans all three shell-percentage fields, and rejecting a
+ *  partial write against it would deadlock the page: moving a range from 30–40
+ *  to 50–60 has no valid single-field order, because the first edit always
+ *  crosses the other bound. So min and max write freely, and the page holds the
+ *  *default* in draft until it lands inside the range — the one rule where a
+ *  half-edited value would otherwise seed new products with a bad number.
+ *  A transiently inconsistent record is surfaced on the page rather than
+ *  silently allowed. */
+export async function updateProductCategoryFields(
+  id: string,
+  changes: Partial<Omit<ProductCategory, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.productCategories.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function archiveProductCategory(id: string): Promise<void> {
   await db.productCategories.update(id, { archived: true, updatedAt: new Date() });
 }

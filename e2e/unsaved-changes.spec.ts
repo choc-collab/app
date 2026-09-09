@@ -126,3 +126,32 @@ test.describe("Unsaved changes — Products (autosave, no guard expected)", () =
     await expect(page).toHaveURL(/\/products\/?$/);
   });
 });
+
+// Product categories carry the pantry's one genuinely blocking rule (the default
+// shell % must sit inside min–max), and it is enforced inline on the field
+// rather than by a guard on the way out.
+
+test.describe("Unsaved changes — Product categories (autosave, no guard expected)", () => {
+  test("never warns when navigating away, even with a refused value in the field", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/products");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    await page.getByRole("button", { name: /Add product category/i }).click();
+    await page.getByPlaceholder(/Category name/).fill("No Guard Category");
+    await page.getByRole("button", { name: "Create Category" }).click();
+    await expect(page).toHaveURL(/\/products\/categories\/.+/);
+
+    // Leave an invalid value sitting in the input — still no dialog.
+    await page.getByLabel("Default shell %").fill("99");
+    await page.getByLabel("Default shell %").blur();
+    await expect(page.locator('p[role="alert"]')).toBeVisible();
+
+    let dialogSeen = false;
+    page.on("dialog", () => { dialogSeen = true; });
+
+    await page.getByRole("link", { name: "Product categories" }).first().click();
+
+    expect(dialogSeen).toBe(false);
+    await expect(page).toHaveURL(/\/products/);
+  });
+});

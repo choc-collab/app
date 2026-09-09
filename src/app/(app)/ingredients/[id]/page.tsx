@@ -298,7 +298,7 @@ export default function IngredientDetailPage() {
 
           <DerivedCard ingredient={ingredient} market={market} sym={sym} costPerGram={costPerGram} />
 
-          <SidebarCard title="Used in">
+          <SidebarCard title="Used in" meta={usage.length > 0 ? usage.length : undefined}>
             <UsedInPanel
               singular="filling"
               plural="fillings"
@@ -310,6 +310,7 @@ export default function IngredientDetailPage() {
                 subItems: products.map((r) => r.name),
               }))}
               emptyMessage="Not used in any filling yet."
+              hideHeading
             />
           </SidebarCard>
         </div>
