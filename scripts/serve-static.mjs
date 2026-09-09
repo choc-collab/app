@@ -14,6 +14,7 @@ import { readFile, stat } from "node:fs/promises";
 import { readFileSync as readSyncRaw } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, normalize, sep } from "node:path";
+import { sameOriginTarget } from "./safe-redirect.mjs";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const ROOT = fileURLToPath(new URL("../out/", import.meta.url));
@@ -144,7 +145,13 @@ const server = createServer(async (req, res) => {
   const hit = applyRedirects(decoded);
   if (hit) {
     if (hit.status >= 300 && hit.status < 400) {
-      res.writeHead(hit.status, { location: hit.target });
+      const location = sameOriginTarget(hit.target);
+      if (!location) {
+        res.writeHead(400, { "content-type": "text/plain" });
+        res.end("Refusing off-site redirect target");
+        return;
+      }
+      res.writeHead(hit.status, { location });
       res.end();
       return;
     }

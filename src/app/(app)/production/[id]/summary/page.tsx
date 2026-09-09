@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useProductionPlan, saveProductionPlan } from "@/lib/hooks";
 import { useSpaId } from "@/lib/use-spa-id";
+import { resolveBackHref } from "@/lib/back-href";
 import { ArrowLeft, Copy, Check, StickyNote } from "lucide-react";
 import Link from "next/link";
 
@@ -16,18 +17,10 @@ export default function BatchSummaryPage() {
   const [notesSaved, setNotesSaved] = useState(false);
   const notesHydratedFor = useRef<string | undefined>(undefined);
 
-  const sanitizeBackHref = (value: string | null): string | null => {
-    if (!value) return null;
-    if (!value.startsWith("/")) return null;
-    if (value.startsWith("//")) return null;
-    return value;
-  };
-
   useEffect(() => {
-    const from = sanitizeBackHref(new URLSearchParams(window.location.search).get("from"));
-    if (from === "/production") { setBackHref(from); setBackLabel("Production"); }
-    else if (from) { setBackHref(from); setBackLabel("Back to product"); }
-    else if (planId) { setBackHref(`/production/${planId}`); }
+    const back = resolveBackHref(new URLSearchParams(window.location.search).get("from"));
+    if (back) { setBackHref(back.href); setBackLabel(back.label); }
+    else if (planId) { setBackHref(`/production/${encodeURIComponent(planId)}`); }
   }, [planId]);
   // Hydrate the textarea once per plan so typing isn't clobbered by reactive
   // re-renders from Dexie's live query.
