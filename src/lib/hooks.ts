@@ -1219,6 +1219,20 @@ export async function saveMould(mould: Omit<Mould, "id"> & { id?: string }) {
   return db.moulds.add({ ...mould, createdAt: now, updatedAt: now } as Mould);
 }
 
+/** Merge just the given fields into an existing mould. `saveMould` has no
+ *  cascade to preserve, so this is the plain partial write — it exists so
+ *  concurrently autosaving fields don't clobber each other via a stale full
+ *  snapshot. */
+export async function updateMouldFields(
+  id: string,
+  changes: Partial<Omit<Mould, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.moulds.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function deleteMould(id: string) {
   await db.moulds.delete(id);
 }
@@ -2855,6 +2869,17 @@ export async function saveDecorationMaterial(obj: Omit<DecorationMaterial, "id">
   return await db.decorationMaterials.add({ ...obj, createdAt: now, updatedAt: now } as DecorationMaterial) as string;
 }
 
+/** Merge just the given fields into an existing decoration material. */
+export async function updateDecorationMaterialFields(
+  id: string,
+  changes: Partial<Omit<DecorationMaterial, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.decorationMaterials.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function deleteDecorationMaterial(id: string): Promise<void> {
   await db.decorationMaterials.delete(id);
 }
@@ -3023,6 +3048,17 @@ export async function saveShellDesign(obj: Omit<ShellDesign, "id"> & { id?: stri
     return obj.id;
   }
   return await db.shellDesigns.add({ ...obj, createdAt: now, updatedAt: now } as ShellDesign) as string;
+}
+
+/** Merge just the given fields into an existing shell design. */
+export async function updateShellDesignFields(
+  id: string,
+  changes: Partial<Omit<ShellDesign, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.shellDesigns.update(id, { ...changes, updatedAt: new Date() });
+  });
 }
 
 export async function deleteShellDesign(id: string): Promise<void> {

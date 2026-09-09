@@ -59,10 +59,11 @@ async function createMould(page: import("@playwright/test").Page, name: string) 
   await page.getByRole("button", { name: "Create Mould" }).click();
   await expect(page).toHaveURL(/\/moulds\/.+/);
 
-  // Lands in edit mode (?new=1) — fill cavity weight and count
-  await page.getByPlaceholder("e.g. 12.5").fill("10");
-  await page.getByPlaceholder("e.g. 24").fill("15");
-  await page.getByRole("button", { name: "Save" }).click();
+  // The mould detail page autosaves — each field commits on blur.
+  await page.getByLabel("Cavity weight").fill("10");
+  await page.getByLabel("Cavity weight").blur();
+  await page.getByLabel("Number of cavities").fill("15");
+  await page.getByLabel("Number of cavities").blur();
 }
 
 test.describe("Production — leftover filling", () => {

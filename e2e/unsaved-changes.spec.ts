@@ -155,3 +155,68 @@ test.describe("Unsaved changes — Product categories (autosave, no guard expect
     await expect(page).toHaveURL(/\/products/);
   });
 });
+
+// The last three pages to move off Edit → Save/Cancel. With those gone, no
+// pantry detail page holds unsaved state, so none of them can warn.
+
+test.describe("Unsaved changes — Moulds (autosave, no guard expected)", () => {
+  test("never warns when navigating away, since every field autosaves", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/moulds");
+    await page.getByRole("button", { name: "Add mould" }).click();
+    await page.getByPlaceholder("Mould name *").fill("No Guard Mould");
+    await page.getByRole("button", { name: "Create Mould" }).click();
+    await expect(page).toHaveURL(/\/moulds\/.+/);
+
+    await page.getByLabel("Notes", { exact: true }).fill("Changed but never explicitly saved");
+
+    let dialogSeen = false;
+    page.on("dialog", () => { dialogSeen = true; });
+
+    await page.getByRole("link", { name: "Moulds" }).first().click();
+
+    expect(dialogSeen).toBe(false);
+    await expect(page).toHaveURL(/\/moulds\/?$/);
+  });
+});
+
+test.describe("Unsaved changes — Decoration (autosave, no guard expected)", () => {
+  test("never warns when navigating away from a material", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/pantry/decoration");
+    await page.getByRole("button", { name: /Add decoration material/i }).click();
+    await page.getByPlaceholder(/Material name/).fill("No Guard Material");
+    await page.getByRole("button", { name: "Create Material" }).click();
+    await expect(page).toHaveURL(/\/pantry\/decoration\/.+/);
+
+    await page.getByLabel("Notes", { exact: true }).fill("Changed but never explicitly saved");
+
+    let dialogSeen = false;
+    page.on("dialog", () => { dialogSeen = true; });
+
+    await page.getByRole("link", { name: "Decoration materials" }).first().click();
+
+    expect(dialogSeen).toBe(false);
+    await expect(page).toHaveURL("/pantry/decoration/");
+  });
+
+  test("never warns when navigating away from a shell design", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/pantry/decoration");
+    await page.getByRole("button", { name: "Designs" }).click();
+    await page.getByRole("button", { name: /Add shell design/i }).click();
+    await page.getByPlaceholder(/Design name/).fill("No Guard Design");
+    await page.getByRole("button", { name: "Create Design" }).click();
+    await expect(page).toHaveURL(/\/pantry\/decoration\/designs\/.+/);
+
+    await page.getByLabel("Production step").selectOption("cap");
+
+    let dialogSeen = false;
+    page.on("dialog", () => { dialogSeen = true; });
+
+    await page.getByRole("link", { name: "Decoration" }).first().click();
+
+    expect(dialogSeen).toBe(false);
+    await expect(page).toHaveURL("/pantry/decoration/");
+  });
+});

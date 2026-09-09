@@ -165,3 +165,47 @@ test("sweep: category detail pages put Used in beside the editable panels", asyn
 
   expect(real(errors)).toEqual([]);
 });
+
+test("sweep: moulds and decoration detail pages render clean", async ({ page }) => {
+  test.setTimeout(150000);
+  const errors = collectErrors(page);
+
+  await page.goto("/moulds");
+  await page.getByRole("button", { name: "Add mould" }).click();
+  await page.getByPlaceholder("Mould name *").fill("Sweep Mould");
+  await page.getByRole("button", { name: "Create Mould" }).click();
+  await expect(page).toHaveURL(/\/moulds\/.+/);
+  await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Derived" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Used in" })).toBeVisible();
+
+  await page.goto("/pantry/decoration");
+  await page.getByRole("button", { name: /Add decoration material/i }).click();
+  await page.getByPlaceholder(/Material name/).fill("Sweep Material");
+  await page.getByRole("button", { name: "Create Material" }).click();
+  await expect(page).toHaveURL(/\/pantry\/decoration\/.+/);
+  await expect(page.getByRole("heading", { name: "Stock" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Used in" })).toBeVisible();
+
+  await page.goto("/pantry/decoration");
+  await page.getByRole("button", { name: "Designs" }).click();
+  await page.getByRole("button", { name: /Add shell design/i }).click();
+  await page.getByPlaceholder(/Design name/).fill("Sweep Design");
+  await page.getByRole("button", { name: "Create Design" }).click();
+  await expect(page).toHaveURL(/\/pantry\/decoration\/designs\/.+/);
+  await expect(page.getByRole("heading", { name: "Production step" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Used in" })).toBeVisible();
+
+  expect(real(errors)).toEqual([]);
+});
+
+test("sweep: no pantry detail page still hides its fields behind a pencil", async ({ page }) => {
+  test.setTimeout(90000);
+  // The whole point of this pass: every pantry detail page is directly
+  // editable. A pencil reappearing anywhere means a page regressed.
+  for (const path of ["/fillings", "/ingredients", "/products", "/packaging", "/collections", "/moulds"]) {
+    await page.goto(path);
+    await expect(page.getByLabel(/^Edit /)).toHaveCount(0);
+  }
+});
