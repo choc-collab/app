@@ -29,18 +29,25 @@ export function usePersistedFilters<T extends Record<string, unknown>>(
 ): [T, <K extends keyof T>(field: K, value: T[K]) => void] {
   const storageKey = `filters:${key}`;
   const hydrated = useRef(false);
+  // Guards against a real race: if the user (or, in tests, Playwright) interacts
+  // with a filter control in the brief window before the restore effect below has
+  // run, that interaction must win — restoring stale sessionStorage afterward would
+  // silently clobber it back to whatever was persisted on a *previous* visit.
+  const interacted = useRef(false);
 
   const [state, setState] = useState<T>(defaults);
 
   // Restore from sessionStorage after hydration (runs once on mount)
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setState((prev) => ({ ...prev, ...parsed }));
-      }
-    } catch {}
+    if (!interacted.current) {
+      try {
+        const raw = sessionStorage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setState((prev) => ({ ...prev, ...parsed }));
+        }
+      } catch {}
+    }
     hydrated.current = true;
   }, [storageKey]);
 
@@ -53,6 +60,7 @@ export function usePersistedFilters<T extends Record<string, unknown>>(
   }, [storageKey, state]);
 
   const setFilter = useCallback(<K extends keyof T>(field: K, value: T[K]) => {
+    interacted.current = true;
     setState((prev) => ({ ...prev, [field]: value }));
   }, []);
 

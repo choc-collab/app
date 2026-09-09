@@ -207,7 +207,7 @@ Three layered safeguards work together so neither a browser eviction, a misclick
 **E2E test patterns (Playwright):**
 - Tests run with `workers: 1` (sequential) because Dexie Cloud `@id` init can be slow in fresh browser contexts.
 - After `router.push('/entity/{id}?new=1')`, `useEntity(id)` may take up to ~30s to resolve in slower positions in the test run. Use `fill()` or `click()` directly (which auto-wait with 30s action timeout) rather than `expect().toBeVisible()` (which uses the 15s `expect.timeout`). For tests that must wait >15s, use `test.setTimeout(60000)` or pass `{ timeout: 30000 }` explicitly.
-- **Don't navigate away from the detail page and come back** via `page.goto` + link click — this can cause `useEntity(id)` to fail permanently in slower contexts. Instead: stay on the page (use the "Done" button to exit edit mode, then interact), OR navigate back to the list and verify via list (which uses `toArray()`, always fast).
+- **Don't navigate away from the detail page and come back** via `page.goto` + link click — this can cause `useEntity(id)` to fail permanently in slower contexts. Instead: stay on the page (detail pages autosave, so there is no mode to leave — just interact), OR navigate back to the list and verify via list (which uses `toArray()`, always fast).
 - Each test gets a fresh browser context (fresh IndexedDB). The `fixtures.ts` prevents CSV seed data from loading.
 
 **What counts as a pure function:** anything in `lib/` or `types/` that takes plain arguments and returns a value with no side effects (no IndexedDB, no React, no `window`). Examples: `costPerGram`, `colorToCSS`, `calculateFillingAmounts`, `consolidateSharedFillings`, `scheduleColorSteps`, `generateBatchSummary`, `parseCSV`, `enrichBreakdownLabels`, `formatCost`, `costDelta`, `groupSnapshotsByEra`, `validateCategoryRange`, `categoryAllowsZeroShell`, `categoryAllowsFullShell`, `clampShellPercentToCategory`, `formatCategoryRange`, `remainingShelfLifeDays`, `defrostedSellBy`, `clampFreezeQty`, `shelfLifeBucket`.
@@ -277,27 +277,63 @@ All pantry list and detail pages are built from shared primitives in `src/compon
 **Canonical reference**: `src/app/pantry/decoration/page.tsx` — copy this file when adding a new pantry list page.
 
 ### Detail page pattern (use every time you add a pantry detail page)
-All detail pages follow the same read/edit structure. Do **not** leave fields permanently in edit mode.
+Detail pages are **always editable and autosave**. There is no pencil, no edit
+mode, no Save button, and no `useNavigationGuard` — a record already exists by
+the time you land on its page, so there is nothing to discard. Do **not**
+reintroduce a read/edit split.
 
 ```
-1. Back link                         ← ArrowLeft, links to list page
-2. Name row (always visible)
-     <InlineNameEditor … />          pencil edits name only; saves immediately on blur
-     Pencil button (top-right)       enters full edit mode for all other fields
-3. Stock status panel (if entity has stock) — always directly below the name row,
-     <StockStatusPanel … />          hidden only while editing (never buried at bottom)
-4. Edit form  (shown when editing)
-     Fields for all non-name properties
-     Save / Cancel buttons
-     Opens automatically on ?new=1; strips param after save/cancel via router.replace
-5. Read-only view  (shown when !editing)
-     Key-value card: <div className="rounded-lg border border-border bg-card divide-y divide-border">
-     Notes (plain text paragraph if non-empty)
-6. Delete section at very bottom (only in read mode)
-     Confirmation panel with consequences + "Yes, delete" + Cancel
-     router.replace to list after deletion
+1. Back link                         ← ArrowLeft, named for the list ("Packaging", not "Back")
+2. Header (above the grid)
+     <InlineNameEditor … />          saves on blur
+     chip(s)                         kind / category / Archived badge
+     one subtitle line               at-a-glance facts, " · " separated
+     one promoted action (optional)  right-aligned btn-primary
+3. Tab strip                         only when there is something to tab between
+4. Two-column grid
+     grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start
+     main column   — what you edit (cards, 16px apart)
+     sidebar       — what the app tells you; lg:sticky lg:top-4
+                     <SidebarCard title="Stock">      StockStatusPanel, if the entity has stock
+                     <SidebarCard title="Properties"> PropertyRow + PROPERTY_INPUT_CLASS
+                     <SidebarCard title="Derived" tinted>  DerivedRow
+                     <SidebarCard title="Used in">    <UsedInPanel hideHeading />
+     Data-heavy tabs (tables, charts) go full-width with no sidebar instead.
+5. Destructive row at the bottom of the main column
+     Duplicate → Unarchive/Archive → Delete, as quiet text links
+     Each expands its impact panel in place; two-step inline confirm, never a modal
 ```
-Escape key should cancel edit mode (or dismiss the delete confirmation).
+
+**Commit points** — selects and toggles on change; text and number inputs on
+blur; free-text notes debounced ~600 ms and flushed on blur; structured lists
+per row commit. Local draft state is keyed by record id (`key={record.id}`) so
+it resets on navigation but survives the re-render each autosave triggers.
+
+**Writes go through `updateXFields(id, changes, description)`**, never
+`saveX(wholeObject)` — two fields autosaving from stale snapshots would clobber
+each other. Add one per entity in `hooks.ts`. Where `saveX` carries a cascade
+(`saveIngredient` propagates allergens and records price history;
+`saveProduct` writes cost snapshots) the partial helper **must reproduce it**.
+The `description` names the field in the failure toast.
+
+**Loading vs. not-found** — `useLiveQuery` returns `undefined` both while
+pending and for a missing row, so run a one-shot `db.<table>.get(id)` alongside
+it and resolve `"loading" | "found" | "not-found"`. Render `<DetailSkeleton>`
+and `<DetailNotFound>` from `@/components/detail-states`; never a bare
+"Loading…".
+
+**The exceptions, and why** — two groups keep an explicit commit, both because a
+half-edited value is read downstream before the user finishes:
+- *Product → Configuration* (category, mould, shell ingredient, shell %) keeps a
+  scoped **Save configuration** button; some invalid combinations have no valid
+  single-field exit.
+- *Ingredient → Purchase pricing* commits the whole group when focus leaves the
+  card, so a partial edit can't bank a price that never existed.
+- *Product category → default shell %* is refused inline when outside min–max,
+  keeping the typed value in draft. Min and max still write freely — moving a
+  range has no valid single-field order otherwise.
+
+Escape dismisses the topmost inline confirmation.
 
 ## Design Principles
 The full design system — palette, accent system, typography, geometry, focus, side-nav, contribution rules — lives in [`DESIGN.md`](DESIGN.md). Read it before making UI changes. Binding rules you need on hand:
@@ -766,7 +802,7 @@ src/
       page.tsx              — Pantry section home (cards: Products, Fillings, Ingredients, Moulds, Packaging, Collections, Decoration)
       decoration/
         page.tsx            — decoration tabbed page (3 tabs: Materials, Categories, Designs)
-        [id]/page.tsx       — decoration material detail (read/edit mode, InlineNameEditor, stock panel at top, delete)
+        [id]/page.tsx       — decoration material detail (autosaving two-column layout, InlineNameEditor, Stock/Properties/Used-in sidebar, delete)
         categories/
           [id]/page.tsx     — decoration category detail (InlineNameEditor, edit slug, usage panel, archive/delete)
         designs/

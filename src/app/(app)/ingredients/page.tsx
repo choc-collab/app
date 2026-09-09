@@ -3,16 +3,29 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { useIngredients, saveIngredient, setIngredientLowStock, useIngredientCategories, useIngredientCategoryUsageCounts, saveIngredientCategory, useIngredientCategoryNames } from "@/lib/hooks";
-import { ALLERGEN_LIST, DIET_LIST, costPerGram, allergenLabel, type Ingredient } from "@/types";
-import { Plus, Search, ChevronRight, ChevronDown, SlidersHorizontal, X } from "lucide-react";
-import Link from "next/link";
-import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, MultiSelectDropdown, LowStockFlagButton, StockBadge, GroupStockBadge, ViewDensityToggle } from "@/components/pantry";
+import { useIngredients, saveIngredient, setIngredientLowStock, useIngredientCategories, useIngredientCategoryUsageCounts, saveIngredientCategory, useIngredientCategoryNames, useCurrencySymbol } from "@/lib/hooks";
+import { costPerGram, allergenLabel, type Ingredient } from "@/types";
+import { Plus, Search, SlidersHorizontal, X } from "lucide-react";
+import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, MultiSelectDropdown, LowStockFlagButton, StockBadge, GroupHeader, PantryTableHeader, PantryTableGroupHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
-import { usePersistedDensity } from "@/lib/use-persisted-density";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 
-const VALID_TAGS = new Set<string>([...ALLERGEN_LIST, ...DIET_LIST]);
+const INGREDIENTS_GRID = "minmax(200px,1.6fr) 100px minmax(120px,1fr) 120px 90px 90px 20px";
+const INGREDIENTS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Ingredient" },
+  { key: "stock", label: "Stock" },
+  { key: "manufacturer", label: "Manufacturer" },
+  { key: "composition", label: "Composition" },
+  { key: "cost", label: "Cost/g", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
+
+const INGREDIENT_CATEGORIES_GRID = "minmax(200px,1.6fr) 110px 110px 20px";
+const INGREDIENT_CATEGORIES_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Category" },
+  { key: "ingredients", label: "Ingredients", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 function hasComposition(ing: { cacaoFat: number; sugar: number; milkFat: number; water: number; solids: number; otherFats: number; alcohol?: number }): boolean {
   return (ing.cacaoFat + ing.sugar + ing.milkFat + ing.water + ing.solids + ing.otherFats + (ing.alcohol ?? 0)) > 0;
@@ -107,14 +120,14 @@ function IngredientsTab() {
     filterExcludeAllergens: [] as string[],
     filterAllergenData: "all" as "all" | "none",
     showArchived: false,
+    collapsedCategories: [] as string[],
   });
   const ingredients = useIngredients(f.showArchived);
   const categoryNames = useIngredientCategoryNames();
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
-  const [density, setDensity] = usePersistedDensity("ingredients");
-  const isCompact = density === "compact";
+  const collapsedCategories = useMemo(() => new Set(f.collapsedCategories), [f.collapsedCategories]);
+  const currencySymbol = useCurrencySymbol();
 
   useNShortcut(() => setShowAdd(true), showAdd);
 
@@ -191,11 +204,9 @@ function IngredientsTab() {
   }, [filtered, CATEGORY_ORDER]);
 
   function toggleCategory(cat: string) {
-    setCollapsedCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat); else next.add(cat);
-      return next;
-    });
+    const next = new Set(collapsedCategories);
+    if (next.has(cat)) next.delete(cat); else next.add(cat);
+    setF("collapsedCategories", Array.from(next));
   }
 
   function toggleFilterCategory(cat: string) {
@@ -474,110 +485,86 @@ function IngredientsTab() {
             : "No ingredients match your filters."}
         </p>
       ) : (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <ViewDensityToggle value={density} onChange={setDensity} />
-          </div>
+        <div className="space-y-3">
           <div className="flex justify-end gap-3">
-            <button onClick={() => setCollapsedCategories(new Set(grouped.map((g) => g.category)))} className="text-xs text-muted-foreground">Collapse all</button>
-            <button onClick={() => setCollapsedCategories(new Set())} className="text-xs text-muted-foreground">Expand all</button>
+            <button onClick={() => setF("collapsedCategories", grouped.map((g) => g.category))} className="text-xs text-muted-foreground">Collapse all</button>
+            <button onClick={() => setF("collapsedCategories", [])} className="text-xs text-muted-foreground">Expand all</button>
           </div>
-          {grouped.map(({ category, items }) => {
-            const isCollapsed = !f.search && activeFilterCount === 0 && collapsedCategories.has(category);
-            return (
-              <div key={category}>
-                <button
-                  onClick={() => toggleCategory(category)}
-                  aria-expanded={!isCollapsed}
-                  className="flex items-center gap-2 w-full text-left mb-2"
-                >
-                  <ChevronDown aria-hidden="true" className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
-                  <h2 className="text-sm font-semibold text-primary">{category}</h2>
-                  <span className="text-xs text-muted-foreground">({items.length})</span>
-                  <GroupStockBadge
-                    outCount={items.filter((i) => i.outOfStock).length}
-                    lowCount={items.filter((i) => i.lowStock && !i.outOfStock).length}
-                  />
-                </button>
-                {!isCollapsed && (
-                  <ul className="space-y-2 ml-6">
-                    {items.map((ing) => {
-                      const stockStatus = getStockStatus(ing);
-                      return (
-                        <li
-                          key={ing.id}
-                          className={`rounded-lg border bg-card ${stockStatus === "out-of-stock" ? "border-status-alert-edge" : stockStatus === "low-stock" ? "border-status-warn-edge" : ing.archived ? "border-border/50 opacity-60" : "border-border"}`}
-                          style={{ contentVisibility: "auto", containIntrinsicSize: isCompact ? "0 40px" : "0 64px" }}
-                        >
-                          <div className="flex items-center min-w-0">
-                            <Link
-                              href={`/ingredients/${encodeURIComponent(ing.id ?? '')}`}
-                              className={`flex items-center gap-3 ${isCompact ? "px-3 py-1.5" : "p-3"} min-w-0 flex-1`}
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-baseline gap-1.5 flex-wrap">
-                                  <h3 className="font-medium text-sm">
-                                    {ing.name}
-                                    {ing.archived && (
-                                      <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>
-                                    )}
-                                  </h3>
-                                  {!isCompact && ing.commercialName && (
-                                    <span className="text-xs text-muted-foreground italic truncate">{ing.commercialName}</span>
-                                  )}
-                                  {!ing.archived && <StockBadge status={stockStatus} />}
-                                </div>
-                                {!isCompact && (
-                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                    {ing.manufacturer && (
-                                      <span className="text-xs text-muted-foreground">{ing.manufacturer}</span>
-                                    )}
-                                    {ing.manufacturer && (hasComposition(ing) || ing.updatedAt) && (
-                                      <span className="text-muted-foreground/40 text-xs">·</span>
-                                    )}
-                                    {hasComposition(ing) ? (
-                                      <span className="text-[10px] font-medium text-success bg-success-muted px-1.5 py-0.5 rounded-full">composition ✓</span>
-                                    ) : (
-                                      <span className="text-[10px] text-muted-foreground/60">no composition</span>
-                                    )}
-                                    {hasPricing(ing) ? null : (
-                                      <span className="text-[10px] text-status-warn bg-status-warn-bg px-1.5 py-0.5 rounded-full">no pricing</span>
-                                    )}
-                                    {ing.updatedAt && (
-                                      <>
-                                        <span className="text-muted-foreground/40 text-xs">·</span>
-                                        <span className="text-[10px] text-muted-foreground">{formatDate(ing.updatedAt)}</span>
-                                      </>
-                                    )}
-                                  </div>
-                                )}
-                                {!isCompact && ing.allergens.filter((a) => VALID_TAGS.has(a)).length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {ing.allergens.filter((a) => VALID_TAGS.has(a)).map((a) => (
-                                      <span key={a} className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px]">
-                                        {allergenLabel(a)}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                              <ChevronRight aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0" />
-                            </Link>
-                            <LowStockFlagButton
-                              flagged={ing.lowStock}
-                              itemName={ing.name}
-                              onFlag={() => setIngredientLowStock(ing.id!, true)}
-                              onUnflag={() => setIngredientLowStock(ing.id!, false)}
-                            />
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+          <div role="table" aria-label="Ingredients" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+            <PantryTableHeader columns={INGREDIENTS_COLUMNS} gridTemplateColumns={INGREDIENTS_GRID} hasAction />
+            {grouped.map(({ category, items }) => {
+              const isCollapsed = !f.search && activeFilterCount === 0 && collapsedCategories.has(category);
+              return (
+                <div key={category}>
+                  <PantryTableGroupHeader>
+                    <GroupHeader
+                      label={category}
+                      count={items.length}
+                      isCollapsed={isCollapsed}
+                      onToggle={() => toggleCategory(category)}
+                      outCount={items.filter((i) => i.outOfStock).length}
+                      lowCount={items.filter((i) => i.lowStock && !i.outOfStock).length}
+                    />
+                  </PantryTableGroupHeader>
+                  {!isCollapsed && items.map((ing) => {
+                    const stockStatus = getStockStatus(ing);
+                    const cost = costPerGram(ing);
+                    return (
+                      <PantryTableRow
+                        key={ing.id}
+                        href={`/ingredients/${encodeURIComponent(ing.id ?? '')}`}
+                        archived={ing.archived}
+                        outOfStock={stockStatus === "out-of-stock"}
+                        lowStock={stockStatus === "low-stock"}
+                        gridTemplateColumns={INGREDIENTS_GRID}
+                        action={
+                          <LowStockFlagButton
+                            flagged={ing.lowStock}
+                            itemName={ing.name}
+                            onFlag={() => setIngredientLowStock(ing.id!, true)}
+                            onUnflag={() => setIngredientLowStock(ing.id!, false)}
+                          />
+                        }
+                      >
+                        <div className="min-w-0">
+                          <h3 className="font-medium text-sm truncate">
+                            {ing.name}
+                            {ing.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+                          </h3>
+                          {ing.commercialName && (
+                            <p className="text-[11px] text-muted-foreground italic truncate">{ing.commercialName}</p>
+                          )}
+                        </div>
+                        <div>
+                          {stockStatus === "in-stock" ? (
+                            <span className="text-xs text-muted-foreground">In stock</span>
+                          ) : (
+                            <StockBadge status={stockStatus} />
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground truncate">{ing.manufacturer || "—"}</span>
+                        <div>
+                          {hasComposition(ing) ? (
+                            <span className="text-[10px] font-medium text-success bg-success-muted px-1.5 py-0.5 rounded-full">composition ✓</span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground/60">no composition</span>
+                          )}
+                        </div>
+                        <span className="text-xs tabular-nums text-right">
+                          {cost !== null ? (
+                            <span className="text-muted-foreground">{currencySymbol}{cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}/g</span>
+                          ) : (
+                            <span className="text-[10px] text-status-warn bg-status-warn-bg px-1.5 py-0.5 rounded-full">no pricing</span>
+                          )}
+                        </span>
+                        <span className="text-xs tabular-nums text-muted-foreground text-right">{ing.updatedAt ? formatDate(ing.updatedAt) : "—"}</span>
+                      </PantryTableRow>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -679,30 +666,27 @@ function IngredientCategoriesTab() {
       )}
 
       {filtered.length > 0 && (
-        <ul className="space-y-2">
+        <div role="table" aria-label="Ingredient categories" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+          <PantryTableHeader columns={INGREDIENT_CATEGORIES_COLUMNS} gridTemplateColumns={INGREDIENT_CATEGORIES_GRID} />
           {filtered.map((c) => {
             const usage = usageCounts.get(c.name) ?? 0;
             return (
-              <ListItemCard
+              <PantryTableRow
                 key={c.id}
                 href={`/ingredients/categories/${encodeURIComponent(c.id!)}`}
                 archived={c.archived}
+                gridTemplateColumns={INGREDIENT_CATEGORIES_GRID}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm truncate">{c.name}</span>
-                    {c.archived && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {usage === 0 ? "Not in use" : `${usage} ingredient${usage === 1 ? "" : "s"}`}
-                  </div>
-                </div>
-              </ListItemCard>
+                <h3 className="font-medium text-sm truncate">
+                  {c.name}
+                  {c.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+                </h3>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{usage}</span>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{c.updatedAt ? formatDate(c.updatedAt) : "—"}</span>
+              </PantryTableRow>
             );
           })}
-        </ul>
+        </div>
       )}
     </div>
   );

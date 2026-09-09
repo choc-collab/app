@@ -286,6 +286,7 @@ export interface Filling {
   rootId?: string;        // undefined for unforked fillings; set to v1.id once any fork is made
   version?: number;       // 1-indexed; undefined = legacy unforked filling (treat as v1)
   createdAt?: Date;       // when this version was created
+  updatedAt?: Date;       // when this version's fields were last edited (distinct from createdAt, which only moves on fork)
   supersededAt?: Date;    // set when a newer version is forked; undefined = current version
   versionNotes?: string;  // optional notes describing what changed in this version
   archived?: boolean;     // soft-delete: hidden from lists, preserved for production history
@@ -480,6 +481,8 @@ export interface Mould {
   photo?: string; // base64 encoded image
   notes?: string;
   archived?: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 // --- Production Planning ---

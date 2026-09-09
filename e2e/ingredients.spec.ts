@@ -27,28 +27,87 @@ test.describe("Ingredients", () => {
     await expect(page.getByText("Butter")).toBeVisible();
   });
 
-  test("detail page allows editing purchase cost", async ({ page }) => {
+  test("list renders as a table with column headers", async ({ page }) => {
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByRole("textbox", { name: "Ingredient name" }).fill("Cocoa Butter");
+    await page.getByRole("button", { name: "Create Ingredient" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+
+    await page.goto("/ingredients");
+    const table = page.getByRole("table", { name: "Ingredients" });
+    await expect(table).toBeVisible();
+    for (const header of ["Ingredient", "Stock", "Manufacturer", "Composition", "Cost/g", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Cocoa Butter")).toBeVisible();
+    await expect(page.getByText("no composition")).toBeVisible();
+    await expect(page.getByText("no pricing")).toBeVisible();
+
+    await page.getByText("Cocoa Butter").click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+  });
+
+  test("detail page autosaves purchase pricing with no Save button", async ({ page }) => {
     test.setTimeout(60000);
-    // Create ingredient — lands on edit form (?new=1 = editing mode)
     await page.goto("/ingredients");
     await page.getByRole("button", { name: "Add ingredient" }).click();
     await page.getByRole("textbox", { name: "Ingredient name" }).fill("Dark Chocolate");
     await page.getByRole("button", { name: "Create Ingredient" }).click();
     await expect(page).toHaveURL(/\/ingredients\/.+/);
 
-    // Switch to Pricing tab — the cost field is in the pricing section
+    await expect(page.getByRole("button", { name: "Update" })).toHaveCount(0);
+
     await page.getByRole("button", { name: "Pricing" }).click();
+    await page.getByPlaceholder("0.00").fill("12.50");
+    // Pricing commits as a group when focus leaves the card.
+    await page.getByRole("heading", { name: "Purchase pricing" }).click();
 
-    // Fill in purchase cost (fill() auto-waits for the element up to the test timeout)
-    const costInput = page.getByPlaceholder("0.00");
-    await costInput.fill("12.50");
-    await page.getByRole("button", { name: "Update" }).click();
-
-    // Now in view mode on Pricing tab — verify the saved cost is visible (symbol depends on currency setting)
-    await expect(page.getByText(/12\.5/)).toBeVisible();
+    await page.reload();
+    await page.getByRole("button", { name: "Pricing" }).click();
+    await expect(page.getByPlaceholder("0.00")).toHaveValue("12.5");
   });
 
-  test("Shell tab appears live when category is set to Chocolate before save", async ({ page }) => {
+  test("autosaves details, composition and allergens with no Save button", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByRole("textbox", { name: "Ingredient name" }).fill("Hazelnut Praline");
+    await page.getByRole("button", { name: "Create Ingredient" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+
+    // Sidebar properties autosave on blur.
+    await page.getByLabel("Manufacturer").fill("Valrhona");
+    await page.getByLabel("Manufacturer").blur();
+    await page.getByLabel("Vendor").fill("Keylink");
+    await page.getByLabel("Vendor").blur();
+    await page.getByLabel("Notes", { exact: true }).fill("Roast before grinding");
+    await page.getByLabel("Notes", { exact: true }).blur();
+
+    // Composition is advisory — a partial total still saves.
+    await page.getByRole("button", { name: "Composition" }).click();
+    await page.getByLabel("Sugar").fill("35");
+    await page.getByLabel("Sugar").blur();
+    await expect(page.getByText("35.0% accounted for")).toBeVisible();
+
+    // Allergens write the whole array on each toggle.
+    await page.getByRole("button", { name: "Allergens" }).click();
+    // .click() rather than .check(): the box is driven by the Dexie live query,
+    // so it repaints a tick after the write rather than synchronously.
+    await page.getByRole("checkbox", { name: /Hazelnut/i }).first().click();
+    await expect(page.getByRole("checkbox", { name: /Hazelnut/i }).first()).toBeChecked();
+
+    await page.reload();
+    await expect(page.getByLabel("Manufacturer")).toHaveValue("Valrhona");
+    await expect(page.getByLabel("Vendor")).toHaveValue("Keylink");
+    await expect(page.getByLabel("Notes", { exact: true })).toHaveValue("Roast before grinding");
+    await page.getByRole("button", { name: "Composition" }).click();
+    await expect(page.getByLabel("Sugar")).toHaveValue("35");
+    await page.getByRole("button", { name: "Allergens" }).click();
+    await expect(page.getByRole("checkbox", { name: /Hazelnut/i }).first()).toBeChecked();
+  });
+
+  test("Shell tab appears as soon as the category is set to Chocolate", async ({ page }) => {
     test.setTimeout(60000);
     await page.goto("/ingredients");
     await page.getByRole("button", { name: "Add ingredient" }).click();
@@ -56,28 +115,22 @@ test.describe("Ingredients", () => {
     await page.getByRole("button", { name: "Create Ingredient" }).click();
     await expect(page).toHaveURL(/\/ingredients\/.+/);
 
-    // On arrival the page is in editing mode (?new=1). No category selected, so Shell tab must not be present.
+    // No category yet, so the Shell tab must not be present.
     await expect(page.getByRole("button", { name: /^Shell$/ })).toHaveCount(0);
 
-    // Pick "Chocolate" in the in-form category dropdown — without saving.
-    const categorySelect = page.locator("select").filter({ has: page.locator("option", { hasText: "Chocolate" }) }).first();
-    await categorySelect.selectOption("Chocolate");
-
-    // The Shell tab should now appear immediately, driven by form state (not DB).
+    // The category select autosaves on change — the tab follows the record.
+    await page.getByLabel("Category").selectOption("Chocolate");
     await expect(page.getByRole("button", { name: /^Shell$/ })).toBeVisible();
 
-    // Clicking it swaps the form section to the shell controls.
     await page.getByRole("button", { name: /^Shell$/ }).click();
     await expect(page.getByText("Can be used as shell chocolate")).toBeVisible();
 
-    // Flipping category away from Chocolate hides the tab again, also without saving.
-    // (The category dropdown lives in the Details section, so step back there first.)
-    await page.getByRole("button", { name: "Details" }).click();
-    await categorySelect.selectOption("");
+    // Clearing the category hides the tab again and falls back to Details.
+    await page.getByLabel("Category").selectOption("");
     await expect(page.getByRole("button", { name: /^Shell$/ })).toHaveCount(0);
   });
 
-  test("cost per gram preview updates live and saves exactly one price-history entry", async ({ page }) => {
+  test("cost per gram updates live and banks exactly one price-history entry", async ({ page }) => {
     test.setTimeout(60000);
     await page.goto("/ingredients");
     await page.getByRole("button", { name: "Add ingredient" }).click();
@@ -87,29 +140,21 @@ test.describe("Ingredients", () => {
 
     await page.getByRole("button", { name: "Pricing" }).click();
 
-    // Enter the same values the user reported: 2500 g bag at €65. Unit=g, so
-    // `g per unit` is locked to 1 and the user cannot type 2500 into it.
-    // Qty and price inputs are identified by their placeholders (no label htmlFor).
+    // 2500 g bag at €65. Unit=g, so `g per unit` is locked to 1.
     await page.getByPlaceholder("1", { exact: true }).fill("2500");
-
-    // The `g per unit` input is locked for unit=g — readonly with value 1.
     await expect(page.locator('input[readonly][value="1"]')).toHaveCount(1);
-
     await page.getByPlaceholder("0.00").fill("65");
 
-    // Preview box should appear with the correct value — 65 / (2500 × 1) = 0.026.
-    await expect(page.getByText(/Cost per gram:/)).toBeVisible();
+    // Live preview in the card header — 65 / (2500 × 1) = 0.026.
     await expect(page.getByText(/0\.026\/g/).first()).toBeVisible();
 
-    // Save — single click, no double-submit.
-    await page.getByRole("button", { name: "Update" }).click();
+    // Leaving the card commits the whole pricing group in one write. Editing
+    // qty and price separately must NOT bank an intermediate price that never
+    // existed, so exactly one history entry is expected.
+    await page.getByRole("heading", { name: "Purchase pricing" }).click();
 
-    // Read view: cost per gram shows the same value.
-    await expect(page.getByText(/0\.026\/g/).first()).toBeVisible();
-
-    // Expand price history — exactly one entry, at 0.026.
-    await page.getByRole("button", { name: /Price history/ }).click();
-    await expect(page.locator("ul li").filter({ hasText: /0\.026\/g/ })).toHaveCount(1);
+    await expect(page.getByRole("heading", { name: "Price history" })).toBeVisible();
+    await expect(page.getByText(/0\.026\/g/)).toHaveCount(2); // header read-out + the single entry
   });
 
   test("g per unit is locked to 1 for g and 1000 for kg", async ({ page }) => {
@@ -133,6 +178,12 @@ test.describe("Ingredients", () => {
     await expect(page.locator('input[readonly]')).toHaveCount(0);
   });
 
+  test("shows a distinct not-found state for a missing ingredient", async ({ page }) => {
+    await page.goto("/ingredients/does-not-exist");
+    await expect(page.getByText(/This ingredient doesn.t exist\./)).toBeVisible();
+    await expect(page.getByText("Loading…")).toHaveCount(0);
+  });
+
   test("search filters ingredients by name", async ({ page }) => {
     for (const name of ["Glucose Syrup", "Hazelnut Paste"]) {
       await page.goto("/ingredients");
@@ -147,5 +198,81 @@ test.describe("Ingredients", () => {
     // Scope to h3 list-item headings to avoid matching any other element that may contain these names
     await expect(page.getByRole("heading", { name: "Glucose Syrup" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Hazelnut Paste" })).not.toBeVisible();
+  });
+
+  test("shell capability, coating type and tempering autosave", async ({ page }) => {
+    test.setTimeout(120000);
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByRole("textbox", { name: "Ingredient name" }).fill("Couverture 70");
+    await page.getByRole("button", { name: "Create Ingredient" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+
+    await page.getByLabel("Category").selectOption("Chocolate");
+    await page.getByRole("button", { name: /^Shell$/ }).click();
+
+    await page.getByRole("checkbox", { name: /Can be used as shell chocolate/ }).click();
+    await expect(page.getByRole("checkbox", { name: /Can be used as shell chocolate/ })).toBeChecked();
+
+    // The coating name is not a field on the ingredient — it registers a
+    // CoatingChocolateMapping, so it has to survive a reload to count.
+    await page.getByLabel("Coating type").fill("dark");
+    await page.getByLabel("Coating type").blur();
+    await expect(page.getByRole("checkbox", { name: /Hand tempering/ })).toBeEnabled();
+    await page.getByRole("checkbox", { name: /Hand tempering/ }).click();
+    await expect(page.getByRole("checkbox", { name: /Hand tempering/ })).toBeChecked();
+
+    await page.reload();
+    await page.getByRole("button", { name: /^Shell$/ }).click();
+    await expect(page.getByRole("checkbox", { name: /Can be used as shell chocolate/ })).toBeChecked();
+    await expect(page.getByLabel("Coating type")).toHaveValue("dark");
+    await expect(page.getByRole("checkbox", { name: /Hand tempering/ })).toBeChecked();
+  });
+  test("clearing brand and vendor persists as cleared", async ({ page }) => {
+    test.setTimeout(120000);
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: /Add ingredient/i }).click();
+    await page.getByPlaceholder(/Ingredient name/).fill("Clear Ingredient");
+    await page.getByRole("button", { name: "Create Ingredient" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+
+    await page.getByLabel("Brand").fill("Guanaja");
+    await page.getByLabel("Brand").blur();
+    await page.getByLabel("Vendor").fill("Keylink");
+    await page.getByLabel("Vendor").blur();
+    await page.reload();
+    await expect(page.getByLabel("Brand")).toHaveValue("Guanaja");
+    await expect(page.getByLabel("Vendor")).toHaveValue("Keylink");
+
+    await page.getByLabel("Brand").fill("");
+    await page.getByLabel("Brand").blur();
+    await page.getByLabel("Vendor").fill("");
+    await page.getByLabel("Vendor").blur();
+    await page.reload();
+    await expect(page.getByLabel("Brand")).toHaveValue("");
+    await expect(page.getByLabel("Vendor")).toHaveValue("");
+  });
+});
+
+test.describe("Ingredients — Categories", () => {
+  test("Categories tab list renders as a table and supports create", async ({ page }) => {
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    await page.getByRole("button", { name: /Add ingredient category/i }).click();
+    await page.getByPlaceholder(/Category name/).fill("Emulsifiers");
+    await page.getByRole("button", { name: "Create Category" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/categories\/.+/);
+
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    const table = page.getByRole("table", { name: "Ingredient categories" });
+    await expect(table).toBeVisible();
+    for (const header of ["Category", "Ingredients", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Emulsifiers")).toBeVisible();
+
+    await page.getByText("Emulsifiers").click();
+    await expect(page).toHaveURL(/\/ingredients\/categories\/.+/);
   });
 });

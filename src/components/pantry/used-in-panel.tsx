@@ -21,6 +21,10 @@ interface UsedInPanelProps {
   items: UsedInItem[];
   /** Message shown when there are no items */
   emptyMessage?: string;
+  /** Suppress the panel's own "Used in N …" heading. Set when the panel sits
+   *  inside a card that already carries a title, so the heading isn't printed
+   *  twice. */
+  hideHeading?: boolean;
   className?: string;
 }
 
@@ -32,7 +36,7 @@ interface UsedInPanelProps {
  *   - Filling detail       → "Used in N products" (photo/avatar variant)
  *   - Decoration detail  → "Used in N products" (photo/avatar variant)
  */
-export function UsedInPanel({ singular, plural, items, emptyMessage, className }: UsedInPanelProps) {
+export function UsedInPanel({ singular, plural, items, emptyMessage, hideHeading, className }: UsedInPanelProps) {
   const count = items.length;
   const heading =
     count === 0
@@ -41,7 +45,9 @@ export function UsedInPanel({ singular, plural, items, emptyMessage, className }
 
   return (
     <div className={className}>
-      <h2 className="text-sm font-medium text-muted-foreground mb-2">{heading}</h2>
+      {!hideHeading && (
+        <h2 className="text-sm font-medium text-muted-foreground mb-2">{heading}</h2>
+      )}
 
       {count > 0 && (
         <ul className="space-y-2">

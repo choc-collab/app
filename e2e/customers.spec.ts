@@ -67,7 +67,6 @@ async function createFilling(page: Page, name: string, ingredientName: string) {
   await page.getByRole("button", { name: ingredientName }).click();
   await page.locator("form").getByRole("spinbutton").fill("100");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
-  await page.getByRole("button", { name: "Save" }).click();
 }
 
 /** Create a minimal fillings-only production plan; returns after landing on

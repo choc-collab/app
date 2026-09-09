@@ -68,7 +68,7 @@ async function createProductWithFilling(page: import("@playwright/test").Page, p
   await expect(page).toHaveURL(/\/products\/.+/);
 
   // Assign the filling
-  await page.getByRole("button", { name: "Assign filling" }).click();
+  await page.getByRole("button", { name: "Add filling" }).click();
   await page.getByPlaceholder("Search fillings to assign...").fill(fillingName);
   await page.getByRole("button", { name: fillingName }).click();
 }

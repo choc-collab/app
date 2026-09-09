@@ -7,6 +7,7 @@ import { IosInstallBanner } from "@/components/ios-install-banner";
 import { WhatsNewBanner } from "@/components/whats-new-banner";
 import { SectionAccent } from "@/components/section-accent";
 import { PersistentStorageRequest } from "@/components/persistent-storage-request";
+import { ToastProvider } from "@/components/toast";
 
 export default function AppLayout({
   children,
@@ -14,7 +15,7 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   return (
-    <>
+    <ToastProvider>
       <Suspense>
         <SectionAccent />
       </Suspense>
@@ -36,6 +37,6 @@ export default function AppLayout({
       <SeedLoader />
       <DemoModeOverlay />
       <PersistentStorageRequest />
-    </>
+    </ToastProvider>
   );
 }

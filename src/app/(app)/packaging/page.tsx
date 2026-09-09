@@ -5,10 +5,24 @@ import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { usePackagingList, useAllPackagingOrders, savePackaging, setPackagingLowStock, useCurrencySymbol } from "@/lib/hooks";
 import { Package } from "lucide-react";
-import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, ListItemCard, LowStockFlagButton, StockBadge } from "@/components/pantry";
+import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, LowStockFlagButton, StockBadge, PantryTableHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import type { PackagingOrder } from "@/types";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
+
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
+}
+
+const PACKAGING_GRID = "minmax(200px,1.6fr) 100px 80px minmax(120px,1fr) 100px 90px 20px";
+const PACKAGING_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Packaging" },
+  { key: "stock", label: "Stock" },
+  { key: "capacity", label: "Capacity" },
+  { key: "manufacturer", label: "Manufacturer" },
+  { key: "price", label: "Price/unit", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 type StockFilter = "all" | "in-stock" | "low-stock" | "out-of-stock" | "ordered";
 
@@ -188,16 +202,18 @@ export default function PackagingPage() {
               : "No packaging matches your search."}
           </p>
         ) : (
-          <ul className="space-y-2">
+          <div role="table" aria-label="Packaging" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+            <PantryTableHeader columns={PACKAGING_COLUMNS} gridTemplateColumns={PACKAGING_GRID} hasAction />
             {filtered.map((pkg) => {
               const latestOrder = pkg.id ? latestOrderMap.get(pkg.id) : undefined;
               return (
-                <ListItemCard
+                <PantryTableRow
                   key={pkg.id}
                   href={`/packaging/${encodeURIComponent(pkg.id ?? "")}`}
                   lowStock={pkg.lowStock}
                   outOfStock={pkg.outOfStock}
                   archived={pkg.archived}
+                  gridTemplateColumns={PACKAGING_GRID}
                   action={
                     <LowStockFlagButton
                       flagged={pkg.lowStock}
@@ -207,42 +223,32 @@ export default function PackagingPage() {
                     />
                   }
                 >
-                  <div className="w-10 h-10 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground">
-                    <Package className="w-5 h-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <h3 className="font-medium text-sm truncate">{pkg.name}</h3>
-                      {pkg.archived && (
-                        <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
-                          archived
-                        </span>
-                      )}
-                      {!pkg.archived && pkg.outOfStock && <StockBadge status="out-of-stock" />}
-                      {!pkg.archived && !pkg.outOfStock && pkg.lowStock && (
-                        <StockBadge status={pkg.lowStockOrdered ? "ordered" : "low-stock"} />
-                      )}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground">
+                      <Package className="w-4 h-4" />
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                      <span className="text-xs text-muted-foreground">fits {pkg.capacity}</span>
-                      {pkg.manufacturer && (
-                        <>
-                          <span className="text-muted-foreground/40 text-xs">·</span>
-                          <span className="text-xs text-muted-foreground truncate">{pkg.manufacturer}</span>
-                        </>
-                      )}
-                      {latestOrder && (
-                        <>
-                          <span className="text-muted-foreground/40 text-xs">·</span>
-                          <span className="text-xs text-muted-foreground">{sym}{latestOrder.pricePerUnit.toFixed(2)}/unit</span>
-                        </>
-                      )}
-                    </div>
+                    <h3 className="font-medium text-sm truncate">
+                      {pkg.name}
+                      {pkg.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+                    </h3>
                   </div>
-                </ListItemCard>
+                  <div>
+                    {pkg.outOfStock ? (
+                      <StockBadge status="out-of-stock" />
+                    ) : pkg.lowStock ? (
+                      <StockBadge status={pkg.lowStockOrdered ? "ordered" : "low-stock"} />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">In stock</span>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground">fits {pkg.capacity}</span>
+                  <span className="text-xs text-muted-foreground truncate">{pkg.manufacturer || "—"}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground text-right">{latestOrder ? `${sym}${latestOrder.pricePerUnit.toFixed(2)}` : "—"}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground text-right">{pkg.updatedAt ? formatDate(pkg.updatedAt) : "—"}</span>
+                </PantryTableRow>
               );
             })}
-          </ul>
+          </div>
         )}
       </div>
     </div>

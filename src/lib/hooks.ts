@@ -15,6 +15,8 @@ import {
 } from "@/lib/saleStock";
 import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib/shopColor";
 import { ancestorFillingIds, buildChildMap, buildParentMap, reachableIngredientIds, wouldCreateCycle } from "@/lib/fillingComponents";
+import { normaliseFillSplit } from "@/lib/fillSplit";
+import { guardedWrite } from "@/lib/writeErrors";
 
 // --- Ingredients ---
 
@@ -69,6 +71,70 @@ export async function saveIngredient(ingredient: Omit<Ingredient, "id"> & { id?:
   }
 
   return savedId;
+}
+
+/** Price-bearing keys: changing any of them makes the derived cost/gram move, so
+ *  a history entry is recorded and every product costed off this ingredient gets
+ *  a fresh snapshot. Kept next to the two writers that consult it so they can't
+ *  drift apart. */
+const INGREDIENT_PRICE_KEYS = ["purchaseCost", "purchaseQty", "purchaseUnit", "gramsPerUnit"] as const;
+
+/** Merge just the given fields into an existing ingredient.
+ *
+ *  Unlike `saveIngredient` — which re-sends the whole object the caller had in
+ *  hand — this touches only the listed keys, so two fields autosaving
+ *  concurrently from stale snapshots can't clobber each other.
+ *
+ *  It is NOT a bare `db.ingredients.update()`: `saveIngredient` carries two
+ *  cascades that the rest of the app depends on, and both are reproduced here.
+ *  Skipping them would silently stop allergens propagating to fillings and stop
+ *  price history and product cost snapshots being written. The only difference
+ *  is that each cascade is gated on the relevant key actually being part of
+ *  `changes`, rather than run on every write. */
+export async function updateIngredientFields(
+  id: string,
+  changes: Partial<Omit<Ingredient, "id">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, () => writeIngredientFields(id, changes));
+}
+
+/** The actual write plus its cascades, separated so `updateIngredientFields`
+ *  can hand the whole thing to `guardedWrite` as one retryable unit. */
+async function writeIngredientFields(
+  id: string,
+  changes: Partial<Omit<Ingredient, "id">>,
+): Promise<void> {
+  const existing = await db.ingredients.get(id);
+  if (!existing) return;
+
+  const priceChanged = INGREDIENT_PRICE_KEYS.some(
+    (key) => key in changes && changes[key] !== existing[key],
+  );
+
+  await db.ingredients.update(id, { ...changes, updatedAt: new Date() });
+
+  // Allergens cascade up to every direct host filling, and on to every filling
+  // that transitively nests one of those hosts.
+  if ("allergens" in changes) {
+    const affected = await db.fillingIngredients.where("ingredientId").equals(id).toArray();
+    const fillingIds = [...new Set(affected.map((li) => li.fillingId))];
+    await Promise.all(fillingIds.map((fid) => cascadeAllergensFromFilling(fid)));
+  }
+
+  if (priceChanged) {
+    // Re-read rather than merging by hand — the price entry snapshots the whole
+    // record, and a hand-merged object would miss anything written concurrently.
+    const merged = await db.ingredients.get(id);
+    if (merged) {
+      await saveIngredientPriceEntry(id, merged);
+      await computeSnapshotsForAffectedProducts(
+        id,
+        "ingredient_price",
+        `${merged.name} price updated`,
+      );
+    }
+  }
 }
 
 export async function deleteIngredient(id: string) {
@@ -169,6 +235,57 @@ export async function saveProduct(product: Omit<Product, "id" | "createdAt" | "u
   return db.products.add({ ...product, createdAt: now, updatedAt: now } as Product);
 }
 
+/** Merge just the given fields into an existing product.
+ *
+ *  Same contract as `updateIngredientFields`: a partial write that still runs
+ *  the cascade `saveProduct` would have run. Three keys move a product's cost —
+ *  the mould (cavity weight), the shell ingredient, and the shell percentage —
+ *  and each writes a cost snapshot. The mould-vs-shell precedence mirrors
+ *  `saveProduct` exactly: a mould change wins, so a single write that touches
+ *  both records one snapshot, not two. */
+export async function updateProductFields(
+  id: string,
+  changes: Partial<Omit<Product, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, () => writeProductFields(id, changes));
+}
+
+/** The write plus its cost-snapshot cascade, as one retryable unit. */
+async function writeProductFields(
+  id: string,
+  changes: Partial<Omit<Product, "id" | "createdAt">>,
+): Promise<void> {
+  const existing = await db.products.get(id);
+  if (!existing) return;
+
+  await db.products.update(id, { ...changes, updatedAt: new Date() });
+
+  if ("defaultMouldId" in changes && changes.defaultMouldId !== existing.defaultMouldId) {
+    await computeAndSaveProductCostSnapshot({
+      productId: id,
+      triggerType: "mould_change",
+      triggerDetail: "Default mould changed",
+    });
+    return;
+  }
+
+  const shellIngredientChanged =
+    "shellIngredientId" in changes && changes.shellIngredientId !== existing.shellIngredientId;
+  const shellPercentageChanged =
+    "shellPercentage" in changes && changes.shellPercentage !== existing.shellPercentage;
+
+  if (shellIngredientChanged || shellPercentageChanged) {
+    await computeAndSaveProductCostSnapshot({
+      productId: id,
+      triggerType: "shell_change",
+      triggerDetail: shellIngredientChanged
+        ? "Shell chocolate changed"
+        : `Shell percentage changed to ${changes.shellPercentage ?? 37}%`,
+    });
+  }
+}
+
 export async function deleteProduct(id: string) {
   await db.transaction("rw", [db.products, db.productFillings], async () => {
     await db.productFillings.where("productId").equals(id).delete();
@@ -259,11 +376,29 @@ export function useFilling(id: string | undefined) {
 }
 
 export async function saveFilling(filling: Omit<Filling, "id"> & { id?: string }) {
+  const now = new Date();
   if (filling.id) {
-    await db.fillings.update(filling.id, filling);
+    await db.fillings.update(filling.id, { ...filling, updatedAt: now });
     return filling.id;
   }
-  return db.fillings.add(filling as Filling);
+  return db.fillings.add({ ...filling, updatedAt: now } as Filling);
+}
+
+/** Merge just the given fields into an existing filling, via Dexie's partial
+ *  `.update()` — unlike `saveFilling` (which re-sends the whole object the
+ *  caller had in hand), this only touches the listed keys. Needed once
+ *  several independently-autosaving fields on the same record (Properties,
+ *  Method, Notes) can commit concurrently: two callers each spreading a
+ *  stale full `Filling` snapshot into `.update()` would silently clobber
+ *  each other's most recent field. */
+export async function updateFillingFields(
+  id: string,
+  changes: Partial<Omit<Filling, "id">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.fillings.update(id, { ...changes, updatedAt: new Date() });
+  });
 }
 
 export async function deleteFilling(id: string) {
@@ -356,7 +491,7 @@ export async function unarchiveProduct(id: string) {
 }
 
 export async function archiveFilling(id: string) {
-  await db.fillings.update(id, { archived: true });
+  await db.fillings.update(id, { archived: true, updatedAt: new Date() });
 }
 
 export interface FillingArchiveImpact {
@@ -469,7 +604,7 @@ export async function archiveFillingWithCleanup(
 }
 
 export async function unarchiveFilling(id: string) {
-  await db.fillings.update(id, { archived: undefined });
+  await db.fillings.update(id, { archived: undefined, updatedAt: new Date() });
 }
 
 export async function hasFillingBeenProduced(fillingId: string): Promise<boolean> {
@@ -661,6 +796,7 @@ export async function forkFillingVersion(fillingId: string, versionNotes?: strin
       rootId,
       version: currentVersion + 1,
       createdAt: now,
+      updatedAt: now,
       supersededAt: undefined,
       versionNotes: versionNotes?.trim() || undefined,
       status: "testing",
@@ -809,6 +945,41 @@ export async function updateProductFillingPercentage(productFillingId: string, f
   if (rl) {
     await computeAndSaveProductCostSnapshot({ productId: rl.productId, triggerType: "manual", triggerDetail: "Fill percentage updated" });
   }
+}
+
+/** Set one filling's share and rebalance the rest, writing the whole split in a
+ *  single transaction.
+ *
+ *  The percentages divide one cavity's fill volume, so they are one logical
+ *  field rendered as N rows. `updateProductFillingPercentage` writes a single
+ *  row and lets the total drift off 100; this is the group-aware version the
+ *  detail page uses, so a split always stays coherent no matter which row the
+ *  user edits. The maths lives in `@/lib/fillSplit` so it can be tested without
+ *  a database. */
+export async function setProductFillSplit(
+  productId: string,
+  changedProductFillingId: string,
+  nextPercentage: number,
+): Promise<void> {
+  await db.transaction("rw", db.productFillings, async () => {
+    const existing = await db.productFillings.where("productId").equals(productId).toArray();
+    if (existing.length === 0) return;
+    const split = normaliseFillSplit(
+      existing.map((r) => ({ id: r.id!, fillPercentage: r.fillPercentage })),
+      changedProductFillingId,
+      nextPercentage,
+    );
+    await Promise.all(
+      existing
+        .filter((r) => split[r.id!] !== undefined && split[r.id!] !== r.fillPercentage)
+        .map((r) => db.productFillings.update(r.id!, { fillPercentage: split[r.id!] })),
+    );
+  });
+  await computeAndSaveProductCostSnapshot({
+    productId,
+    triggerType: "manual",
+    triggerDetail: "Fill split updated",
+  });
 }
 
 export async function updateProductFillingFraction(productFillingId: string, fillFraction: number) {
@@ -1040,11 +1211,26 @@ export function useMould(id: string | undefined) {
 }
 
 export async function saveMould(mould: Omit<Mould, "id"> & { id?: string }) {
+  const now = new Date();
   if (mould.id) {
-    await db.moulds.update(mould.id, mould);
+    await db.moulds.update(mould.id, { ...mould, updatedAt: now });
     return mould.id;
   }
-  return db.moulds.add(mould as Mould);
+  return db.moulds.add({ ...mould, createdAt: now, updatedAt: now } as Mould);
+}
+
+/** Merge just the given fields into an existing mould. `saveMould` has no
+ *  cascade to preserve, so this is the plain partial write — it exists so
+ *  concurrently autosaving fields don't clobber each other via a stale full
+ *  snapshot. */
+export async function updateMouldFields(
+  id: string,
+  changes: Partial<Omit<Mould, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.moulds.update(id, { ...changes, updatedAt: new Date() });
+  });
 }
 
 export async function deleteMould(id: string) {
@@ -1052,11 +1238,11 @@ export async function deleteMould(id: string) {
 }
 
 export async function archiveMould(id: string) {
-  await db.moulds.update(id, { archived: true });
+  await db.moulds.update(id, { archived: true, updatedAt: new Date() });
 }
 
 export async function unarchiveMould(id: string) {
-  await db.moulds.update(id, { archived: undefined });
+  await db.moulds.update(id, { archived: undefined, updatedAt: new Date() });
 }
 
 /** Returns true if the mould is referenced by any product or production plan. */
@@ -1558,6 +1744,27 @@ export async function saveProductCategory(category: Omit<ProductCategory, "id" |
   return db.productCategories.add({ ...category, createdAt: now, updatedAt: now } as ProductCategory) as Promise<string>;
 }
 
+/** Merge just the given fields into an existing product category.
+ *
+ *  Deliberately does NOT run `validateCategoryRange` the way `saveProductCategory`
+ *  does. That check spans all three shell-percentage fields, and rejecting a
+ *  partial write against it would deadlock the page: moving a range from 30–40
+ *  to 50–60 has no valid single-field order, because the first edit always
+ *  crosses the other bound. So min and max write freely, and the page holds the
+ *  *default* in draft until it lands inside the range — the one rule where a
+ *  half-edited value would otherwise seed new products with a bad number.
+ *  A transiently inconsistent record is surfaced on the page rather than
+ *  silently allowed. */
+export async function updateProductCategoryFields(
+  id: string,
+  changes: Partial<Omit<ProductCategory, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.productCategories.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function archiveProductCategory(id: string): Promise<void> {
   await db.productCategories.update(id, { archived: true, updatedAt: new Date() });
 }
@@ -1842,6 +2049,44 @@ export function useFillingUsageCounts(): Map<string, number> {
     }
     const result = new Map<string, number>();
     for (const [fillingId, productIds] of counts) result.set(fillingId, productIds.size);
+    return result;
+  }) ?? new Map();
+}
+
+/** Returns a map of fillingId → the most recent completed-batch date among products
+ *  that use the filling directly (not counting nested sub-fillings). Used to show
+ *  "last made" on the fillings list — an approximation, since a filling only used
+ *  as a component of another filling isn't tracked here. */
+export function useFillingProductionMap(): Map<string, Date> {
+  return useLiveQuery(async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    if (donePlans.length === 0) return new Map();
+    const planCompletedAt = new Map<string, Date>(donePlans.map((p) => [p.id!, p.completedAt!]));
+    const producedProductIds = new Set(
+      (await db.planProducts.where("planId").anyOf(donePlans.map((p) => p.id!)).toArray())
+        .map((pb) => pb.productId)
+    );
+    if (producedProductIds.size === 0) return new Map();
+
+    // Re-derive lastProducedAt per product (mirrors useProductProductionMap) since we
+    // need it keyed by product before folding into per-filling.
+    const productLastProduced = new Map<string, Date>();
+    const allPlanProducts = await db.planProducts.where("planId").anyOf(donePlans.map((p) => p.id!)).toArray();
+    for (const pb of allPlanProducts) {
+      const completedAt = planCompletedAt.get(pb.planId);
+      if (!completedAt) continue;
+      const existing = productLastProduced.get(pb.productId);
+      if (!existing || completedAt > existing) productLastProduced.set(pb.productId, completedAt);
+    }
+
+    const productFillings = await db.productFillings.where("productId").anyOf([...producedProductIds]).toArray();
+    const result = new Map<string, Date>();
+    for (const rl of productFillings) {
+      const producedAt = productLastProduced.get(rl.productId);
+      if (!producedAt) continue;
+      const existing = result.get(rl.fillingId);
+      if (!existing || producedAt > existing) result.set(rl.fillingId, producedAt);
+    }
     return result;
   }) ?? new Map();
 }
@@ -2441,6 +2686,20 @@ export async function savePackaging(obj: Omit<Packaging, "id"> & { id?: string }
   return db.packaging.add({ ...obj, createdAt: now, updatedAt: now } as Packaging) as Promise<string>;
 }
 
+/** Merge just the given fields into an existing packaging. `savePackaging` has no
+ *  cascade to preserve, so this is the plain partial write — it exists so
+ *  concurrently autosaving fields don't clobber each other via a stale full
+ *  snapshot. */
+export async function updatePackagingFields(
+  id: string,
+  changes: Partial<Omit<Packaging, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.packaging.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function deletePackaging(id: string): Promise<void> {
   await db.packagingOrders.where("packagingId").equals(id).delete();
   await db.packaging.delete(id);
@@ -2458,6 +2717,18 @@ export async function unarchivePackaging(id: string): Promise<void> {
 export async function isPackagingInUse(id: string): Promise<boolean> {
   const count = await db.collectionPackagings.filter((cp) => cp.packagingId === id).count();
   return count > 0;
+}
+
+/** Names of the collections that price a box against this packaging.
+ *  `isPackagingInUse` answers whether deletion is blocked; this answers *why*,
+ *  so the archive and delete panels can name what would be affected instead of
+ *  saying "one or more collections". */
+export async function getPackagingCollectionNames(id: string): Promise<string[]> {
+  const links = await db.collectionPackagings.filter((cp) => cp.packagingId === id).toArray();
+  if (links.length === 0) return [];
+  const collectionIds = [...new Set(links.map((l) => l.collectionId))];
+  const collections = await Promise.all(collectionIds.map((cid) => db.collections.get(cid)));
+  return collections.filter((c): c is Collection => c != null).map((c) => c.name);
 }
 
 export async function savePackagingOrder(obj: Omit<PackagingOrder, "id"> & { id?: string }): Promise<string> {
@@ -2598,6 +2869,17 @@ export async function saveDecorationMaterial(obj: Omit<DecorationMaterial, "id">
   return await db.decorationMaterials.add({ ...obj, createdAt: now, updatedAt: now } as DecorationMaterial) as string;
 }
 
+/** Merge just the given fields into an existing decoration material. */
+export async function updateDecorationMaterialFields(
+  id: string,
+  changes: Partial<Omit<DecorationMaterial, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.decorationMaterials.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function deleteDecorationMaterial(id: string): Promise<void> {
   await db.decorationMaterials.delete(id);
 }
@@ -2733,6 +3015,22 @@ export function useShellDesign(id: string | undefined) {
 }
 
 /** Returns products that use this design technique in their shellDesign steps. */
+/** Reactive Map<designName, product count> for the shell designs list table —
+ *  a bulk counterpart to useShellDesignUsage, safe to call once per page instead
+ *  of once per row (which would violate the rules of hooks). */
+export function useShellDesignUsageCounts(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const products = await db.products.toArray();
+    const counts = new Map<string, number>();
+    for (const product of products) {
+      for (const step of product.shellDesign ?? []) {
+        counts.set(step.technique, (counts.get(step.technique) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }) ?? new Map();
+}
+
 export function useShellDesignUsage(designName: string | undefined) {
   return useLiveQuery(async () => {
     if (!designName) return [];
@@ -2750,6 +3048,17 @@ export async function saveShellDesign(obj: Omit<ShellDesign, "id"> & { id?: stri
     return obj.id;
   }
   return await db.shellDesigns.add({ ...obj, createdAt: now, updatedAt: now } as ShellDesign) as string;
+}
+
+/** Merge just the given fields into an existing shell design. */
+export async function updateShellDesignFields(
+  id: string,
+  changes: Partial<Omit<ShellDesign, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.shellDesigns.update(id, { ...changes, updatedAt: new Date() });
+  });
 }
 
 export async function deleteShellDesign(id: string): Promise<void> {
@@ -2802,6 +3111,16 @@ export function useCollection(id: string | undefined) {
   return useLiveQuery(() => (id ? db.collections.get(id) : undefined), [id]);
 }
 
+/** Reactive Map<collectionId, product count> for the collections list table. */
+export function useCollectionProductCounts(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const all = await db.collectionProducts.toArray();
+    const counts = new Map<string, number>();
+    for (const cp of all) counts.set(cp.collectionId, (counts.get(cp.collectionId) ?? 0) + 1);
+    return counts;
+  }) ?? new Map();
+}
+
 export async function saveCollection(obj: Omit<Collection, "id"> & { id?: string }): Promise<string> {
   const now = new Date();
   if (obj.id) {
@@ -2809,6 +3128,20 @@ export async function saveCollection(obj: Omit<Collection, "id"> & { id?: string
     return obj.id;
   }
   return db.collections.add({ ...obj, createdAt: now, updatedAt: now } as Collection) as Promise<string>;
+}
+
+/** Merge just the given fields into an existing collection. Like
+ *  `updatePackagingFields`, a plain partial write — `saveCollection` has no
+ *  cascade. Box pricing snapshots hang off `CollectionPackaging`, not the
+ *  collection record, so they are unaffected by writes here. */
+export async function updateCollectionFields(
+  id: string,
+  changes: Partial<Omit<Collection, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.collections.update(id, { ...changes, updatedAt: new Date() });
+  });
 }
 
 export async function deleteCollection(id: string): Promise<void> {
@@ -3145,6 +3478,21 @@ export function useFillingStockMap(): Map<string, { availableG: number; frozenG:
 export function useFillingStockForFilling(fillingId: string | undefined) {
   return useLiveQuery(
     () => fillingId ? db.fillingStock.where("fillingId").equals(fillingId).toArray().then((items) => items.filter((s) => s.remainingG > 0)) : [],
+    [fillingId],
+    [],
+  );
+}
+
+/** Every stock entry ever recorded for a filling, newest batch first —
+ *  including used-up ones. Stock rows are zeroed rather than deleted when
+ *  consumed (see `deductFillingStock`/`discardFillingStock`), so this doubles
+ *  as the "when did I last make this" history. */
+export function useFillingStockHistory(fillingId: string | undefined): FillingStock[] {
+  return useLiveQuery(
+    () => fillingId
+      ? db.fillingStock.where("fillingId").equals(fillingId).toArray().then((items) =>
+          items.sort((a, b) => new Date(b.madeAt).getTime() - new Date(a.madeAt).getTime()))
+      : [],
     [fillingId],
     [],
   );

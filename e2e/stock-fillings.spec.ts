@@ -18,8 +18,7 @@ test.describe("Stock — Fillings tab", () => {
     await expect(page).toHaveURL(/\/fillings\/.+/);
 
     // Set category to shelf-stable (Pralines & Giandujas)
-    await page.locator("select.input").first().selectOption("Pralines & Giandujas (Nut-Based)");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
 
     // Go to stock page, Fillings tab
     await page.goto("/stock");
@@ -47,8 +46,7 @@ test.describe("Stock — Fillings tab", () => {
     await page.getByRole("textbox", { name: "Filling name" }).fill("Adjust Test");
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
-    await page.locator("select.input").first().selectOption("Pralines & Giandujas (Nut-Based)");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
 
     await page.goto("/stock");
     await page.getByRole("button", { name: "Fillings" }).click();
@@ -77,8 +75,7 @@ test.describe("Stock — Fillings tab", () => {
     await page.getByRole("textbox", { name: "Filling name" }).fill("Discard Test");
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
-    await page.locator("select.input").first().selectOption("Pralines & Giandujas (Nut-Based)");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
 
     await page.goto("/stock");
     await page.getByRole("button", { name: "Fillings" }).click();
@@ -117,8 +114,7 @@ test.describe("Stock — Fillings tab", () => {
       const cat = name.includes("Praline")
         ? "Pralines & Giandujas (Nut-Based)"
         : "Fruit-Based (Pectins & Acids)";
-      await page.locator("select.input").first().selectOption(cat);
-      await page.getByRole("button", { name: "Save" }).click();
+      await page.locator("select").first().selectOption(cat);
     }
 
     await page.goto("/stock");

@@ -36,8 +36,6 @@ async function createFillingWithIngredient(
   await page.getByRole("button", { name: ingredientName }).click();
   await page.locator("form").getByRole("spinbutton").fill("100");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
-
-  await page.getByRole("button", { name: "Save" }).click();
 }
 
 async function createProductWithFilling(
@@ -51,7 +49,7 @@ async function createProductWithFilling(
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/products\/.+/);
 
-  await page.getByRole("button", { name: "Assign filling" }).click();
+  await page.getByRole("button", { name: "Add filling" }).click();
   await page.getByPlaceholder("Search fillings to assign...").fill(fillingName);
   await page.getByRole("button", { name: fillingName }).click();
 }
@@ -68,9 +66,10 @@ async function createMould(
   await page.getByRole("button", { name: "Create Mould" }).click();
   await expect(page).toHaveURL(/\/moulds\/.+/);
 
-  await page.getByPlaceholder("e.g. 12.5").fill(cavityWeightG);
-  await page.getByPlaceholder("e.g. 24").fill(numberOfCavities);
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByLabel("Cavity weight").fill(cavityWeightG);
+  await page.getByLabel("Cavity weight").blur();
+  await page.getByLabel("Number of cavities").fill(numberOfCavities);
+  await page.getByLabel("Number of cavities").blur();
 }
 
 test.describe("Production wizard — alternative mould setup", () => {

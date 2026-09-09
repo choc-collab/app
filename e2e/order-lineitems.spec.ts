@@ -47,7 +47,6 @@ async function createFilling(page: Page, name: string, ingredientName: string) {
   await page.getByRole("button", { name: ingredientName }).click();
   await page.locator("form").getByRole("spinbutton").fill("100");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
-  await page.getByRole("button", { name: "Save" }).click();
 }
 
 async function createProductWithFilling(page: Page, productName: string, fillingName: string) {
@@ -56,7 +55,7 @@ async function createProductWithFilling(page: Page, productName: string, filling
   await page.getByRole("textbox", { name: "Product name" }).fill(productName);
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/products\/.+/);
-  await page.getByRole("button", { name: "Assign filling" }).click();
+  await page.getByRole("button", { name: "Add filling" }).click();
   await page.getByPlaceholder("Search fillings to assign...").fill(fillingName);
   await page.getByRole("button", { name: fillingName }).click();
 }
@@ -68,9 +67,10 @@ async function createMould(page: Page, name: string) {
   await page.getByPlaceholder("Mould name *").fill(name);
   await page.getByRole("button", { name: "Create Mould" }).click();
   await expect(page).toHaveURL(/\/moulds\/.+/);
-  await page.getByPlaceholder("e.g. 12.5").fill("10");
-  await page.getByPlaceholder("e.g. 24").fill("15");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByLabel("Cavity weight").fill("10");
+  await page.getByLabel("Cavity weight").blur();
+  await page.getByLabel("Number of cavities").fill("15");
+  await page.getByLabel("Number of cavities").blur();
 }
 
 /** Full moulded-product plan via the wizard (~15 pieces of `productName`). */

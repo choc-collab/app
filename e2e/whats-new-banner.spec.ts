@@ -83,4 +83,38 @@ test.describe("What's new banner", () => {
     await expect(page.getByText("Upgrader Ganache").first()).toBeVisible({ timeout: 15000 });
     await expect(page.locator(BANNER)).toHaveCount(0);
   });
+
+  test("an upgrade that crosses v0.8.0 calls out the Pantry autosave change", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/fillings/");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Autosave Upgrader");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Autosave Upgrader").first()).toBeVisible({ timeout: 15000 });
+
+    // Coming from 0.7.x, the pencil and Save button vanish from every detail
+    // page — a control the user had learned to look for, so the banner says so.
+    await setLastSeenVersion(page, "0.7.0");
+    await page.reload();
+
+    await expect(page.locator(BANNER)).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(BANNER)).toContainText(/the Pantry saves as you type/);
+    // The Orders callout belongs to 0.7.0, which this upgrade does not cross.
+    await expect(page.locator(BANNER)).not.toContainText(/meet\s+Orders/);
+  });
+
+  test("an upgrade that does not reach v0.8.0 omits the Pantry callout", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/fillings/");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Already Current");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Already Current").first()).toBeVisible({ timeout: 15000 });
+
+    // Already on the current release — no banner at all, so no callout.
+    await setLastSeenVersion(page, "0.8.0");
+    await page.reload();
+    await expect(page.getByText("Already Current").first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator(BANNER)).toHaveCount(0);
+  });
 });

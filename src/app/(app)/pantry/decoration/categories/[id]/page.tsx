@@ -13,6 +13,9 @@ import {
 } from "@/lib/hooks";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
+import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
+import { SidebarCard } from "@/components/detail-sidebar";
+import { db } from "@/lib/db";
 import { ArrowLeft, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
@@ -40,6 +43,18 @@ export default function DecorationCategoryDetailPage() {
 
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Loading vs. not-found — the live query returns `undefined` for both, so a
+  // one-shot direct read resolves which one it actually is.
+  const [loadState, setLoadState] = useState<"loading" | "found" | "not-found">("loading");
+  useEffect(() => {
+    if (!categoryId) return;
+    let cancelled = false;
+    db.decorationCategories.get(categoryId).then((c) => {
+      if (!cancelled) setLoadState(c ? "found" : "not-found");
+    });
+    return () => { cancelled = true; };
+  }, [categoryId]);
+
   // Navigation guard — delete incomplete record if user leaves a ?new=1 page without saving
   const [savedOnce, setSavedOnce] = useState(false);
   const isDirty = isNew && !savedOnce;
@@ -66,11 +81,16 @@ export default function DecorationCategoryDetailPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [confirmDelete]);
 
-  if (!categoryId || !category) {
+  if (!categoryId || loadState === "loading" || (loadState === "found" && !category)) {
+    return <DetailSkeleton cards={1} sidebar={1} label="Loading decoration category" />;
+  }
+  if (loadState === "not-found" || !category) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading…</p>
-      </div>
+      <DetailNotFound
+        entity="decoration category"
+        backHref="/pantry/decoration?tab=categories"
+        backLabel="Decoration categories"
+      />
     );
   }
 
@@ -83,11 +103,11 @@ export default function DecorationCategoryDetailPage() {
           href="/pantry/decoration"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
-          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
+          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Decoration categories
         </Link>
       </div>
 
-      <div className="px-4 pb-6 space-y-6 max-w-lg">
+      <div className="px-4 pb-5">
         {/* Name row — edits name + auto-derives slug */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1 flex items-center gap-2">
@@ -110,28 +130,11 @@ export default function DecorationCategoryDetailPage() {
             )}
           </div>
         </div>
+      </div>
 
-        {/* Read-only info */}
-        <div className="rounded-lg border border-border bg-card divide-y divide-border">
-          <div className="flex justify-between items-center px-3 py-2 text-sm">
-            <span className="text-muted-foreground">Materials</span>
-            <span>{inUseCount}</span>
-          </div>
-        </div>
-
-        <UsedInPanel
-          singular="material"
-          plural="materials"
-          items={materialsUsingCategory.map((m) => ({
-            id: m.id ?? "",
-            name: m.name,
-            href: `/pantry/decoration/${encodeURIComponent(m.id ?? "")}`,
-          }))}
-          emptyMessage="No materials are using this category yet."
-        />
-
-        {/* Archive / Delete */}
-        <section className="pt-4 border-t border-border">
+      <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+        {/* ── Main column ── */}
+        <section className="min-w-0">
           {category.archived ? (
             <button
               onClick={() => unarchiveDecorationCategory(categoryId)}
@@ -192,6 +195,23 @@ export default function DecorationCategoryDetailPage() {
             )
           )}
         </section>
+
+        {/* ── Sidebar ── */}
+        <div className="space-y-4 lg:sticky lg:top-4">
+          <SidebarCard title="Used in" meta={inUseCount > 0 ? inUseCount : undefined}>
+            <UsedInPanel
+              singular="material"
+              plural="materials"
+              items={materialsUsingCategory.map((m) => ({
+                id: m.id ?? "",
+                name: m.name,
+                href: `/pantry/decoration/${encodeURIComponent(m.id ?? "")}`,
+              }))}
+              emptyMessage="No materials are using this category yet."
+              hideHeading
+            />
+          </SidebarCard>
+        </div>
       </div>
     </div>
   );

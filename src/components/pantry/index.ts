@@ -40,6 +40,8 @@ export { ProductStockPills, FillingStockPills } from "./stock-pills";
 export { SegmentedTabs } from "./segmented-tabs";
 export type { SegmentedTabOption } from "./segmented-tabs";
 export { ListItemCard } from "./list-item-card";
+export { PantryTableHeader, PantryTableGroupHeader, PantryTableRow } from "./pantry-table";
+export type { PantryTableColumn } from "./pantry-table";
 export { CollapseControls } from "./collapse-controls";
 export { ViewDensityToggle } from "./view-density-toggle";
 export { MultiSelectDropdown } from "./multi-select-dropdown";

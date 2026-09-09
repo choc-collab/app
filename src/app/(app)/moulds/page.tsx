@@ -4,9 +4,22 @@ import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { useMoulds, saveMould } from "@/lib/hooks";
-import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, ListItemCard } from "@/components/pantry";
+import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, PantryTableHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
+
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
+}
+
+const MOULDS_GRID = "minmax(200px,1.6fr) minmax(120px,1fr) minmax(140px,1fr) 100px 90px 20px";
+const MOULDS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Mould" },
+  { key: "brand", label: "Brand" },
+  { key: "cavities", label: "Cavity weight & count" },
+  { key: "owned", label: "Owned" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 const CAVITY_WEIGHT_OPTIONS = [
   { value: "1-10", label: "≤ 10 g" },
@@ -221,41 +234,39 @@ export default function MouldsPage() {
               : "No moulds match your search."}
           </p>
         ) : (
-          <ul className="space-y-2">
+          <div role="table" aria-label="Moulds" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+            <PantryTableHeader columns={MOULDS_COLUMNS} gridTemplateColumns={MOULDS_GRID} />
             {filtered.map((mould) => (
-              <ListItemCard
+              <PantryTableRow
                 key={mould.id}
                 href={`/moulds/${encodeURIComponent(mould.id ?? '')}`}
                 archived={mould.archived}
+                gridTemplateColumns={MOULDS_GRID}
               >
-                {mould.photo ? (
-                  <img src={mould.photo} alt={mould.name} className="w-10 h-10 rounded-md object-cover shrink-0" />
-                ) : (
-                  <div className="w-10 h-10 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground text-base font-light">
-                    ◻
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="font-medium text-sm truncate">{mould.name}</h3>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {mould.photo ? (
+                    <img src={mould.photo} alt={mould.name} className="w-7 h-7 rounded-md object-cover shrink-0" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-md bg-muted shrink-0 flex items-center justify-center text-muted-foreground text-sm font-light">
+                      ◻
+                    </div>
+                  )}
+                  <h3 className="font-medium text-sm truncate">
+                    {mould.name}
                     {mould.archived && (
-                      <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
-                        archived
-                      </span>
+                      <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>
                     )}
-                  </div>
-                  {mould.brand && (
-                    <p className="text-xs text-muted-foreground">{mould.brand}</p>
-                  )}
-                  {mould.cavityWeightG > 0 && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {mould.cavityWeightG} g · {mould.numberOfCavities} cavities
-                    </p>
-                  )}
+                  </h3>
                 </div>
-              </ListItemCard>
+                <span className="text-xs text-muted-foreground truncate">{mould.brand || "—"}</span>
+                <span className="text-xs text-muted-foreground truncate">
+                  {mould.cavityWeightG > 0 ? `${mould.cavityWeightG} g · ${mould.numberOfCavities} cavities` : "—"}
+                </span>
+                <span className="text-xs tabular-nums text-muted-foreground">{mould.quantityOwned ?? "—"}</span>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{mould.updatedAt ? formatDate(mould.updatedAt) : "—"}</span>
+              </PantryTableRow>
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </div>
