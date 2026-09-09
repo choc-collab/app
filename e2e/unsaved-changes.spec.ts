@@ -56,7 +56,7 @@ test.describe("Unsaved changes — Fillings (autosave, no guard expected)", () =
     let dialogSeen = false;
     page.on("dialog", () => { dialogSeen = true; });
 
-    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page.getByRole("button", { name: "Fillings", exact: true }).click();
 
     expect(dialogSeen).toBe(false);
     await expect(page).toHaveURL("/fillings/");
