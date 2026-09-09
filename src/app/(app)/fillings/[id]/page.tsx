@@ -30,6 +30,7 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DuplicatedToast } from "@/components/duplicated-toast";
 import { StepListEditor } from "@/components/step-list-editor";
 import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
+import { SidebarCard } from "@/components/detail-sidebar";
 import type { Ingredient, Product, Filling, FillingIngredient, FillingStock } from "@/types";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
 
@@ -219,7 +220,7 @@ export default function FillingDetailPage() {
           onClick={() => router.push("/fillings")}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
-          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
+          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Fillings
         </button>
       </div>
 
@@ -689,10 +690,9 @@ export default function FillingDetailPage() {
             ingredientMap={ingredientMap}
             hasNestedComponents={ownComponents.length > 0}
           />
-          <div className="rounded-lg border border-border bg-card p-3.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Used in</h3>
+          <SidebarCard title="Used in" meta={products.length > 0 ? products.length : undefined}>
             <FillingProductSection fillingId={fillingId} products={products} />
-          </div>
+          </SidebarCard>
         </div>
       </div>
     </div>
@@ -1247,6 +1247,7 @@ function FillingProductSection({ fillingId, products }: { fillingId: string; pro
           photo: product.photo,
         }))}
         className={products.length > 0 ? "mb-3" : ""}
+        hideHeading
       />
 
       {action === "none" && (

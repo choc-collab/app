@@ -163,6 +163,30 @@ test("sweep: category detail pages put Used in beside the editable panels", asyn
   const fUsedInBox = await fUsedIn.boundingBox();
   expect(fUsedInBox!.x).toBeGreaterThan(toggleBox!.x);
 
+  // Ingredient categories — nothing to edit beyond the name, so the main
+  // column holds only the destructive row; Used in still sits beside it.
+  await page.goto("/ingredients");
+  await page.getByRole("button", { name: /^Categories$/ }).click();
+  await page.getByRole("button", { name: /Add ingredient category/i }).click();
+  await page.getByPlaceholder(/Category name/).fill("Sweep Ingredient Category");
+  await page.getByRole("button", { name: "Create Category" }).click();
+  await expect(page).toHaveURL(/\/ingredients\/categories\/.+/);
+
+  const iUsedIn = page.getByRole("heading", { name: "Used in" });
+  await expect(iUsedIn).toBeVisible();
+  const iDelete = await page.getByRole("button", { name: /Delete category/i }).boundingBox();
+  const iUsedInBox = await iUsedIn.boundingBox();
+  expect(iUsedInBox!.x).toBeGreaterThan(iDelete!.x);
+
+  // Decoration categories — same shape.
+  await page.goto("/pantry/decoration");
+  await page.getByRole("button", { name: /^Categories$/ }).click();
+  await page.getByRole("button", { name: /Add decoration category/i }).click();
+  await page.getByPlaceholder(/Category name/).fill("Sweep Decoration Category");
+  await page.getByRole("button", { name: "Create Category" }).click();
+  await expect(page).toHaveURL(/\/pantry\/decoration\/categories\/.+/);
+  await expect(page.getByRole("heading", { name: "Used in" })).toBeVisible();
+
   expect(real(errors)).toEqual([]);
 });
 

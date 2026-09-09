@@ -6,6 +6,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+- **A product's nutrition tab now tells you whether it's ready for a label** — the panel already warned when some ingredients had no nutrition data, but not whether the totals actually satisfy what your market requires on a printed label; those are different questions and only the second one blocks printing something compliant. It now says either "All nutrients required for an EU label are present" or names exactly what's missing and where to add it. The ingredient pages have carried the same check for a while; this brings the product roll-up in line, which matters now that Shop boxes print nutrition labels.
+
 ### Changed
 - **Every pantry detail page is now directly editable — the pencil, the Save button and the "unsaved changes" warning are gone** — nine pages (Fillings, Ingredients, Products, Packaging, Collections, Moulds, Decoration materials, Shell designs and Product categories) hid their fields behind an Edit pencil, made you fill in a form, and then asked you to Save. Now you click a value and change it, and it's stored. Fields commit as you'd expect: dropdowns and toggles the moment you pick, text and numbers when you leave the field, notes a moment after you stop typing (and immediately if you click away). Nothing is lost by navigating away mid-edit, so no page interrupts you with a browser dialog any more.
   - **A two-column layout separates what you change from what the app works out** — the left column holds what you edit; a sidebar on the right holds what the app tells you: computed **Derived** figures, stock status, and the **Used in** list of everything that references the record. Below `lg` it stacks into one column. The Products *Cost*, *Nutrition*, *Filling history* and *Batches* tabs, and the Collections *Pricing & margins* tab, run full-width instead — their tables and charts don't fit beside a 320 px column.
@@ -23,6 +26,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 ### Fixed
 - **The Collections "not found" state was unreachable** — a missing collection fell through to a permanent "Loading..." because the page tested for a value the data layer never returns.
 - **Allergen, price-history and cost-snapshot updates survive the switch to per-field saving** — changing an ingredient's allergens still cascades to every filling that uses it (including through nested fillings), a price change still records a history entry and refreshes the cost of every product built on it, and changing a product's mould or shell still writes a cost snapshot.
+- **"Used in" no longer prints its heading twice** — the sidebar card's title and the panel's own "Used in 3 products" line were both rendering. The card now carries the title and the count, and the panel just lists.
+- **The filling detail page's back link says "Fillings"** instead of a bare "Back", matching every other detail page.
+- **A one-product box no longer reads "1 products × €0.57"** in the collection cost breakdown.
+- **Product fill percentages of a single filling can no longer be set below 100%** — a sole filling occupies the whole cavity by definition, so typing a lower number left the rest of the fill unaccounted for.
 
 ## [0.7.0] — 2026-09-08
 

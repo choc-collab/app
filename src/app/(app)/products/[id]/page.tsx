@@ -12,7 +12,7 @@ import { NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
 import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromFractions, fillFractionToGrams, gramsToFillFraction } from "@/lib/costCalculation";
 import { fillSplitTotal } from "@/lib/fillSplit";
 import { reachableIngredientIds } from "@/lib/fillingComponents";
-import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition } from "@/lib/nutrition";
+import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition, getMissingMandatoryNutrients } from "@/lib/nutrition";
 import { calculateShellWeightG } from "@/lib/costCalculation";
 import type { MarketRegion } from "@/types";
 import { ArrowLeft, Camera, Plus, X, Search, Trash2, ChevronRight, StickyNote, RefreshCw, AlertTriangle, Undo2, Copy, Archive, ArchiveRestore, GripVertical, Snowflake } from "lucide-react";
@@ -2714,6 +2714,7 @@ function ProductNutritionTab({ productId, productFillings, market }: { productId
   const perServing = showPerServing ? scaleToServing(per100g, 30) : perProduct;
 
   const hasData = Object.keys(per100g).length > 0;
+  const missingMandatory = getMissingMandatoryNutrients(per100g, market);
 
   if (!product) return null;
 
@@ -2768,6 +2769,26 @@ function ProductNutritionTab({ productId, productFillings, market }: { productId
             Values are partial — add data to remaining ingredients for complete figures.
           </span>
         </div>
+      )}
+
+      {/* Label readiness. The warning above is about ingredient *coverage*; this
+          is about whether the aggregate satisfies the nutrients this market
+          requires on a label — the two can disagree, and only this one blocks
+          printing something compliant. */}
+      {missingMandatory.length > 0 ? (
+        <div className="flex items-start gap-2 text-xs text-status-warn bg-status-warn-bg border border-status-warn-edge rounded-md px-2 py-1.5 mb-1">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            Not ready for a {market} label — {missingMandatory.length} mandatory{" "}
+            {missingMandatory.length === 1 ? "nutrient is" : "nutrients are"} missing:{" "}
+            {missingMandatory.map((n) => n.label).join(", ")}. Add{" "}
+            {missingMandatory.length === 1 ? "it" : "them"} to the ingredients this product uses.
+          </span>
+        </div>
+      ) : (
+        <p className="text-xs text-status-ok mb-1">
+          All nutrients required for a {market} label are present.
+        </p>
       )}
 
       <p className="text-xs text-muted-foreground mb-3 mt-2">

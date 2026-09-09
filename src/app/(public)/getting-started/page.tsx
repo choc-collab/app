@@ -442,6 +442,17 @@ const SECTIONS: Section[] = [
           <kbd>+</kbd> (or press <kbd>n</kbd> on your keyboard — there&apos;s a shortcut for that on
           every list page).
         </p>
+        <Callout kind="tip" title="Detail pages save themselves">
+          Every detail page in the Pantry — ingredients, fillings, products, packaging,
+          collections, moulds, decoration, and all the category pages — is directly editable.
+          There is no Edit button and no Save button: click a value, change it, and it is stored.
+          Dropdowns save the moment you pick, text and numbers when you click away, and notes a
+          moment after you stop typing. You can leave a page mid-edit without losing anything, so
+          nothing will ever stop you with an &ldquo;unsaved changes&rdquo; warning. If a save ever
+          fails, a message appears in the bottom-left naming the field, with a Retry button.
+          Anything the app works out for itself — costs, weights, allergens, what uses what —
+          sits in the panel on the right and updates as you type.
+        </Callout>
         <StepList
           items={[
             {

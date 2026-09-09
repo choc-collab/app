@@ -991,7 +991,7 @@ function BoxCard({
       {/* Cost breakdown */}
       <div className="px-3 pb-2 space-y-1">
         <div className="flex justify-between text-xs">
-          <span className="text-muted-foreground">{capacity} products &times; {formatPrice(pricing.productCost / (capacity || 1), sym)}</span>
+          <span className="text-muted-foreground">{capacity} product{capacity === 1 ? "" : "s"} &times; {formatPrice(pricing.productCost / (capacity || 1), sym)}</span>
           <span className="tabular-nums">{formatPrice(pricing.productCost, sym)}</span>
         </div>
         <div className="flex justify-between text-xs">
