@@ -36,6 +36,8 @@ const ROUTES = [
   "/settings",
   "/labels",
   "/labels/new",
+  "/orders",
+  "/log",
 ] as const;
 
 // React minifies error messages in production. The error text we want to detect

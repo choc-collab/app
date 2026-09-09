@@ -14,8 +14,8 @@
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { LayoutList, CalendarDays } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { ListCalendarToggle, type ListCalendarView } from "@/components/list-calendar-toggle";
 import { ListToolbar, QuickAddForm, EmptyState, ListItemCard, FilterPanel, FilterChipGroup } from "@/components/pantry";
 import { MonthGrid } from "@/components/orders/month-grid";
 import { OrdersTable, type OrdersTableGroup } from "@/components/orders/orders-table";
@@ -44,54 +44,7 @@ const TABS: { id: OrdersPageTab; label: string }[] = [
   { id: "customers", label: "Customers" },
 ];
 
-type OrdersView = "list" | "calendar";
-
-/** Two-button segmented toggle between the list and month-calendar views —
- *  same shape and placement as the products page's ViewDensityToggle. */
-function OrdersViewToggle({
-  value,
-  onChange,
-}: {
-  value: OrdersView;
-  onChange: (next: OrdersView) => void;
-}) {
-  return (
-    <div
-      className="inline-flex rounded-full border border-border bg-card p-0.5"
-      role="group"
-      aria-label="Orders view"
-    >
-      <button
-        type="button"
-        onClick={() => onChange("list")}
-        aria-pressed={value === "list"}
-        title="List view — upcoming orders grouped by month"
-        className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
-          value === "list"
-            ? "bg-accent text-accent-foreground"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <LayoutList aria-hidden="true" className="w-3.5 h-3.5" />
-        List
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange("calendar")}
-        aria-pressed={value === "calendar"}
-        title="Calendar view — orders on a month grid"
-        className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
-          value === "calendar"
-            ? "bg-accent text-accent-foreground"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <CalendarDays aria-hidden="true" className="w-3.5 h-3.5" />
-        Calendar
-      </button>
-    </div>
-  );
-}
+type OrdersView = ListCalendarView;
 
 /** Statuses offered at creation time — an order that's already fulfilled or
  *  cancelled isn't worth capturing, and "in production" starts on the detail
@@ -312,7 +265,13 @@ function OrdersTab() {
   return (
     <div className="px-4 space-y-3 pb-6">
       <div className="flex justify-end">
-        <OrdersViewToggle value={f.view} onChange={(v) => setF("view", v)} />
+        <ListCalendarToggle
+          value={f.view}
+          onChange={(v) => setF("view", v)}
+          ariaLabel="Orders view"
+          listTitle="List view — upcoming orders grouped by month"
+          calendarTitle="Calendar view — orders on a month grid"
+        />
       </div>
 
       <ListToolbar

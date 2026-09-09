@@ -10,6 +10,7 @@ import { SellQuickGrid } from "@/components/today/sell-quick-grid";
 import { InProgressTile } from "@/components/today/in-progress-tile";
 import { ExperimentsBrewingTile } from "@/components/today/experiments-brewing-tile";
 import { UpcomingOrdersTile } from "@/components/today/upcoming-orders-tile";
+import { LogTile } from "@/components/today/log-tile";
 
 /** Locale-dependent date string deferred to client mount so server and
  *  client agree on the initial HTML (avoids a hydration mismatch warning). */
@@ -74,6 +75,10 @@ export default function TodayPage() {
           cta="See breakdown"
           empty={signals.weekBoxesSold === 0}
         />
+      </div>
+
+      <div className="px-4 mt-3">
+        <LogTile />
       </div>
 
       <div className="px-4 mt-6 grid grid-cols-1 lg:grid-cols-2 gap-3">

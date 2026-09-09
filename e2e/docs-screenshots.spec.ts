@@ -114,6 +114,12 @@ test("capture all getting-started screenshots", async ({ page }) => {
   await page.waitForTimeout(600);
   await page.screenshot({ path: path.join(OUT, "orders-list.png") });
 
+  // ── 09c · Log — today's row from the demo batches/sales/orders + demo notes ──
+  await page.goto("/log");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(OUT, "log-list.png") });
+
   // ── 10 · Label editor — Box of 9 full label, populated from demo data ──
   // Opens the demo "Box of 9 — full label" template, picks a box-of-9 source
   // so the preview populates with real demo data (brand block, ingredients,

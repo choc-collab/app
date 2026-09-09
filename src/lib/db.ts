@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay } from "@/types";
 import { normalizeCustomerKey } from "@/lib/orders";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
@@ -45,6 +45,8 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   customers: EntityTable<Customer, "id">;
   orderProductionLinks: EntityTable<OrderProductionLink, "id">;
   orderLineItems: EntityTable<OrderLineItem, "id">;
+  logEntries: EntityTable<LogEntry, "id">;
+  logDays: EntityTable<LogDay, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -643,6 +645,18 @@ db.version(19).stores({
   orderLineItems: "id, orderId",
 });
 
+// v20 — Daily Log: free-text `logEntries` (several per day) and `logDays`
+// (one row of day-level facts such as workshop temperature/humidity). Both
+// keyed on a local ISO date string, indexed on `date` so the day page can
+// `where("date").equals(iso)` and the list can `orderBy("date")`. Purely
+// additive — no existing rows touched, no upgrade hook required. The daily
+// summary itself is derived from the other tables (lib/dailyLog) and never
+// stored.
+db.version(20).stores({
+  logEntries: "id, date",
+  logDays: "id, date",
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -690,6 +704,8 @@ const AUTO_ID_TABLES = [
   db.customers,
   db.orderProductionLinks,
   db.orderLineItems,
+  db.logEntries,
+  db.logDays,
 ];
 for (const table of AUTO_ID_TABLES) {
    

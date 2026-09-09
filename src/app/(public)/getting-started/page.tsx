@@ -1096,8 +1096,67 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "observatory",
+    id: "log",
     num: "16",
+    title: "The Log — a daily journal that mostly writes itself",
+    teaser: "One page per day: what the app knows you made, sold and captured, plus your own notes and the workshop conditions.",
+    render: () => (
+      <>
+        <p className="sub">
+          Growing a chocolate business is a long run of small experiments. The Log is where
+          they accumulate: one page per day, half written by the app, half by you.
+        </p>
+
+        <h3>What happened — filled in for you</h3>
+        <p>
+          Open <strong>Log</strong> in the nav. Every day you worked already has a line for
+          each thing the app saw: moulds coloured, shells cast, fillings made, pieces
+          unmoulded, batches started and finished, boxes prepared and sold (with the
+          takings), give-aways, orders captured and events on the day they happen, new
+          customers, experiments, new recipes, products and moulds, ingredients bought,
+          prices updated, packaging ordered, shopping-list items, stock counts and freezer
+          moves. Each line links back to the batch, order or recipe it came from.
+        </p>
+        <p>
+          Nothing is stored for this half — it is worked out live from the rest of your
+          data. That is why the Log already covers every day since your first batch the
+          moment you open it, and why it stays right when you correct a batch or void a
+          sale later.
+        </p>
+
+        <h3>Your notes and the workshop conditions</h3>
+        <p>
+          Click a day to open it. Notes come first: write as many as you like — a morning
+          observation and an evening remark keep their own times — and they save as you
+          type. Deleting one asks first. In the sidebar, record the workshop{" "}
+          <strong>temperature</strong> and <strong>humidity</strong>; both save when you
+          leave the field. Months later, when a batch blooms or a temper won&apos;t hold,
+          those two numbers are usually the explanation.
+        </p>
+
+        <h3>List and calendar</h3>
+        <p>
+          The list is a table of days grouped by month — the same shape as Orders — with
+          the day, a &ldquo;what happened&rdquo; headline, the note count and first line,
+          and the conditions. Search covers both your notes and the activity lines
+          (&ldquo;caramel&rdquo; finds the day you made it and the day you wrote about it);
+          the filter panel bounds the period or shows only days with notes. The toggle at
+          the top right switches to a month calendar with a coloured dot per area and a
+          pencil where you wrote something. The Log stops at today — future days appear once
+          they arrive.
+        </p>
+        <Callout kind="tip" title="Write from the dashboard">
+          The <em>Today&apos;s log</em> panel on the Today page shows what has been recorded
+          so far and takes a quick note without leaving the page. Press <code>n</code> on
+          the Log page to jump straight to today.
+        </Callout>
+        <Shot label="The Log — days grouped by month, with the activity headline, notes and workshop conditions" src="/docs/screenshots/log-list.png" />
+      </>
+    ),
+  },
+  {
+    id: "observatory",
+    num: "17",
     title: "The Observatory — your numbers in one place",
     teaser: "Pricing health, production trends, product-cost breakdowns, and shop sales.",
     render: () => (
@@ -1157,7 +1216,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "allergens",
-    num: "17",
+    num: "18",
     title: "Allergens and nutrition",
     teaser: "Enter once at the ingredient level. The app does the rest.",
     render: () => (
@@ -1185,7 +1244,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "backup",
-    num: "18",
+    num: "19",
     title: "Backup, restore, and cloud sync",
     teaser: "Your data is yours. Treat it that way.",
     render: () => (
@@ -1244,7 +1303,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "dexie-cloud",
-    num: "19",
+    num: "20",
     title: "Setting up Dexie Cloud sync (step by step)",
     teaser: "The bit that lets your iPad and laptop see the same data. Twenty minutes, no code.",
     render: () => (
@@ -1582,7 +1641,7 @@ jobs:
   },
   {
     id: "shortcuts",
-    num: "20",
+    num: "21",
     title: "Keyboard shortcuts",
     teaser: "Small, but they add up.",
     render: () => (
@@ -1611,7 +1670,7 @@ jobs:
   },
   {
     id: "faq",
-    num: "21",
+    num: "22",
     title: "Troubleshooting and FAQ",
     teaser: "The things I've been asked most.",
     render: () => (
@@ -1895,7 +1954,7 @@ jobs:
 
 const HUB_GROUPS = [
   { title: "Get set up", ids: ["welcome", "hosted-or-local", "install", "demo", "preferences"] },
-  { title: "Day to day", ids: ["dashboard"] },
+  { title: "Day to day", ids: ["dashboard", "log"] },
   { title: "Build your pantry", ids: ["ingredient", "filling", "product"] },
   { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "labels", "orders", "observatory"] },
   { title: "Allergens, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },
