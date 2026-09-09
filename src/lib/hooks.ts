@@ -3228,6 +3228,21 @@ export function useFillingStockForFilling(fillingId: string | undefined) {
   );
 }
 
+/** Every stock entry ever recorded for a filling, newest batch first —
+ *  including used-up ones. Stock rows are zeroed rather than deleted when
+ *  consumed (see `deductFillingStock`/`discardFillingStock`), so this doubles
+ *  as the "when did I last make this" history. */
+export function useFillingStockHistory(fillingId: string | undefined): FillingStock[] {
+  return useLiveQuery(
+    () => fillingId
+      ? db.fillingStock.where("fillingId").equals(fillingId).toArray().then((items) =>
+          items.sort((a, b) => new Date(b.madeAt).getTime() - new Date(a.madeAt).getTime()))
+      : [],
+    [fillingId],
+    [],
+  );
+}
+
 export async function saveFillingStock(obj: Omit<FillingStock, "id"> & { id?: string }): Promise<string> {
   if (obj.id) {
     await db.fillingStock.update(obj.id, obj);

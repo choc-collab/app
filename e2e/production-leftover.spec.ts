@@ -28,7 +28,7 @@ async function createShelfStableFilling(page: import("@playwright/test").Page, f
   await expect(page).toHaveURL(/\/fillings\/.+/);
 
   // Set category to Pralines & Giandujas (shelf-stable)
-  await page.locator("select.input").first().selectOption("Pralines & Giandujas (Nut-Based)");
+  await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
 
   // Add ingredient
   await page.getByRole("button", { name: "Add ingredient" }).click();
@@ -36,8 +36,6 @@ async function createShelfStableFilling(page: import("@playwright/test").Page, f
   await page.getByRole("button", { name: ingredientName }).click();
   await page.locator("form").getByRole("spinbutton").fill("200");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
-
-  await page.getByRole("button", { name: "Save" }).click();
 }
 
 /** Create a product and assign a filling */

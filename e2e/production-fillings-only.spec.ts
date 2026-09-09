@@ -21,7 +21,6 @@ async function createFilling(page: import("@playwright/test").Page, name: string
   await page.getByRole("button", { name: ingredientName }).click();
   await page.locator("form").getByRole("spinbutton").fill("100");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
-  await page.getByRole("button", { name: "Save" }).click();
 }
 
 test.describe("Fillings-only production plans", () => {

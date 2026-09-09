@@ -183,6 +183,48 @@ test.describe("Fillings", () => {
     await expect(page.getByText("Delete Me")).not.toBeVisible();
   });
 
+  test("stock card and Batches tab surface filling stock and when it was last made", async ({ page }) => {
+    test.setTimeout(90000);
+
+    // Create a shelf-stable filling, then register two stock batches against it
+    // via the Stock page (the same path production uses).
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Batch History Praline");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+    const fillingUrl = page.url().split("?")[0];
+    await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
+
+    await page.goto("/stock");
+    await page.getByRole("button", { name: "Fillings" }).click();
+    await page.getByRole("button", { name: "Add filling stock" }).click();
+    await page.getByLabel("Select filling").selectOption({ label: "Batch History Praline" });
+    await page.getByPlaceholder("Amount in grams").fill("450");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.locator("text=450g").first()).toBeVisible();
+
+    // Back on the filling: the sidebar Stock card totals it, and a Batches tab appears.
+    await page.goto(fillingUrl);
+    await expect(page.getByText("Available", { exact: true })).toBeVisible();
+    await expect(page.getByText("450g", { exact: true })).toBeVisible();
+    await expect(page.getByText("Last made", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Batches" }).click();
+    await expect(page.getByText("450g left")).toBeVisible();
+  });
+
+  test("filling with no stock shows an empty stock card and no Batches tab", async ({ page }) => {
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Never Made");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+
+    await expect(page.getByText("None in stock or freezer.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Batches" })).toHaveCount(0);
+  });
+
   test("shows a distinct not-found state for a missing filling, not the loading string", async ({ page }) => {
     await page.goto("/fillings/does-not-exist");
     await expect(page.getByText(/This filling doesn.t exist\./)).toBeVisible();

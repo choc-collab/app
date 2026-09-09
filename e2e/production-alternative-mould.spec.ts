@@ -36,8 +36,6 @@ async function createFillingWithIngredient(
   await page.getByRole("button", { name: ingredientName }).click();
   await page.locator("form").getByRole("spinbutton").fill("100");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
-
-  await page.getByRole("button", { name: "Save" }).click();
 }
 
 async function createProductWithFilling(

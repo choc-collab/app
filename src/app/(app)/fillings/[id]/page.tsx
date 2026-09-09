@@ -10,7 +10,7 @@ import {
   reorderFillingIngredients, useFillingVersionHistory, forkFillingVersion,
   getFillingForkImpact, getFillingDeleteImpact, hasProductBeenProduced, hasFillingBeenProduced,
   getFillingArchiveImpact, useProductsList, saveProduct, addFillingToProduct, duplicateFilling,
-  useAllFillingStatuses, useCurrencySymbol,
+  useAllFillingStatuses, useCurrencySymbol, useFillingStockHistory, useProductionPlans,
 } from "@/lib/hooks";
 import { db } from "@/lib/db";
 import { useSpaId } from "@/lib/use-spa-id";
@@ -29,7 +29,7 @@ import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DuplicatedToast } from "@/components/duplicated-toast";
 import { StepListEditor } from "@/components/step-list-editor";
-import type { Ingredient, Product, Filling, FillingIngredient } from "@/types";
+import type { Ingredient, Product, Filling, FillingIngredient, FillingStock } from "@/types";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
 
 function toGrams(amount: number, unit: string): number | null {
@@ -54,9 +54,10 @@ export default function FillingDetailPage() {
   const products = useFillingUsage(fillingId);
   const versionHistory = useFillingVersionHistory(fillingId);
   const existingStatuses = useAllFillingStatuses();
+  const stockHistory = useFillingStockHistory(fillingId);
   const statusSuggestions = [...new Set([...DEFAULT_FILLING_STATUSES, ...existingStatuses])].sort();
 
-  const [activeTab, setActiveTab] = useState<"ingredients" | "history">("ingredients");
+  const [activeTab, setActiveTab] = useState<"ingredients" | "batches" | "history">("ingredients");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [unlocked, setUnlocked] = useState(isForked);
 
@@ -197,6 +198,17 @@ export default function FillingDetailPage() {
   const versionLabel = filling.version != null ? `v${filling.version}` : null;
   // Show history tab only if this filling is part of a version chain
   const hasVersionHistory = versionHistory.length > 1 || filling.rootId != null;
+  // Tabs only appear when there's something to switch between: batches once
+  // any stock has ever been recorded, History once the filling is part of a
+  // version chain.
+  const tabs: { id: "ingredients" | "batches" | "history"; label: string }[] = [
+    { id: "ingredients", label: "Recipe" },
+    ...(stockHistory.length > 0 ? [{ id: "batches" as const, label: "Batches" }] : []),
+    ...(hasVersionHistory ? [{ id: "history" as const, label: "History" }] : []),
+  ];
+  // Guard against a selected tab that no longer exists (e.g. the last stock
+  // entry was removed while the Batches tab was open).
+  const visibleTab = tabs.some((t) => t.id === activeTab) ? activeTab : "ingredients";
   const locked = filling.status === "confirmed" && !unlocked;
 
   return (
@@ -325,26 +337,28 @@ export default function FillingDetailPage() {
       <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
         {/* Main column */}
         <div className="min-w-0">
-          {hasVersionHistory && (
+          {tabs.length > 1 && (
             <div className="flex border-b border-border mb-4">
-              {(["ingredients", "history"] as const).map((tab) => (
+              {tabs.map(({ id, label }) => (
                 <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  key={id}
+                  onClick={() => setActiveTab(id)}
                   className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-                    activeTab === tab
+                    visibleTab === id
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {tab === "ingredients" ? "Recipe" : "History"}
+                  {label}
                 </button>
               ))}
             </div>
           )}
 
-          {activeTab === "history" && hasVersionHistory ? (
+          {visibleTab === "history" ? (
             <FillingVersionHistoryTab versions={versionHistory} currentId={fillingId} />
+          ) : visibleTab === "batches" ? (
+            <FillingBatchesTab entries={stockHistory} />
           ) : (
             <div className="space-y-4">
               <IngredientsCard
@@ -665,6 +679,7 @@ export default function FillingDetailPage() {
 
         {/* Sidebar */}
         <div className="lg:sticky lg:top-4 space-y-4">
+          <StockCard entries={stockHistory} />
           <PropertiesCard key={filling.id} fillingId={fillingId} filling={filling} statusSuggestions={statusSuggestions} />
           <DerivedCard
             filling={filling}
@@ -890,6 +905,101 @@ function NotesCard({ filling }: { filling: Filling }) {
         rows={4}
         className="w-full resize-y border-0 bg-transparent px-4 py-3 text-sm focus:outline-none placeholder:text-muted-foreground/50"
       />
+    </div>
+  );
+}
+
+// ─── Sidebar: Stock card ────────────────────────────────────────────────────
+
+function formatMadeAt(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Current stock at a glance. Entries are sorted newest-first by the hook, so
+ *  the first one is also "when I last made this". */
+function StockCard({ entries }: { entries: FillingStock[] }) {
+  const availableG = entries.reduce((sum, e) => (!e.frozen && e.remainingG > 0 ? sum + e.remainingG : sum), 0);
+  const frozenG = entries.reduce((sum, e) => (e.frozen && e.remainingG > 0 ? sum + e.remainingG : sum), 0);
+  const lastMade = entries[0]?.madeAt;
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-3.5">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Stock</h3>
+      {availableG > 0 || frozenG > 0 ? (
+        <div className="space-y-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xs text-muted-foreground">Available</span>
+            <span className="text-sm font-medium tabular-nums">{fmtG(availableG)}g</span>
+          </div>
+          {frozenG > 0 && (
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-xs text-muted-foreground">Freezer</span>
+              <span className="text-sm font-medium tabular-nums">{fmtG(frozenG)}g</span>
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">None in stock or freezer.</p>
+      )}
+      <div className="flex items-baseline justify-between gap-2 mt-2 pt-2 border-t border-border">
+        <span className="text-xs text-muted-foreground">Last made</span>
+        <span className="text-sm font-medium tabular-nums">{lastMade ? formatMadeAt(lastMade) : "—"}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Batches tab ────────────────────────────────────────────────────────────
+
+/** Every batch ever recorded for this filling, newest first. Stock rows are
+ *  zeroed rather than deleted when used up, so depleted batches stay here as
+ *  history. Note the data limit: only what's *left* is stored, not the size
+ *  the batch was originally made at. */
+function FillingBatchesTab({ entries }: { entries: FillingStock[] }) {
+  const plans = useProductionPlans();
+  const planNameById = new Map(plans.filter((p) => p.id != null).map((p) => [p.id!, p.name]));
+
+  if (entries.length === 0) {
+    return <p className="text-sm text-muted-foreground">No batches recorded yet.</p>;
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      {entries.map((entry) => {
+        const usedUp = entry.remainingG <= 0;
+        const planName = entry.planId ? planNameById.get(entry.planId) : undefined;
+        return (
+          <div
+            key={entry.id}
+            className="flex items-start justify-between gap-3 px-4 py-2.5 border-b border-border last:border-b-0"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-medium tabular-nums">{formatMadeAt(entry.madeAt)}</p>
+              {entry.notes && (
+                <p className="text-xs text-muted-foreground mt-0.5 break-words">{entry.notes}</p>
+              )}
+              {entry.planId && (
+                <Link
+                  href={`/production/${encodeURIComponent(entry.planId)}`}
+                  className="text-xs text-primary underline underline-offset-2 mt-0.5 inline-block"
+                >
+                  {planName ?? "View batch"}
+                </Link>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {entry.frozen && (
+                <span className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 px-1.5 py-0 text-[10px] font-semibold">
+                  Frozen
+                </span>
+              )}
+              <span className={`text-sm tabular-nums ${usedUp ? "text-muted-foreground" : "font-medium"}`}>
+                {usedUp ? "used up" : `${fmtG(entry.remainingG)}g left`}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
