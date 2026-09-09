@@ -55,7 +55,7 @@ async function createProductWithFilling(page: Page, productName: string, filling
   await page.getByRole("textbox", { name: "Product name" }).fill(productName);
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/products\/.+/);
-  await page.getByRole("button", { name: "Assign filling" }).click();
+  await page.getByRole("button", { name: "Add filling" }).click();
   await page.getByPlaceholder("Search fillings to assign...").fill(fillingName);
   await page.getByRole("button", { name: fillingName }).click();
 }

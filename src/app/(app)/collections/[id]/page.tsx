@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCollection,
   useCollectionProducts,
   useCollectionPackagings,
   useCollectionPricingSnapshots,
-  saveCollection,
+  updateCollectionFields,
   deleteCollection,
   addProductToCollection,
   removeProductFromCollection,
@@ -22,12 +22,13 @@ import {
 } from "@/lib/hooks";
 import { db } from "@/lib/db";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ArrowLeft, Plus, Search, X, Trash2, Pencil, ChevronDown, RefreshCw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Plus, Search, X, Trash2, ChevronDown, RefreshCw, AlertTriangle } from "lucide-react";
 import { InlineNameEditor } from "@/components/inline-name-editor";
-import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
+import { SidebarCard, PropertyRow, DerivedRow, PROPERTY_INPUT_CLASS } from "@/components/detail-sidebar";
 import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
-import type { ProductCostSnapshot, Packaging, PackagingOrder, CollectionPricingSnapshot } from "@/types";
+import type { Collection, ProductCostSnapshot, Packaging, PackagingOrder, CollectionPricingSnapshot } from "@/types";
 import { costPerGram } from "@/types";
 import {
   latestPackagingUnitCost,
@@ -98,7 +99,6 @@ export default function CollectionDetailPage() {
   const collectionId = useSpaId("collections");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isNew = searchParams.get("new") === "1";
   const from = searchParams.get("from");
   const backHref = from === "pricing" ? "/pricing" : "/collections";
   const backLabel = from === "pricing" ? "Pricing & Margins" : "Collections";
@@ -108,23 +108,22 @@ export default function CollectionDetailPage() {
   const collection = useCollection(collectionId);
   const collectionProducts = useCollectionProducts(collectionId);
   const collectionPackagings = useCollectionPackagings(collectionId);
-  // Include archived so the name lookup map still resolves names for
-  // products that were archived after being added to this collection.
-  // Archived products are filtered out of the "Add product" form separately.
+  // Include archived so the name lookup map still resolves names for products
+  // archived after being added. Archived products are filtered out of the
+  // "Add product" picker separately.
   const allProducts = useProductsList(true);
   const productCategoryMap = useProductCategoryMap();
   const allPackaging = usePackagingList(true);
   const allOrders = useAllPackagingOrders();
   const allPricingSnapshots = useCollectionPricingSnapshots(collectionId);
 
-  // Build product ID list for cost hooks (stable reference)
   const productIds = useMemo(
     () => collectionProducts.map((cr) => cr.productId),
     [collectionProducts]
   );
   const productCostMap = useProductCosts(productIds);
 
-  // Check if any ingredients used in this collection's products have missing pricing
+  // Do any ingredients behind this collection's products lack pricing?
   const productIdsKey = productIds.join(",");
   const hasMissingIngredientPricing = useLiveQuery(async () => {
     if (productIds.length === 0) return false;
@@ -138,13 +137,7 @@ export default function CollectionDetailPage() {
     return ingredients.some((ing) => costPerGram(ing) === null);
   }, [productIdsKey]);
 
-  // Edit mode
-  const [editing, setEditing] = useState(isNew);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [notes, setNotes] = useState("");
+  const [activeTab, setActiveTab] = useState<"collection" | "pricing">("collection");
 
   // Product management
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -158,67 +151,123 @@ export default function CollectionDetailPage() {
   const [pendingRemoveBox, setPendingRemoveBox] = useState<string | null>(null);
   const [editingSellPrice, setEditingSellPrice] = useState<string | null>(null);
   const [editSellPriceStr, setEditSellPriceStr] = useState("");
-  // Tracks which box history panels are expanded (keyed by cp.id)
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
 
-  // Delete confirmation
   const [showDelete, setShowDelete] = useState(false);
 
-  // Sync local state from DB when collection first loads
+  // Loading vs. not-found — `useCollection` returns `undefined` both while
+  // pending and for a missing row, so a one-shot direct read resolves which.
+  // (The page previously branched on `collection === null`, which this hook
+  // never returns, so its "not found" state was unreachable.)
+  const [loadState, setLoadState] = useState<"loading" | "found" | "not-found">("loading");
   useEffect(() => {
-    if (!collection) return;
-    setName(collection.name || "");
-    setDescription(collection.description || "");
-    setStartDate(collection.startDate || "");
-    setEndDate(collection.endDate || "");
-    setNotes(collection.notes || "");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collection?.id]);
+    if (!collectionId) return;
+    let cancelled = false;
+    db.collections.get(collectionId).then((c) => {
+      if (!cancelled) setLoadState(c ? "found" : "not-found");
+    });
+    return () => { cancelled = true; };
+  }, [collectionId]);
 
-  // Escape key: cancel edit mode or dismiss delete confirmation
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (showDelete) setShowDelete(false);
-      else if (editing) handleCancel();
+      else if (pendingRemove) setPendingRemove(null);
+      else if (pendingRemoveBox) setPendingRemoveBox(null);
+      else if (showAddProduct) { setShowAddProduct(false); setProductSearch(""); }
+      else if (showAddBox) setShowAddBox(false);
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showDelete, editing]);
+  }, [showDelete, pendingRemove, pendingRemoveBox, showAddProduct, showAddBox]);
 
-  function enterEdit() {
-    if (!collection) return;
-    setName(collection.name || "");
-    setDescription(collection.description || "");
-    setStartDate(collection.startDate || "");
-    setEndDate(collection.endDate || "");
-    setNotes(collection.notes || "");
-    setEditing(true);
-  }
+  const productIdSet = useMemo(
+    () => new Set(collectionProducts.map((cr) => cr.productId)),
+    [collectionProducts]
+  );
 
-  const fromSuffix = from ? `?from=${from}` : "";
+  const availableProducts = useMemo(() => {
+    const q = productSearch.toLowerCase();
+    return allProducts.filter(
+      (r) => !r.archived && !productIdSet.has(r.id ?? "") && (!q || r.name.toLowerCase().includes(q))
+    );
+  }, [allProducts, productIdSet, productSearch]);
 
-  function handleCancel() {
-    setEditing(false);
-    if (isNew && collectionId) router.replace(`/collections/${encodeURIComponent(collectionId)}${fromSuffix}`);
-  }
+  const productMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of allProducts) if (r.id) m.set(r.id, r.name);
+    return m;
+  }, [allProducts]);
 
-  async function handleSave() {
-    if (!collection?.id || !name.trim() || !startDate) return;
-    await saveCollection({
-      ...collection,
-      id: collection.id,
-      name: name.trim(),
-      description: description.trim() || undefined,
-      startDate,
-      endDate: endDate || undefined,
-      notes: notes.trim() || undefined,
+  const packagingMap = useMemo(() => {
+    const m = new Map<string, Packaging>();
+    for (const p of allPackaging) if (p.id) m.set(p.id, p);
+    return m;
+  }, [allPackaging]);
+
+  const ordersByPackaging = useMemo(() => {
+    const m = new Map<string, PackagingOrder[]>();
+    for (const o of allOrders) {
+      const arr = m.get(o.packagingId) ?? [];
+      arr.push(o);
+      m.set(o.packagingId, arr);
+    }
+    return m;
+  }, [allOrders]);
+
+  const snapshotsByPackaging = useMemo(() => {
+    const m = new Map<string, CollectionPricingSnapshot[]>();
+    for (const s of allPricingSnapshots) {
+      const arr = m.get(s.packagingId) ?? [];
+      arr.push(s);
+      m.set(s.packagingId, arr);
+    }
+    return m;
+  }, [allPricingSnapshots]);
+
+  const productCosts: ProductCostEntry[] = useMemo(() => {
+    const entries: ProductCostEntry[] = [];
+    for (const rid of productIds) {
+      const snap = productCostMap.get(rid);
+      if (snap) entries.push({ productId: rid, costPerProduct: snap.costPerProduct });
+    }
+    return entries;
+  }, [productIds, productCostMap]);
+
+  const avgCost = useMemo(() => averageProductCost(productCosts), [productCosts]);
+
+  const boxPricings = useMemo(() => {
+    if (!avgCost) return [];
+    return collectionPackagings.map((cp) => {
+      const pkg = packagingMap.get(cp.packagingId);
+      const orders = ordersByPackaging.get(cp.packagingId) ?? [];
+      const unitCost = latestPackagingUnitCost(orders) ?? 0;
+      const capacity = pkg?.capacity ?? 0;
+      const pricing = calculateBoxPricing(avgCost.avg, capacity, unitCost, cp.sellPrice);
+      const health = marginHealth(pricing.marginPercent);
+      return { cp, pkg, pricing, health, unitCost };
     });
-    setSavedOnce(true);
-    setEditing(false);
-    if (isNew && collectionId) router.replace(`/collections/${encodeURIComponent(collectionId)}${fromSuffix}`);
+  }, [avgCost, collectionPackagings, packagingMap, ordersByPackaging]);
+
+  const usedPackagingIds = useMemo(
+    () => new Set(collectionPackagings.map((cp) => cp.packagingId)),
+    [collectionPackagings]
+  );
+
+  const avgMargin = useMemo(() => {
+    if (boxPricings.length === 0) return null;
+    return boxPricings.reduce((sum, b) => sum + b.pricing.marginPercent, 0) / boxPricings.length;
+  }, [boxPricings]);
+
+  if (!collectionId || loadState === "loading" || (loadState === "found" && !collection)) {
+    return <DetailSkeleton cards={2} sidebar={2} tabs label="Loading collection" />;
   }
+  if (loadState === "not-found" || !collection) {
+    return <DetailNotFound entity="collection" backHref={backHref} backLabel={backLabel} />;
+  }
+
+  const status = getStatus(collection.startDate, collection.endDate);
 
   async function handleDelete() {
     if (!collection?.id) return;
@@ -237,7 +286,7 @@ export default function CollectionDetailPage() {
     setPendingRemove(null);
   }
 
-  /** Record a pricing snapshot for a given packaging + sell price using current avg cost */
+  /** Record a pricing snapshot for a packaging + sell price against current avg cost. */
   async function recordPricingSnapshot(
     packagingId: string,
     sellPrice: number,
@@ -248,7 +297,7 @@ export default function CollectionDetailPage() {
     const pkg = packagingMap.get(packagingId);
     const orders = ordersByPackaging.get(packagingId) ?? [];
     const packagingUnitCost = latestPackagingUnitCost(orders) ?? 0;
-    // Don't record when packaging has no cost data — the snapshot would be meaningless
+    // Skip when the packaging has no cost data — the snapshot would be meaningless.
     if (packagingUnitCost === 0) return;
     const capacity = pkg?.capacity ?? 0;
     const pricing = calculateBoxPricing(avgCost.avg, capacity, packagingUnitCost, sellPrice);
@@ -303,113 +352,21 @@ export default function CollectionDetailPage() {
     setPendingRemoveBox(null);
   }
 
-  const productIdSet = useMemo(
-    () => new Set(collectionProducts.map((cr) => cr.productId)),
-    [collectionProducts]
-  );
+  const dateRange = collection.endDate
+    ? `${formatDate(collection.startDate)} – ${formatDate(collection.endDate)}`
+    : `${formatDate(collection.startDate)} · no end date`;
 
-  const availableProducts = useMemo(() => {
-    const q = productSearch.toLowerCase();
-    return allProducts.filter(
-      (r) => !r.archived && !productIdSet.has(r.id ?? "") && (!q || r.name.toLowerCase().includes(q))
-    );
-  }, [allProducts, productIdSet, productSearch]);
-
-  const productMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of allProducts) if (r.id) m.set(r.id, r.name);
-    return m;
-  }, [allProducts]);
-
-  const packagingMap = useMemo(() => {
-    const m = new Map<string, Packaging>();
-    for (const p of allPackaging) if (p.id) m.set(p.id, p);
-    return m;
-  }, [allPackaging]);
-
-  const ordersByPackaging = useMemo(() => {
-    const m = new Map<string, PackagingOrder[]>();
-    for (const o of allOrders) {
-      const arr = m.get(o.packagingId) ?? [];
-      arr.push(o);
-      m.set(o.packagingId, arr);
-    }
-    return m;
-  }, [allOrders]);
-
-  // Group pricing history snapshots by packagingId (already newest-first from hook)
-  const snapshotsByPackaging = useMemo(() => {
-    const m = new Map<string, CollectionPricingSnapshot[]>();
-    for (const s of allPricingSnapshots) {
-      const arr = m.get(s.packagingId) ?? [];
-      arr.push(s);
-      m.set(s.packagingId, arr);
-    }
-    return m;
-  }, [allPricingSnapshots]);
-
-  // Average product cost for this collection
-  const productCosts: ProductCostEntry[] = useMemo(() => {
-    const entries: ProductCostEntry[] = [];
-    for (const rid of productIds) {
-      const snap = productCostMap.get(rid);
-      if (snap) entries.push({ productId: rid, costPerProduct: snap.costPerProduct });
-    }
-    return entries;
-  }, [productIds, productCostMap]);
-
-  const avgCost = useMemo(() => averageProductCost(productCosts), [productCosts]);
-
-  // Box pricing for each configured packaging
-  const boxPricings = useMemo(() => {
-    if (!avgCost) return [];
-    return collectionPackagings.map((cp) => {
-      const pkg = packagingMap.get(cp.packagingId);
-      const orders = ordersByPackaging.get(cp.packagingId) ?? [];
-      const unitCost = latestPackagingUnitCost(orders) ?? 0;
-      const capacity = pkg?.capacity ?? 0;
-      const pricing = calculateBoxPricing(avgCost.avg, capacity, unitCost, cp.sellPrice);
-      const health = marginHealth(pricing.marginPercent);
-      return { cp, pkg, pricing, health, unitCost };
-    });
-  }, [avgCost, collectionPackagings, packagingMap, ordersByPackaging]);
-
-  // Packaging already added (to exclude from dropdown)
-  const usedPackagingIds = useMemo(
-    () => new Set(collectionPackagings.map((cp) => cp.packagingId)),
-    [collectionPackagings]
-  );
-
-  const [savedOnce, setSavedOnce] = useState(false);
-  const formDirty = editing && collection != null && (
-    name !== (collection.name || "") ||
-    description !== (collection.description || "") ||
-    startDate !== (collection.startDate || "") ||
-    endDate !== (collection.endDate || "") ||
-    notes !== (collection.notes || "")
-  );
-  const isDirty = (isNew && !savedOnce) || formDirty;
-
-  const handleConfirmLeave = useCallback(async () => {
-    if (isNew && collection?.id) {
-      await deleteCollection(collection.id);
-    }
-  }, [isNew, collection?.id]);
-
-  useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
-
-  if (!collectionId || collection === undefined) {
-    return <div className="p-6 text-muted-foreground text-sm">Loading...</div>;
-  }
-  if (collection === null) {
-    return <div className="p-6 text-muted-foreground text-sm">Collection not found.</div>;
-  }
-
-  const status = getStatus(collection.startDate, collection.endDate);
+  const subtitle = [
+    dateRange,
+    `${collectionProducts.length} product${collectionProducts.length !== 1 ? "s" : ""}`,
+    collectionPackagings.length > 0
+      ? `${collectionPackagings.length} box size${collectionPackagings.length !== 1 ? "s" : ""}`
+      : null,
+    avgMargin != null ? `${formatMarginPercent(avgMargin)} avg margin` : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <div>
-      {/* Back */}
       <div className="px-4 pt-6 pb-2">
         <Link
           href={backHref}
@@ -419,271 +376,248 @@ export default function CollectionDetailPage() {
         </Link>
       </div>
 
-      <div className="px-4 space-y-6 pb-10">
-        {/* Name row + edit button */}
-        <div className="flex items-start justify-between gap-2">
-          <InlineNameEditor
-            name={collection.name}
-            onSave={async (n) => { await saveCollection({ ...collection, name: n }); }}
-            className="text-xl font-bold"
-          />
-          {!editing && (
-            <button
-              onClick={enterEdit}
-              className="p-1.5 rounded-full hover:bg-muted transition-colors shrink-0"
-              aria-label="Edit collection"
-            >
-              <Pencil className="w-4 h-4 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-
-        {/* Edit form */}
-        {editing ? (
-          <section className="space-y-3">
-            <div>
-              <label className="label">Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus={isNew}
-                className="input"
-                placeholder="Collection name"
-              />
-            </div>
-            <div>
-              <label className="label">Description</label>
-              <input
-                type="text"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="input"
-                placeholder="e.g. Easter 2026 gift box selection"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Start date</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  required
-                  className="input"
-                />
-              </div>
-              <div>
-                <label className="label">End date <span className="text-muted-foreground font-normal">(optional)</span></label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="input pr-8"
-                    min={startDate}
-                  />
-                  {endDate && (
-                    <button
-                      type="button"
-                      onClick={() => setEndDate("")}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      aria-label="Clear end date"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-                {!endDate && <p className="text-xs text-muted-foreground mt-1">No end date = ongoing standard range</p>}
-              </div>
-            </div>
-            <div>
-              <label className="label">Notes</label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="input min-h-[72px] resize-none"
-                placeholder="Internal notes..."
-              />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={handleSave}
-                disabled={!name.trim() || !startDate}
-                className="btn-primary px-4 py-2 disabled:opacity-40"
-              >
-                Save
-              </button>
-              <button onClick={handleCancel} className="btn-secondary px-4 py-2">
-                Cancel
-              </button>
-            </div>
-          </section>
-        ) : (
-          /* View mode */
-          <section className="space-y-3">
-            <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${STATUS_CLASS[status]}`}>
+      {/* Header */}
+      <div className="px-4 pb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <InlineNameEditor
+              name={collection.name}
+              onSave={async (n) => { await updateCollectionFields(collection!.id!, { name: n }); }}
+              className="text-xl font-bold"
+            />
+            <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full ${STATUS_CLASS[status]}`}>
               {STATUS_LABEL[status]}
             </span>
-            {collection.description && (
-              <p className="text-sm text-muted-foreground">{collection.description}</p>
-            )}
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">From</span>
-              <span className="font-medium">{formatDate(collection.startDate)}</span>
-              {collection.endDate ? (
-                <>
-                  <span className="text-muted-foreground">&rarr;</span>
-                  <span className="font-medium">{formatDate(collection.endDate)}</span>
-                </>
-              ) : (
-                <span className="text-muted-foreground">&middot; no end date</span>
-              )}
-            </div>
-            {collection.notes && (
-              <p className="text-sm whitespace-pre-wrap text-muted-foreground">{collection.notes}</p>
-            )}
-          </section>
-        )}
-
-        {/* Products */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-primary">
-              Products <span className="text-xs font-normal text-muted-foreground">({collectionProducts.length})</span>
-            </h2>
-            {editing && (
-              <button
-                onClick={() => setShowAddProduct((v) => !v)}
-                className="flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add product
-              </button>
-            )}
           </div>
+          <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
+        </div>
+        <button
+          onClick={() => { setActiveTab("collection"); setShowAddProduct(true); }}
+          className="btn-primary px-4 py-2 text-sm shrink-0"
+        >
+          Add product
+        </button>
+      </div>
 
-          {editing && showAddProduct && (
-            <div className="rounded-lg border border-border bg-card p-3 mb-3 space-y-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                  placeholder="Search products to add..."
-                  autoFocus
-                  className="input !pl-9"
-                />
+      {/* Tab strip */}
+      <div className="flex border-b border-border mb-4 px-4 overflow-x-auto">
+        {([
+          { id: "collection" as const, label: "Collection" },
+          { id: "pricing" as const, label: "Pricing & margins" },
+        ]).map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 text-[13px] font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${
+              activeTab === tab.id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "collection" ? (
+        <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+          {/* ── Main column ── */}
+          <div className="space-y-4 min-w-0">
+            {/* Products */}
+            <div className="rounded-lg border border-border bg-card">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+                <h2 className="text-[13px] font-semibold">
+                  Products <span className="font-normal text-muted-foreground">({collectionProducts.length})</span>
+                </h2>
+                <div className="relative w-[220px] max-w-[55%]">
+                  <Search aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={productSearch}
+                    onChange={(e) => { setProductSearch(e.target.value); setShowAddProduct(true); }}
+                    onFocus={() => setShowAddProduct(true)}
+                    placeholder="Search products to add…"
+                    aria-label="Search products to add"
+                    className="input !pl-8 !py-1 text-xs"
+                  />
+                </div>
               </div>
-              {availableProducts.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2 text-center">
-                  {allProducts.length === 0 ? "No products in library yet." : "All products already added."}
-                </p>
+
+              {showAddProduct && (
+                <div className="px-4 py-3 border-b border-border bg-muted/30">
+                  {availableProducts.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-1">
+                      {allProducts.length === 0 ? "No products in library yet." : "All products already added."}
+                    </p>
+                  ) : (
+                    <ul className="space-y-1 max-h-52 overflow-y-auto">
+                      {availableProducts.map((r) => (
+                        <li key={r.id}>
+                          <button
+                            onClick={() => handleAddProduct(r.id ?? "")}
+                            className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-muted transition-colors"
+                          >
+                            {r.name}
+                            {r.productCategoryId && productCategoryMap.get(r.productCategoryId) && (
+                              <span className="ml-1.5 text-xs text-muted-foreground capitalize">
+                                {productCategoryMap.get(r.productCategoryId)!.name}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <button
+                    onClick={() => { setShowAddProduct(false); setProductSearch(""); }}
+                    className="text-xs text-muted-foreground hover:underline mt-2"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+
+              {collectionProducts.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">No products in this collection.</p>
               ) : (
-                <ul className="space-y-1 max-h-52 overflow-y-auto">
-                  {availableProducts.map((r) => (
-                    <li key={r.id}>
-                      <button
-                        onClick={() => handleAddProduct(r.id ?? "")}
-                        className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-muted transition-colors"
+                <div>
+                  {collectionProducts.map((cr) => {
+                    const snap = productCostMap.get(cr.productId);
+                    const name = productMap.get(cr.productId) ?? cr.productId;
+                    return (
+                      <div
+                        key={cr.id}
+                        className="flex items-center gap-3 px-4 py-2.5 border-b border-border last:border-b-0 hover:bg-muted/40 transition-colors"
                       >
-                        {r.name}
-                        {r.productCategoryId && productCategoryMap.get(r.productCategoryId) && (
-                          <span className="ml-1.5 text-xs text-muted-foreground capitalize">
-                            {productCategoryMap.get(r.productCategoryId)!.name}
+                        <span
+                          aria-hidden="true"
+                          className="w-7 h-7 rounded-md bg-muted shrink-0 flex items-center justify-center text-[11px] font-semibold text-muted-foreground"
+                        >
+                          {name.charAt(0).toUpperCase()}
+                        </span>
+                        <Link
+                          href={`/products/${encodeURIComponent(cr.productId)}`}
+                          className="flex-1 min-w-0 text-sm font-medium truncate hover:underline"
+                        >
+                          {name}
+                        </Link>
+                        {snap && (
+                          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                            {formatPrice(snap.costPerProduct, sym)}/pc
                           </span>
                         )}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                        {pendingRemove === cr.id ? (
+                          <span className="flex items-center gap-1.5 text-xs shrink-0">
+                            <span className="text-muted-foreground">Remove?</span>
+                            <button
+                              onClick={() => handleRemoveProduct(cr.id ?? "")}
+                              className="text-destructive font-medium hover:underline"
+                            >
+                              Yes
+                            </button>
+                            <button
+                              onClick={() => setPendingRemove(null)}
+                              className="text-muted-foreground hover:underline"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setPendingRemove(cr.id ?? "")}
+                            className="text-muted-foreground/40 hover:text-destructive shrink-0 transition-colors"
+                            aria-label={`Remove ${name} from collection`}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
-              <button
-                onClick={() => { setShowAddProduct(false); setProductSearch(""); }}
-                className="text-xs text-muted-foreground hover:underline"
-              >
-                Done
-              </button>
+
+              {avgCost && productCosts.length > 0 && (
+                <div className="px-4 py-2.5 bg-muted flex items-baseline justify-between">
+                  <span className="text-xs text-muted-foreground">
+                    Collection average{" "}
+                    <span className="text-[10px]">({avgCost.count} with pricing)</span>
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums">
+                    {formatPrice(avgCost.avg, sym)} / piece
+                  </span>
+                </div>
+              )}
+              {productCosts.length > 0 && avgCost && avgCost.count < productIds.length && (
+                <p className="px-4 py-2 text-[11px] text-status-warn border-t border-border">
+                  {productIds.length - avgCost.count} product(s) have no cost data yet — assign a mould and ingredients to include them.
+                </p>
+              )}
             </div>
-          )}
 
-          {collectionProducts.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center border border-dashed border-border rounded-lg">
-              {editing ? 'No products yet \u2014 use "Add product" above.' : "No products in this collection."}
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {collectionProducts.map((cr) => {
-                const snap = productCostMap.get(cr.productId);
-                return (
-                  <li key={cr.id} className="rounded-lg border border-border bg-card flex items-center gap-2 px-3 py-2.5">
-                    <Link
-                      href={`/products/${encodeURIComponent(cr.productId)}`}
-                      className="flex-1 min-w-0 text-sm font-medium truncate hover:underline"
-                    >
-                      {productMap.get(cr.productId) ?? cr.productId}
-                    </Link>
-                    {snap && (
-                      <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
-                        {formatPrice(snap.costPerProduct, sym)}/pc
-                      </span>
-                    )}
-                    {editing && (
-                      pendingRemove === cr.id ? (
-                        <span className="flex items-center gap-1.5 text-xs shrink-0">
-                          <span className="text-muted-foreground">Remove?</span>
-                          <button
-                            onClick={() => handleRemoveProduct(cr.id ?? "")}
-                            className="text-red-600 font-medium hover:underline"
-                          >
-                            Yes
-                          </button>
-                          <button
-                            onClick={() => setPendingRemove(null)}
-                            className="text-muted-foreground hover:underline"
-                          >
-                            Cancel
-                          </button>
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => setPendingRemove(cr.id ?? "")}
-                          className="text-muted-foreground/40 hover:text-muted-foreground shrink-0"
-                          aria-label="Remove product from collection"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+            <NotesCard key={collection.id} collection={collection} />
 
-          {/* Per-product cost summary */}
-          {avgCost && productCosts.length > 0 && (
-            <div className="mt-3 rounded-lg bg-muted/50 px-3 py-2.5 flex items-baseline justify-between">
-              <span className="text-xs text-muted-foreground">
-                Avg. product cost <span className="text-[10px]">({avgCost.count} products with pricing)</span>
-              </span>
-              <span className="text-sm font-semibold tabular-nums">{formatPrice(avgCost.avg, sym)}</span>
+            {/* Destructive row — delete only; collections have no archive. */}
+            <div className="pt-2">
+              {!showDelete ? (
+                <button
+                  onClick={() => setShowDelete(true)}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete collection
+                </button>
+              ) : (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+                  <p className="text-sm font-medium text-destructive">Delete this collection?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Removes the collection, its product list and its box pricing. The{" "}
+                    {collectionProducts.length} product{collectionProducts.length !== 1 ? "s" : ""}{" "}
+                    themselves stay in the catalogue. This cannot be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={handleDelete} className="btn-destructive px-4 py-2 text-sm">
+                      Yes, delete
+                    </button>
+                    <button onClick={() => setShowDelete(false)} className="btn-secondary px-4 py-2 text-sm">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-          {productCosts.length > 0 && avgCost && avgCost.count < productIds.length && (
-            <p className="text-[11px] text-status-warn mt-1">
-              {productIds.length - avgCost.count} product(s) have no cost data yet &mdash; assign a mould and ingredients to include them.
-            </p>
-          )}
-        </section>
+          </div>
 
-        {/* ═══════════════════════════════════════════════════════════════
-            Pricing & Margins
-           ═══════════════════════════════════════════════════════════════ */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-primary">
-              Pricing &amp; Margins
+          {/* ── Sidebar ── */}
+          <div className="space-y-4 lg:sticky lg:top-4">
+            <PropertiesCard key={`props-${collection.id}`} collection={collection} />
+
+            <SidebarCard title="Derived" tinted className="space-y-2">
+              <DerivedRow label="Status" value={STATUS_LABEL[status]} />
+              <DerivedRow label="Products" value={collectionProducts.length} />
+              <DerivedRow
+                label="Average cost"
+                value={avgCost ? `${formatPrice(avgCost.avg, sym)}/pc` : "—"}
+              />
+              <DerivedRow
+                label="Average margin"
+                value={avgMargin != null ? formatMarginPercent(avgMargin) : "—"}
+              />
+              {hasMissingIngredientPricing && (
+                <p className="text-[11px] text-status-warn bg-status-warn-bg border border-status-warn-edge rounded-md px-2 py-1">
+                  Some ingredients behind these products have no pricing — margins may be
+                  understated.
+                </p>
+              )}
+            </SidebarCard>
+          </div>
+        </div>
+      ) : (
+        /* ── Pricing & margins — full width, no sidebar: the box cards carry cost
+              breakdowns and margin history that 320px cannot hold. ── */
+        <div className="px-4 pb-8 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[13px] font-semibold">
+              Boxes <span className="font-normal text-muted-foreground">({collectionPackagings.length})</span>
             </h2>
             <button
               onClick={() => setShowAddBox((v) => !v)}
@@ -693,12 +627,12 @@ export default function CollectionDetailPage() {
             </button>
           </div>
 
-          {/* Add box form */}
           {showAddBox && (
-            <div className="rounded-lg border border-border bg-card p-3 mb-3 space-y-3">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-3 max-w-md">
               <div>
-                <label className="label">Packaging</label>
+                <label className="label" htmlFor="collection-packaging">Packaging</label>
                 <select
+                  id="collection-packaging"
                   value={selectedPackagingId}
                   onChange={(e) => setSelectedPackagingId(e.target.value)}
                   className="input"
@@ -707,17 +641,16 @@ export default function CollectionDetailPage() {
                   {allPackaging
                     .filter((p) => p.id && !usedPackagingIds.has(p.id))
                     .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.capacity} pcs)
-                      </option>
+                      <option key={p.id} value={p.id}>{p.name} ({p.capacity} pcs)</option>
                     ))}
                 </select>
               </div>
               <div>
-                <label className="label">Sell price</label>
+                <label className="label" htmlFor="collection-sell-price">Sell price</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">&euro;</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">{sym}</span>
                   <input
+                    id="collection-sell-price"
                     type="number"
                     step="0.01"
                     min="0"
@@ -748,29 +681,31 @@ export default function CollectionDetailPage() {
           )}
 
           {hasMissingIngredientPricing && (
-            <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2 mb-3">
+            <div className="flex items-start gap-2 rounded-md bg-status-warn-bg border border-status-warn-edge px-3 py-2">
               <AlertTriangle className="w-4 h-4 text-status-warn shrink-0 mt-0.5" />
               <p className="text-xs text-status-warn">
-                Some ingredients in this collection&apos;s products have no pricing data — margin calculations may be understated. Check individual product cost tabs.
+                Some ingredients in this collection&apos;s products have no pricing data — margin
+                calculations may be understated. Check individual product cost tabs.
               </p>
             </div>
           )}
 
           {collectionPackagings.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg space-y-1">
+            <div className="text-sm text-muted-foreground py-8 text-center border border-dashed border-border rounded-lg space-y-1">
               <p>No box pricing configured yet.</p>
               <p className="text-xs">Add a box to see cost breakdowns and margins.</p>
             </div>
           ) : !avgCost ? (
-            <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg space-y-1">
+            <div className="text-sm text-muted-foreground py-8 text-center border border-dashed border-border rounded-lg space-y-1">
               <p>No product cost data available.</p>
               <p className="text-xs">Ensure products have a default mould and costed ingredients.</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
               {boxPricings.map(({ cp, pkg, pricing, health, unitCost }) => {
                 const cpId = cp.id ?? "";
-                // Only show snapshots where packaging was actually priced — filter out initialisation entries
+                // Only show snapshots where packaging was actually priced —
+                // filter out initialisation entries.
                 const history = (snapshotsByPackaging.get(cp.packagingId) ?? []).filter((s) => s.packagingUnitCost > 0);
                 return (
                   <BoxCard
@@ -784,7 +719,7 @@ export default function CollectionDetailPage() {
                     historyExpanded={expandedHistory.has(cpId)}
                     onToggleHistory={() => setExpandedHistory((prev) => {
                       const next = new Set(prev);
-                      next.has(cpId) ? next.delete(cpId) : next.add(cpId);
+                      if (next.has(cpId)) next.delete(cpId); else next.add(cpId);
                       return next;
                     })}
                     isEditingSellPrice={editingSellPrice === cpId}
@@ -808,45 +743,134 @@ export default function CollectionDetailPage() {
             </div>
           )}
 
-          {/* Link to full pricing overview */}
           {collectionPackagings.length > 0 && (
-            <div className="mt-3">
-              <Link
-                href="/pricing"
-                className="text-xs text-primary hover:underline"
-              >
-                Compare across all collections &rarr;
-              </Link>
-            </div>
+            <Link href="/pricing" className="inline-block text-xs text-primary hover:underline">
+              Compare across all collections &rarr;
+            </Link>
           )}
-        </section>
+        </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Delete */}
-        <section className="pt-4 border-t border-border">
-          {!showDelete ? (
-            <button
-              onClick={() => setShowDelete(true)}
-              className="flex items-center gap-2 text-sm text-destructive hover:underline"
-            >
-              <Trash2 className="w-4 h-4" /> Delete collection
-            </button>
-          ) : (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
-              <p className="text-sm font-medium text-destructive">Delete this collection?</p>
-              <p className="text-xs text-muted-foreground">
-                This removes the collection, its product list, and box pricing. The products themselves are not affected.
-              </p>
-              <div className="flex gap-2">
-                <button onClick={handleDelete} className="btn-destructive px-4 py-2 text-sm">
-                  Yes, delete
-                </button>
-                <button onClick={() => setShowDelete(false)} className="btn-secondary px-4 py-2 text-sm">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </section>
+// ─── Sidebar: Properties ─────────────────────────────────────────────────────
+
+function PropertiesCard({ collection }: { collection: Collection }) {
+  const id = collection.id!;
+  // Keyed by `collection.id` at the call site, so drafts reset on navigation
+  // rather than on every autosave-triggered re-render.
+  const [description, setDescription] = useState(collection.description ?? "");
+  const descTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function commitDescription(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === (collection.description ?? "")) return;
+    updateCollectionFields(id, { description: trimmed || undefined }, "Description");
+  }
+
+  return (
+    <SidebarCard title="Properties">
+      <div className="space-y-1">
+        <PropertyRow label="Starts">
+          <input
+            type="date"
+            value={collection.startDate ?? ""}
+            // A collection with no start date has no derivable status, so an
+            // empty value is ignored rather than written.
+            onChange={(e) => { if (e.target.value) updateCollectionFields(id, { startDate: e.target.value }); }}
+            aria-label="Start date"
+            className={PROPERTY_INPUT_CLASS}
+          />
+        </PropertyRow>
+
+        <PropertyRow label="Ends">
+          <span className="flex items-center gap-1">
+            <input
+              type="date"
+              value={collection.endDate ?? ""}
+              min={collection.startDate}
+              onChange={(e) => updateCollectionFields(id, { endDate: e.target.value || undefined })}
+              aria-label="End date"
+              className={PROPERTY_INPUT_CLASS}
+            />
+            {collection.endDate && (
+              <button
+                onClick={() => updateCollectionFields(id, { endDate: undefined })}
+                aria-label="Clear end date"
+                className="text-muted-foreground hover:text-foreground shrink-0"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </span>
+        </PropertyRow>
+      </div>
+
+      {/* Description is prose, so it gets a full-width block rather than a
+          right-aligned value squeezed against its label. */}
+      <div className="mt-2 pt-2 border-t border-border">
+        <span className="text-xs text-muted-foreground">Description</span>
+        <textarea
+          value={description}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            if (descTimeout.current) clearTimeout(descTimeout.current);
+            descTimeout.current = setTimeout(() => commitDescription(e.target.value), 600);
+          }}
+          onBlur={() => {
+            if (descTimeout.current) clearTimeout(descTimeout.current);
+            commitDescription(description);
+          }}
+          rows={2}
+          placeholder="e.g. Easter 2026 gift box selection"
+          aria-label="Description"
+          className="w-full mt-1 text-sm bg-transparent border-0 resize-none focus:outline-none placeholder:text-muted-foreground/50"
+        />
+      </div>
+    </SidebarCard>
+  );
+}
+
+// ─── Main: Notes ─────────────────────────────────────────────────────────────
+
+function NotesCard({ collection }: { collection: Collection }) {
+  const id = collection.id!;
+  const [value, setValue] = useState(collection.notes ?? "");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function commit(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === (collection.notes ?? "")) return;
+    updateCollectionFields(id, { notes: trimmed || undefined }, "Notes");
+  }
+
+  function handleChange(next: string) {
+    setValue(next);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => commit(next), 600);
+  }
+
+  function handleBlur() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    commit(value);
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-[13px] font-semibold">Notes</h2>
+      </div>
+      <div className="p-4">
+        <textarea
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="Internal notes…"
+          rows={3}
+          aria-label="Notes"
+          className="w-full text-sm bg-transparent border-0 resize-none focus:outline-none placeholder:text-muted-foreground/60"
+        />
       </div>
     </div>
   );

@@ -352,15 +352,13 @@ test.describe("Filling-in-filling — Phase 2 (aggregation propagation)", () => 
     await expect(page.getByText("Phase2 Outer", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Milk", { exact: true })).toHaveCount(0);
 
-    // Edit the leaf ingredient: tick the "Milk" allergen and save. Use the
-    // aria-label-only Edit button (the page has another text-only button with
-    // the same label inside the Allergens tab content). The submit button on
-    // an existing ingredient reads "Update", not "Save".
+    // Tick the "Milk" allergen on the leaf ingredient. The Allergens tab
+    // autosaves the whole allergen array on toggle — no Save button — and the
+    // write runs the cascade that this test exists to verify.
     await page.goto(`/ingredients/${ids.ingredientId}`);
-    await page.getByLabel("Edit ingredient", { exact: true }).first().click();
     await page.getByRole("button", { name: "Allergens" }).click();
-    await page.getByLabel("Milk").check();
-    await page.getByRole("button", { name: "Update" }).click();
+    await page.getByRole("checkbox", { name: "Milk" }).first().click();
+    await expect(page.getByRole("checkbox", { name: "Milk" }).first()).toBeChecked();
 
     // Visit Outer again — the cascaded allergen pill should now be visible.
     // The cascade walks parent edges from the changed ingredient through

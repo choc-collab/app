@@ -1,19 +1,21 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCoatings, useCurrentCoatingMappings, useShellCapableIngredients, saveProduct, addFillingToProduct, removeFillingFromProduct, updateProductFillingPercentage, updateProductFillingFraction, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap, useFillingCategoryMap } from "@/lib/hooks";
+import { useProduct, useProductFillings, useFillings, useFilling, useMouldsList, useProductCategories, useProductCategory, useCurrentCoatingMappings, useShellCapableIngredients, updateProductFields, addFillingToProduct, removeFillingFromProduct, updateProductFillingFraction, setProductFillSplit, reorderProductFillings, deleteProduct, duplicateProduct, archiveProduct, unarchiveProduct, hasProductBeenProduced, usePlanProductsForProduct, useProductionPlans, useProductFillingHistory, useProductCostSnapshots, useLatestProductCostSnapshot, recalculateProductCost, useIngredients, useAllFillingIngredientsByFilling, useAllFillingComponentsByFilling, useDecorationMaterials, saveDecorationMaterial, setPlanProductStockStatus, useCurrencySymbol, useMarketRegion, useDefaultFillMode, useShellDesigns, useDecorationCategoryLabels, useDecorationMaterialColorMap, useFillingCategoryMap } from "@/lib/hooks";
+import { db } from "@/lib/db";
 import { resolveCoating } from "@/lib/production";
 import { deriveShopColor, resolveShopColor } from "@/lib/shopColor";
 import { SHELL_TECHNIQUES, DECORATION_MATERIAL_TYPE_LABELS, DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt, type Product, type ShellDesignStep, type ShellDesignApplyAt, type ProductCostSnapshot, type BreakdownEntry, type ProductFilling, costPerGram, type DecorationMaterial, allergenLabel, type FillMode } from "@/types";
 import { colorToCSS } from "@/lib/colors";
 import { NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
 import { deserializeBreakdown, enrichBreakdownLabels, formatCost, costDelta, deriveShellPercentageFromFractions, fillFractionToGrams, gramsToFillFraction } from "@/lib/costCalculation";
+import { fillSplitTotal } from "@/lib/fillSplit";
 import { reachableIngredientIds } from "@/lib/fillingComponents";
 import { getNutrientsByMarket, getNutritionPanelTitle, scaleToServing, formatNutrientValue, percentDailyValue, calculateProductNutrition } from "@/lib/nutrition";
 import { calculateShellWeightG } from "@/lib/costCalculation";
 import type { MarketRegion } from "@/types";
-import { ArrowLeft, Camera, Plus, X, Search, Trash2, Pencil, ChevronRight, StickyNote, RefreshCw, AlertTriangle, Undo2, Copy, Archive, ArchiveRestore, GripVertical, Snowflake } from "lucide-react";
+import { ArrowLeft, Camera, Plus, X, Search, Trash2, ChevronRight, StickyNote, RefreshCw, AlertTriangle, Undo2, Copy, Archive, ArchiveRestore, GripVertical, Snowflake } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -22,8 +24,9 @@ import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DuplicatedToast } from "@/components/duplicated-toast";
+import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
+import { SidebarCard, PropertyRow, DerivedRow, PROPERTY_NUMBER_CLASS } from "@/components/detail-sidebar";
 import Link from "next/link";
-import { useNavigationGuard } from "@/lib/useNavigationGuard";
 import { useSpaId } from "@/lib/use-spa-id";
 
 export default function ProductDetailPage() {
@@ -37,11 +40,13 @@ export default function ProductDetailPage() {
   const productCategories = useProductCategories();
   const productCategory = useProductCategory(product?.productCategoryId);
   const shellCapableIngredients = useShellCapableIngredients();
-  const coatings = useCoatings();
   const sym = useCurrencySymbol();
+  const latestCost = useLatestProductCostSnapshot(productId);
+  // Every plan this product has appeared in — the Derived card reports the real
+  // count rather than a yes/no, and it's the same source the Batches tab uses.
+  const batchAppearances = usePlanProductsForProduct(productId);
 
   const searchParams = useSearchParams();
-  const isNew = searchParams.get("new") === "1";
   const [isDuplicate] = useState(() => searchParams.get("duplicate") === "1");
 
   const market = useMarketRegion();
@@ -49,114 +54,59 @@ export default function ProductDetailPage() {
   const [activeTab, setActiveTab] = useState<"product" | "shell" | "fillingHistory" | "batches" | "cost" | "nutrition">("product");
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("tab") === "history") setActiveTab("batches");
-    if (params.get("tab") === "shell") setActiveTab("shell");
-    if (params.get("tab") === "fillingHistory") setActiveTab("fillingHistory");
-    if (params.get("tab") === "batches") setActiveTab("batches");
-    if (params.get("tab") === "cost") setActiveTab("cost");
-    if (params.get("tab") === "nutrition") setActiveTab("nutrition");
+    const tab = params.get("tab");
+    if (tab === "history" || tab === "batches") setActiveTab("batches");
+    else if (tab === "shell") setActiveTab("shell");
+    else if (tab === "fillingHistory") setActiveTab("fillingHistory");
+    else if (tab === "cost") setActiveTab("cost");
+    else if (tab === "nutrition") setActiveTab("nutrition");
   }, []);
 
-  const [editing, setEditing] = useState(isNew);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const [productProduced, setProductProduced] = useState(false);
   const [confirmRemovePhoto, setConfirmRemovePhoto] = useState(false);
   const [showDuplicatePanel, setShowDuplicatePanel] = useState(false);
   const [duplicateFillings, setDuplicateFillings] = useState(false);
   const [duplicatingProduct, setDuplicatingProduct] = useState(false);
 
-  // Local buffered state for edit mode
-  const [localFillMode, setLocalFillMode] = useState<FillMode>("percentage");
-  const [localProductCategoryId, setLocalProductCategoryId] = useState("");
-  const [localShellIngredientId, setLocalShellIngredientId] = useState("");
-  const [localShellPercentageStr, setLocalShellPercentageStr] = useState("");
-  const [localCoating, setLocalCoating] = useState("");
-  const [localTags, setLocalTags] = useState<string[]>([]);
-  const [notes, setNotes] = useState("");
-  const [localShelfLife, setLocalShelfLife] = useState("");
-  const [localLowStockThreshold, setLocalLowStockThreshold] = useState("");
-  const [localMouldId, setLocalMouldId] = useState("");
-  const [batchQtyInput, setBatchQtyInput] = useState("");
-  const [localShellDesign, setLocalShellDesign] = useState<ShellDesignStep[]>([]);
-  // Empty string means "use auto" — the save path sends `undefined` so the
-  // Shop falls back to the derived / hashed colour.
-  const [localShopColor, setLocalShopColor] = useState<string>("");
-
-  const [saveErrors, setSaveErrors] = useState<string[]>([]);
   const [showAssign, setShowAssign] = useState(false);
   const [fillingSearch, setFillingSearch] = useState("");
-  const [tagInput, setTagInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Loading vs. not-found — the live query returns `undefined` for both, so a
+  // one-shot direct read resolves which one it actually is.
+  const [loadState, setLoadState] = useState<"loading" | "found" | "not-found">("loading");
+  useEffect(() => {
+    if (!productId) return;
+    let cancelled = false;
+    db.products.get(productId).then((p) => {
+      if (!cancelled) setLoadState(p ? "found" : "not-found");
+    });
+    return () => { cancelled = true; };
+  }, [productId]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (showAssign) { setShowAssign(false); setFillingSearch(""); }
-      else if (confirmRemovePhoto) { setConfirmRemovePhoto(false); }
+      else if (confirmRemovePhoto) setConfirmRemovePhoto(false);
       else if (showDuplicatePanel) { setShowDuplicatePanel(false); setDuplicateFillings(false); }
-      else if (confirmDelete) { setConfirmDelete(false); }
-      else if (editing) { handleCancel(); }
+      else if (confirmDelete) setConfirmDelete(false);
+      else if (confirmArchive) setConfirmArchive(false);
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [showAssign, confirmRemovePhoto, showDuplicatePanel, confirmDelete, editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showAssign, confirmRemovePhoto, showDuplicatePanel, confirmDelete, confirmArchive]);
 
-  // Sync form state when product first loads
-  useEffect(() => {
-    if (product && (!editing || isNew)) {
-      setLocalFillMode(product.fillMode ?? defaultFillMode);
-      setLocalProductCategoryId(product.productCategoryId || "");
-      setLocalShellIngredientId(product.shellIngredientId || "");
-      setLocalShellPercentageStr(String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37));
-      setLocalCoating(product.coating || "");
-      setLocalTags(product.tags ?? []);
-      setNotes(product.notes || "");
-      setLocalShelfLife(product.shelfLifeWeeks || "");
-      setLocalLowStockThreshold(product.lowStockThreshold != null ? String(product.lowStockThreshold) : "");
-      setLocalMouldId(product.defaultMouldId || "");
-      setBatchQtyInput(String(product.defaultBatchQty ?? 1));
-      setLocalShellDesign(product.shellDesign ?? []);
-      setLocalShopColor(product.shopColor ?? "");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [product?.id]);
-
-  // Check production status on load to determine Archive vs Delete
   useEffect(() => {
     if (product?.id && !product.archived) {
       hasProductBeenProduced(product.id).then(setProductProduced);
     }
   }, [product?.id, product?.archived]);
 
-  // For ?new=1 products, the record was already created with just a name on the
-  // list page. Treat it as always dirty so the navigation guard fires — if the
-  // user confirms "leave without saving", we delete the incomplete record.
-  const [savedOnce, setSavedOnce] = useState(false);
-  const formDirty = editing && product != null && (
-    localFillMode !== (product.fillMode ?? defaultFillMode) ||
-    localProductCategoryId !== (product.productCategoryId || "") ||
-    localShellIngredientId !== (product.shellIngredientId || "") ||
-    localShellPercentageStr !== String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37) ||
-    localCoating !== (product.coating || "") ||
-    notes !== (product.notes || "") ||
-    localShelfLife !== (product.shelfLifeWeeks || "") ||
-    localLowStockThreshold !== (product.lowStockThreshold != null ? String(product.lowStockThreshold) : "") ||
-    localMouldId !== (product.defaultMouldId || "") ||
-    batchQtyInput !== String(product.defaultBatchQty ?? 1) ||
-    JSON.stringify([...localTags].sort()) !== JSON.stringify([...(product.tags ?? [])].sort()) ||
-    JSON.stringify(localShellDesign) !== JSON.stringify(product.shellDesign ?? []) ||
-    (localShopColor || undefined) !== product.shopColor
-  );
-  const isDirty = (isNew && !savedOnce) || formDirty;
-  // When leaving a ?new=1 product without saving, delete the incomplete record
-  const handleConfirmLeave = useCallback(async () => {
-    if (isNew && product?.id) {
-      await deleteProduct(product.id);
-    }
-  }, [isNew, product?.id]);  
-  const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
-
-  // Recommended shelf life: shortest filling shelf life among assigned fillings
+  // Recommended shelf life: the shortest shelf life among assigned fillings —
+  // a product can't outlast what's inside it.
   const recommendedShelfLife = useMemo(() => {
     let min: number | null = null;
     let limitingFilling: string | null = null;
@@ -189,18 +139,14 @@ export default function ProductDetailPage() {
     await reorderProductFillings(reordered);
   }
 
-  if (!productId || !product) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading…</p>
-      </div>
-    );
+  if (!productId || loadState === "loading" || (loadState === "found" && !product)) {
+    return <DetailSkeleton cards={3} sidebar={3} tabs label="Loading product" />;
+  }
+  if (loadState === "not-found" || !product) {
+    return <DetailNotFound entity="product" backHref="/products" backLabel="Products" />;
   }
 
-  // IDs of fillings already assigned to this product
   const assignedFillingIds = new Set(productFillings.map((rl) => rl.fillingId));
-
-  // Available fillings not yet assigned
   const availableFillings = allFillings.filter((l) => !assignedFillingIds.has(l.id!));
   const filteredAvailable = fillingSearch
     ? availableFillings.filter((l) => {
@@ -209,107 +155,14 @@ export default function ProductDetailPage() {
       })
     : availableFillings;
 
-  function startEditing() {
-    if (!product) return;
-    setLocalFillMode(product.fillMode ?? defaultFillMode);
-    setLocalProductCategoryId(product.productCategoryId || "");
-    setLocalShellIngredientId(product.shellIngredientId || "");
-    setLocalShellPercentageStr(String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37));
-    setLocalCoating(product.coating || "");
-    setLocalTags(product.tags ?? []);
-    setNotes(product.notes || "");
-    setLocalShelfLife(product.shelfLifeWeeks || "");
-    setLocalLowStockThreshold(product.lowStockThreshold != null ? String(product.lowStockThreshold) : "");
-    setLocalMouldId(product.defaultMouldId || "");
-    setBatchQtyInput(String(product.defaultBatchQty ?? 1));
-    setLocalShellDesign(product.shellDesign ?? []);
-    setEditing(true);
-  }
-
-  async function handleSave() {
-    if (!productId) return;
-    const batchQty = Math.max(1, parseInt(batchQtyInput) || 1);
-    const shellPct = parseFloat(localShellPercentageStr);
-
-    // Validate required fields
-    const errors: string[] = [];
-    if (!localProductCategoryId) errors.push("Category is required.");
-    if (localFillMode === "grams" && !localMouldId) errors.push("Default mould is required when fill mode is By grams — shell % is derived from the cavity weight.");
-    // Determine effective shell % (derived in grams mode, explicit in percentage mode)
-    let effectiveShellPct = isNaN(shellPct) ? 0 : shellPct;
-    if (localFillMode === "grams" && localMouldId && localProductCategoryId) {
-      const mould = allMoulds.find((m) => m.id === localMouldId);
-      const category = productCategories.find((c) => c.id === localProductCategoryId);
-      if (mould && category) {
-        const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
-        const derived = deriveShellPercentageFromFractions(totalFillFraction);
-        effectiveShellPct = derived;
-        if (derived < category.shellPercentMin || derived > category.shellPercentMax) {
-          errors.push(`Derived shell % (${derived}%) is outside the ${category.name} category range (${category.shellPercentMin}%–${category.shellPercentMax}%). Adjust fill grams or pick a different mould.`);
-        }
-      }
-    }
-    if (effectiveShellPct > 0 && !localShellIngredientId) errors.push("Shell chocolate is required when shell % is greater than 0.");
-    if (errors.length > 0) {
-      setSaveErrors(errors);
-      setActiveTab("product");
-      return;
-    }
-    setSaveErrors([]);
-
-    await saveProduct({
-      id: productId,
-      name: product!.name,
-      photo: product!.photo,
-      popularity: product!.popularity,
-      productCategoryId: localProductCategoryId,
-      shellIngredientId: localShellIngredientId || undefined,
-      shellPercentage: isNaN(shellPct) ? undefined : shellPct,
-      coating: localCoating || undefined,
-      tags: localTags.length > 0 ? localTags : undefined,
-      notes: notes.trim() || undefined,
-      shelfLifeWeeks: localShelfLife.trim() || undefined,
-      lowStockThreshold: (() => {
-        const v = parseInt(localLowStockThreshold.trim(), 10);
-        return isNaN(v) || v < 0 ? undefined : v;
-      })(),
-      defaultMouldId: localMouldId || undefined,
-      defaultBatchQty: batchQty,
-      shellDesign: localShellDesign,
-      fillMode: localFillMode,
-      shopColor: localShopColor || undefined,
-    });
-    setEditing(false);
-    setSavedOnce(true);
-    if (isNew) router.replace(`/products/${encodeURIComponent(productId)}`);
-  }
-
-  function handleCancel() {
-    if (!product) return;
-    setLocalFillMode(product.fillMode ?? defaultFillMode);
-    setLocalProductCategoryId(product.productCategoryId || "");
-    setLocalShellIngredientId(product.shellIngredientId || "");
-    setLocalShellPercentageStr(String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37));
-    setLocalCoating(product.coating || "");
-    setLocalTags(product.tags ?? []);
-    setNotes(product.notes || "");
-    setLocalShelfLife(product.shelfLifeWeeks || "");
-    setLocalLowStockThreshold(product.lowStockThreshold != null ? String(product.lowStockThreshold) : "");
-    setLocalMouldId(product.defaultMouldId || "");
-    setBatchQtyInput(String(product.defaultBatchQty ?? 1));
-    setLocalShellDesign(product.shellDesign ?? []);
-    setLocalShopColor(product.shopColor ?? "");
-    setEditing(false);
-    setShowAssign(false);
-    setFillingSearch("");
-    setSaveErrors([]);
-    if (isNew && productId) router.replace(`/products/${encodeURIComponent(productId)}`);
-  }
+  const fillMode: FillMode = product.fillMode ?? defaultFillMode;
+  const defaultMould = allMoulds.find((m) => m.id === product.defaultMouldId);
+  const cavityWeightG = defaultMould?.cavityWeightG ?? null;
 
   async function handlePopularity(stars: number) {
     if (!productId) return;
     const newVal = product!.popularity === stars ? undefined : stars;
-    await saveProduct({ id: productId, name: product!.name, photo: product!.photo, popularity: newVal });
+    await updateProductFields(productId, { popularity: newVal });
   }
 
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -317,8 +170,7 @@ export default function ProductDetailPage() {
     if (!file || !productId) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const base64 = reader.result as string;
-      await saveProduct({ id: productId, name: product!.name, photo: base64 });
+      await updateProductFields(productId, { photo: reader.result as string });
     };
     reader.readAsDataURL(file);
   }
@@ -330,28 +182,28 @@ export default function ProductDetailPage() {
     setShowAssign(false);
   }
 
-  async function handleRemoveFilling(productFillingId: string) {
-    await removeFillingFromProduct(productFillingId);
-  }
+  const shellIngredient = shellCapableIngredients.find((i) => i.id === product.shellIngredientId);
+  const pieceWeightG = cavityWeightG;
 
-  function handleAddTag(tag: string) {
-    const trimmed = tag.trim().toLowerCase();
-    if (!trimmed || localTags.includes(trimmed)) return;
-    setLocalTags([...localTags, trimmed]);
-    setTagInput("");
-  }
+  const subtitle = [
+    productCategory?.name,
+    productFillings.length > 0
+      ? `${productFillings.length} filling${productFillings.length !== 1 ? "s" : ""}`
+      : null,
+    pieceWeightG != null ? `${pieceWeightG} g` : null,
+    latestCost ? `${formatCost(latestCost.costPerProduct, sym)}/piece` : null,
+  ].filter(Boolean).join(" · ");
 
-  function handleRemoveTag(tag: string) {
-    setLocalTags(localTags.filter((t) => t !== tag));
-  }
+  /** Product / Shell design keep the sidebar; the data-heavy tabs go full width
+   *  because their tables and charts don't fit beside a 320px column. */
+  const splitLayout = activeTab === "product";
 
   return (
     <div>
-      {/* Back */}
       <div className="px-4 pt-6 pb-2">
-        <button onClick={() => safeBack()} className="inline-flex items-center gap-1 text-sm text-muted-foreground mb-3">
-          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
-        </button>
+        <Link href="/products" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Products
+        </Link>
       </div>
 
       {isDuplicate && (
@@ -360,874 +212,894 @@ export default function ProductDetailPage() {
         </div>
       )}
 
-      {/* Photo + Name */}
-      <div className="px-4 pb-4">
-        <div className="flex gap-4 items-start">
-          <div className="relative shrink-0 group">
-            {product.photo ? (
-              <>
-                <img
-                  src={product.photo}
-                  alt={product.name}
-                  width={80}
-                  height={80}
-                  className="w-20 h-20 rounded-lg object-cover cursor-pointer"
-                  onClick={() => { if (!confirmRemovePhoto) fileInputRef.current?.click(); }}
-                />
-                {confirmRemovePhoto ? (
-                  <div className="absolute -top-1.5 -right-1.5 flex gap-1">
-                    <button
-                      onClick={() => { saveProduct({ id: productId, name: product!.name, photo: undefined }); setConfirmRemovePhoto(false); }}
-                      className="h-5 px-1.5 rounded-full bg-red-600 text-white text-[10px] font-medium"
-                    >Remove</button>
-                    <button
-                      onClick={() => setConfirmRemovePhoto(false)}
-                      className="w-5 h-5 rounded-full bg-stone-400 text-white flex items-center justify-center"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setConfirmRemovePhoto(true)}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-stone-700 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Remove photo"
-                    aria-label="Remove photo"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </>
-            ) : (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-20 h-20 rounded-lg bg-muted flex flex-col items-center justify-center text-muted-foreground gap-1"
-              >
-                <Camera className="w-5 h-5" />
-                <span className="text-[10px]">Photo</span>
-              </button>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handlePhoto}
-              className="hidden"
+      {/* Header */}
+      <div className="px-4 pb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <InlineNameEditor
+              name={product.name}
+              onSave={async (n) => { await updateProductFields(productId, { name: n }); }}
+              className="text-xl font-bold"
             />
+            {product.archived && (
+              <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-medium flex items-center gap-1 shrink-0">
+                <Archive className="w-3 h-3" /> Archived
+              </span>
+            )}
           </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <InlineNameEditor
-                    name={product.name}
-                    onSave={async (n) => { await saveProduct({ id: productId, name: n, photo: product.photo }); }}
-                    className="text-xl font-bold"
-                  />
-                  {product.archived && (
-                    <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-medium flex items-center gap-1 shrink-0">
-                      <Archive className="w-3 h-3" /> Archived
-                    </span>
-                  )}
-                </div>
-                {!editing && (
-                  <div className="flex gap-0.5 mt-2">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        onClick={() => handlePopularity(star)}
-                        aria-label={`Rate ${star} star${star !== 1 ? "s" : ""}`}
-                        className="p-0.5 transition-transform active:scale-110"
-                      >
-                        <svg className={`w-5 h-5 ${(product.popularity ?? 0) >= star ? "text-primary fill-primary" : "text-border fill-transparent"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
-                        </svg>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {!editing && (
+          <div className="flex items-center gap-2 mt-1">
+            <div className="flex gap-0.5 shrink-0">
+              {[1, 2, 3, 4, 5].map((star) => (
                 <button
-                  onClick={startEditing}
-                  aria-label="Edit product"
-                  className="p-1.5 rounded-full hover:bg-muted transition-colors shrink-0"
+                  key={star}
+                  onClick={() => handlePopularity(star)}
+                  aria-label={`Rate ${star} star${star !== 1 ? "s" : ""}`}
+                  className="p-0.5 transition-transform active:scale-110"
                 >
-                  <Pencil aria-hidden="true" className="w-4 h-4 text-muted-foreground" />
+                  <svg className={`w-4 h-4 ${(product.popularity ?? 0) >= star ? "text-primary fill-primary" : "text-border fill-transparent"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+                  </svg>
                 </button>
-              )}
+              ))}
             </div>
+            {subtitle && <p className="text-sm text-muted-foreground truncate">{subtitle}</p>}
           </div>
         </div>
+        <Link href="/production/new" className="btn-primary px-4 py-2 text-sm shrink-0 whitespace-nowrap">
+          Start production run
+        </Link>
       </div>
 
       {/* Tab strip */}
       <div className="flex border-b border-border mb-4 px-4 overflow-x-auto">
-        {(["product", "shell", "fillingHistory", "batches", "cost", "nutrition"] as const).map((tab) => (
+        {([
+          { id: "product" as const, label: "Product" },
+          { id: "shell" as const, label: "Shell design" },
+          { id: "fillingHistory" as const, label: "Filling history" },
+          { id: "batches" as const, label: "Batches" },
+          { id: "cost" as const, label: "Cost" },
+          { id: "nutrition" as const, label: "Nutrition" },
+        ]).map((tab) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${
-              activeTab === tab
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 text-[13px] font-medium whitespace-nowrap -mb-px border-b-2 transition-colors ${
+              activeTab === tab.id
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "shell" ? "Shell Design" : tab === "fillingHistory" ? "Filling History" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {activeTab === "shell" && (
-        <>
-          {editing ? (
-            <>
-              <ShopColorControl
-                value={localShopColor}
-                onChange={setLocalShopColor}
-                productName={product.name}
-                shellDesign={localShellDesign}
-              />
-              <ShellDesignSection
-                steps={localShellDesign}
-                onUpdate={setLocalShellDesign}
-                readonly={false}
-              />
-              {saveErrors.length > 0 && (
-                <div className="px-4 pb-3">
-                  <ul className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
-                    {saveErrors.map((err, i) => (
-                      <li key={i} className="text-xs text-destructive">{err}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <div className="px-4 pb-6 flex gap-2">
-                <button onClick={handleSave} className="btn-primary px-4 py-2">Save</button>
-                <button onClick={handleCancel} className="btn-secondary px-4 py-2">Cancel</button>
+      {splitLayout ? (
+        <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+          {/* ── Main column ── */}
+          <div className="space-y-4 min-w-0">
+            {/* Fillings */}
+            <div className="rounded-lg border border-border bg-card">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+                <h2 className="text-[13px] font-semibold">
+                  Fillings <span className="font-normal text-muted-foreground">({productFillings.length})</span>
+                </h2>
+                {fillMode === "percentage" && productFillings.length > 0 && (
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {fillSplitTotal(productFillings.map((r) => ({ id: r.id!, fillPercentage: r.fillPercentage })))}% of fill
+                  </span>
+                )}
               </div>
-            </>
-          ) : (
-            <>
-              <ShopColorReadonly product={product} />
-              {(product.shellDesign ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center px-4">No shell design steps recorded yet.</p>
-              ) : (
-                <ShellDesignSection
-                  steps={product.shellDesign ?? []}
-                  onUpdate={() => {}}
-                  readonly
-                />
-              )}
-            </>
-          )}
-        </>
-      )}
 
-      {activeTab === "fillingHistory" && (
-        <ProductFillingHistorySection productId={productId} />
-      )}
-
-      {activeTab === "batches" && (
-        <BatchHistoryTab productId={productId} />
-      )}
-
-      {activeTab === "cost" && (
-        <ProductCostTab productId={productId} product={product} productFillings={productFillings} allMoulds={allMoulds} sym={sym} />
-      )}
-
-      {activeTab === "nutrition" && (
-        <ProductNutritionTab productId={productId} productFillings={productFillings} market={market} />
-      )}
-
-      {activeTab === "product" && (
-      <>
-
-      {editing ? (
-        <>
-        {/* --- EDIT MODE --- */}
-
-        {/* Category */}
-        <div className="px-4 pb-4">
-          <label className="label">Category</label>
-          <select
-            value={localProductCategoryId}
-            onChange={(e) => {
-              setLocalProductCategoryId(e.target.value);
-              // When switching categories, update shellPercentage to the new category's default
-              const cat = productCategories.find((c) => c.id === e.target.value);
-              if (cat) setLocalShellPercentageStr(String(cat.defaultShellPercent));
-            }}
-            className="input capitalize"
-          >
-            <option value="">— None —</option>
-            {productCategories.map((c) => (
-              <option key={c.id} value={c.id} className="capitalize">{c.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Shell chocolate + percentage */}
-        {(() => {
-          const shellPct = parseFloat(localShellPercentageStr) || 0;
-          const selectedCategory = productCategories.find((c) => c.id === localProductCategoryId);
-
-          // In grams mode, derive shell % from the stored fillFraction values
-          // (mould-agnostic, so the result is the same regardless of which mould
-          // we're displaying against — but we still require a default mould so
-          // gram inputs/outputs can be shown to the user).
-          const isGramsMode = localFillMode === "grams";
-          let derivedShellPct: number | null = null;
-          let derivedShellLabel: string | null = null;
-          let derivedOutOfRange = false;
-          if (isGramsMode) {
-            const mould = allMoulds.find((m) => m.id === localMouldId);
-            if (!mould) {
-              derivedShellLabel = "Set a mould to see derived shell %";
-            } else {
-              const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
-              derivedShellPct = deriveShellPercentageFromFractions(totalFillFraction);
-              derivedShellLabel = `${derivedShellPct}% (derived from fill grams)`;
-              if (selectedCategory && (derivedShellPct < selectedCategory.shellPercentMin || derivedShellPct > selectedCategory.shellPercentMax)) {
-                derivedOutOfRange = true;
-              }
-            }
-          }
-
-          // In grams mode use derived shell %; in percentage mode use the explicit input
-          const effectiveShellPct = isGramsMode && derivedShellPct !== null ? derivedShellPct : shellPct;
-          const showShellIngredient = effectiveShellPct > 0;
-
-          return (
-            <div className="px-4 pb-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                {showShellIngredient && (
-                  <div>
-                    <label className="label">Shell chocolate</label>
-                    {shellCapableIngredients.length === 0 ? (
-                      <p className="text-xs text-warning mt-1">
-                        No shell chocolates available. Create an ingredient with category &quot;Chocolate&quot; and mark it as &quot;shell capable&quot; first.
+              <div className="p-4 space-y-3">
+                {productFillings.length === 0 && !showAssign ? (
+                  <p className="text-sm text-muted-foreground py-2 text-center">
+                    No fillings assigned yet.
+                  </p>
+                ) : (
+                  <>
+                    {fillMode === "grams" && (
+                      <p className="text-xs text-muted-foreground italic">
+                        Grams are entered against the default mould and stored as a proportion of
+                        cavity volume, so producing on a different mould rescales them automatically.
                       </p>
-                    ) : (
-                      <select
-                        value={localShellIngredientId}
-                        onChange={(e) => setLocalShellIngredientId(e.target.value)}
-                        className="input"
-                      >
-                        <option value="">— None —</option>
-                        {shellCapableIngredients.map((ing) => (
-                          <option key={ing.id} value={ing.id}>{ing.name}</option>
-                        ))}
-                      </select>
                     )}
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFillingDragEnd}>
+                      <SortableContext items={productFillings.map((bl) => bl.id!)} strategy={verticalListSortingStrategy}>
+                        <ul className="space-y-2">
+                          {productFillings.map((bl) => (
+                            <SortableProductFillingRow
+                              key={bl.id}
+                              productFilling={bl}
+                              fillMode={fillMode}
+                              cavityWeightG={cavityWeightG}
+                              onRemove={() => removeFillingFromProduct(bl.id!)}
+                              // The split is one logical field: setting one row
+                              // rebalances the others and writes them together.
+                              onUpdatePercentage={(pct) => setProductFillSplit(productId, bl.id!, pct)}
+                              onUpdateGrams={(g) => {
+                                // Store a mould-agnostic fraction, not the grams
+                                // themselves. Disabled without a default mould.
+                                if (cavityWeightG == null) return;
+                                void updateProductFillingFraction(bl.id!, gramsToFillFraction(g, cavityWeightG));
+                              }}
+                            />
+                          ))}
+                        </ul>
+                      </SortableContext>
+                    </DndContext>
+                    {productFillings.length > 1 && fillMode !== "grams" && (
+                      <FillBar productFillings={productFillings.map((bl) => {
+                        const filling = allFillings.find((l) => l.id === bl.fillingId);
+                        return {
+                          ...bl,
+                          fillingName: filling?.name ?? "Filling",
+                          categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
+                        };
+                      })} />
+                    )}
+                  </>
+                )}
+
+                {showAssign && (
+                  <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                    <div className="relative">
+                      <Search aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <input
+                        type="text"
+                        value={fillingSearch}
+                        onChange={(e) => setFillingSearch(e.target.value)}
+                        placeholder="Search fillings to assign..."
+                        aria-label="Search fillings to assign"
+                        autoFocus
+                        className="input !pl-8"
+                      />
+                    </div>
+                    {filteredAvailable.length > 0 ? (
+                      <ul className="max-h-48 overflow-y-auto space-y-1">
+                        {filteredAvailable.map((filling) => (
+                          <li key={filling.id}>
+                            <button
+                              onClick={() => handleAssignFilling(filling.id!)}
+                              className="w-full text-left rounded-md px-2 py-1.5 hover:bg-muted transition-colors"
+                            >
+                              <span className="text-sm font-medium">{filling.name}</span>
+                              {(filling.category || filling.description) && (
+                                <span className="block text-xs text-muted-foreground truncate">
+                                  {[filling.category, filling.description].filter(Boolean).join(" · ")}
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-muted-foreground py-2 text-center">
+                        {availableFillings.length === 0
+                          ? "All fillings are already assigned."
+                          : "No fillings match your search."}
+                      </p>
+                    )}
+                    <button
+                      onClick={() => { setShowAssign(false); setFillingSearch(""); }}
+                      className="text-xs text-muted-foreground hover:underline"
+                    >
+                      Cancel
+                    </button>
                   </div>
                 )}
-                <div>
-                  <label className="label">Shell %</label>
-                  {isGramsMode ? (
-                    <>
-                      <p className={`text-sm mt-1 py-1.5 ${derivedOutOfRange ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-                        {derivedShellLabel}
-                      </p>
-                      {selectedCategory && derivedShellPct !== null && (
-                        <p className={`text-xs mt-1 ${derivedOutOfRange ? "text-destructive" : "text-muted-foreground"}`}>
-                          {derivedOutOfRange
-                            ? `Out of range: ${selectedCategory.shellPercentMin}%–${selectedCategory.shellPercentMax}%. Adjust fill grams or mould.`
-                            : `Range: ${selectedCategory.shellPercentMin}%–${selectedCategory.shellPercentMax}%`}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <input
-                        type="number"
-                        min={selectedCategory?.shellPercentMin ?? 0}
-                        max={selectedCategory?.shellPercentMax ?? 100}
-                        step="1"
-                        value={localShellPercentageStr}
-                        onChange={(e) => setLocalShellPercentageStr(e.target.value)}
-                        className="input w-24"
-                      />
-                      {selectedCategory && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Range: {selectedCategory.shellPercentMin}%–{selectedCategory.shellPercentMax}%
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
+              </div>
+
+              <div className="px-4 py-2.5 bg-muted flex items-center justify-between gap-3">
+                <button
+                  onClick={() => setShowAssign(true)}
+                  className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add filling
+                </button>
+                <FillModeToggle productId={productId} fillMode={fillMode} />
               </div>
             </div>
-          );
-        })()}
 
-        {/* Tags */}
-        <div className="px-4 pb-4">
-          <label className="label">Tags</label>
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {localTags.map((tag) => (
-              <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium capitalize">
+            <ConfigurationCard
+              key={`config-${product.id}`}
+              productId={productId}
+              product={product}
+              productCategories={productCategories}
+              productCategory={productCategory}
+              allMoulds={allMoulds}
+              shellCapableIngredients={shellCapableIngredients}
+              productFillings={productFillings}
+              defaultFillMode={defaultFillMode}
+            />
+
+            <NotesCard key={`notes-${product.id}`} productId={productId} product={product} />
+
+            {/* ── Destructive actions ── */}
+            <div className="pt-2 space-y-3">
+              {showDuplicatePanel ? (
+                <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                  <p className="text-sm font-medium">Duplicate &ldquo;{product.name}&rdquo;</p>
+                  <p className="text-xs text-muted-foreground">
+                    A new product will be created with the same configuration and shell design.
+                    Batch history is not copied.
+                  </p>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={duplicateFillings}
+                      onChange={(e) => setDuplicateFillings(e.target.checked)}
+                      className="rounded border-border"
+                    />
+                    Also duplicate its fillings
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      disabled={duplicatingProduct}
+                      onClick={async () => {
+                        setDuplicatingProduct(true);
+                        try {
+                          const newId = await duplicateProduct(productId, { duplicateFillings });
+                          router.push(`/products/${encodeURIComponent(newId)}?duplicate=1`);
+                        } finally {
+                          setDuplicatingProduct(false);
+                        }
+                      }}
+                      className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
+                    >
+                      {duplicatingProduct ? "Duplicating…" : "Duplicate product"}
+                    </button>
+                    <button
+                      onClick={() => { setShowDuplicatePanel(false); setDuplicateFillings(false); }}
+                      className="btn-secondary px-4 py-2"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setShowDuplicatePanel(true); setConfirmDelete(false); setConfirmArchive(false); }}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Copy className="w-4 h-4" /> Duplicate product
+                </button>
+              )}
+
+              {product.archived ? (
+                <button
+                  onClick={async () => { await unarchiveProduct(productId); }}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <ArchiveRestore className="w-4 h-4" /> Unarchive product
+                </button>
+              ) : confirmArchive ? (
+                <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                  <p className="text-sm font-medium">Archive this product?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Keeps every batch it appears in and hides the product from lists and pickers.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => { await archiveProduct(productId); router.replace("/products"); }}
+                      className="btn-primary px-4 py-2 text-sm"
+                    >
+                      Yes, archive product
+                    </button>
+                    <button onClick={() => setConfirmArchive(false)} className="btn-secondary px-4 py-2">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setConfirmArchive(true); setConfirmDelete(false); setShowDuplicatePanel(false); }}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Archive className="w-4 h-4" /> Archive product
+                </button>
+              )}
+
+              {confirmDelete ? (
+                productProduced ? (
+                  /* Produced products can't be deleted — the batch history would
+                     lose the thing it refers to. */
+                  <div className="rounded-lg border border-border bg-muted p-4 space-y-3">
+                    <p className="text-sm font-medium">Delete is blocked</p>
+                    <p className="text-xs text-muted-foreground">
+                      This product has been produced — deleting would break that batch history.
+                      Archive keeps the batches and hides the product from lists.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => { await archiveProduct(productId); router.replace("/products"); }}
+                        className="btn-primary px-4 py-2 text-sm"
+                      >
+                        Archive instead
+                      </button>
+                      <button onClick={() => setConfirmDelete(false)} className="btn-secondary px-4 py-2">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+                    <p className="text-sm font-medium text-destructive">Delete this product?</p>
+                    <p className="text-xs text-muted-foreground">
+                      Permanently removes the product and its filling assignments. The fillings
+                      themselves stay in your library. This cannot be undone.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => { await deleteProduct(productId); router.replace("/products"); }}
+                        className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-4 py-2 text-sm font-medium transition-colors hover:bg-destructive/90"
+                      >
+                        Yes, delete product
+                      </button>
+                      <button onClick={() => setConfirmDelete(false)} className="btn-secondary px-4 py-2">Cancel</button>
+                    </div>
+                  </div>
+                )
+              ) : (
+                <button
+                  onClick={() => { setConfirmDelete(true); setConfirmArchive(false); setShowDuplicatePanel(false); }}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete product
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ── Sidebar ── */}
+          <div className="space-y-4 lg:sticky lg:top-4">
+            {/* Photo */}
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              {product.photo ? (
+                <img
+                  src={product.photo}
+                  alt={product.name}
+                  className="w-full h-[132px] object-cover cursor-pointer"
+                  onClick={() => fileInputRef.current?.click()}
+                />
+              ) : (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full h-[132px] bg-muted flex flex-col items-center justify-center text-muted-foreground gap-1"
+                >
+                  <Camera className="w-5 h-5" />
+                  <span className="text-[11px]">Add photo</span>
+                </button>
+              )}
+              <div className="px-3 py-2 border-t border-border flex items-center justify-between gap-2">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+                >
+                  {product.photo ? "Replace photo" : "Add photo"}
+                </button>
+                {product.photo && (
+                  confirmRemovePhoto ? (
+                    <span className="flex items-center gap-1.5 text-[11px]">
+                      <span className="text-muted-foreground">Remove?</span>
+                      <button
+                        onClick={async () => {
+                          await updateProductFields(productId, { photo: undefined });
+                          setConfirmRemovePhoto(false);
+                        }}
+                        className="text-destructive font-medium hover:underline"
+                      >
+                        Yes
+                      </button>
+                      <button onClick={() => setConfirmRemovePhoto(false)} className="text-muted-foreground hover:underline">
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmRemovePhoto(true)}
+                      aria-label="Remove photo"
+                      className="text-[11px] text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )
+                )}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handlePhoto}
+                className="hidden"
+              />
+            </div>
+
+            <ProductPropertiesCard key={`props-${product.id}`} productId={productId} product={product} />
+
+            <SidebarCard title="Derived" tinted className="space-y-2">
+              <DerivedRow label="Piece weight" value={pieceWeightG != null ? `${pieceWeightG} g` : "—"} />
+              <DerivedRow
+                label="Cost per piece"
+                value={latestCost ? formatCost(latestCost.costPerProduct, sym) : "—"}
+              />
+              <DerivedRow label="Batches made" value={batchAppearances.length > 0 ? batchAppearances.length : "—"} />
+              {recommendedShelfLife && (
+                <div className="pt-1">
+                  <DerivedRow
+                    label="Recommended shelf life"
+                    value={`${recommendedShelfLife.weeks} weeks`}
+                  />
+                  <button
+                    onClick={() => updateProductFields(productId, { shelfLifeWeeks: String(recommendedShelfLife.weeks) })}
+                    className="text-[11px] text-primary underline underline-offset-2 mt-1"
+                  >
+                    Use {recommendedShelfLife.weeks} weeks
+                  </button>
+                  <p className="text-[11px] text-muted-foreground">
+                    Limited by {recommendedShelfLife.fillingName}
+                  </p>
+                  {product.shelfLifeWeeks && parseFloat(product.shelfLifeWeeks) > recommendedShelfLife.weeks && (
+                    <p className="text-[11px] text-status-warn bg-status-warn-bg rounded-md px-2 py-1 mt-1">
+                      Set longer than {recommendedShelfLife.fillingName} allows.
+                    </p>
+                  )}
+                </div>
+              )}
+              {shellIngredient && (
+                <DerivedRow
+                  label="Shell"
+                  value={`${shellIngredient.name} · ${product.shellPercentage ?? 37}%`}
+                />
+              )}
+            </SidebarCard>
+          </div>
+        </div>
+      ) : (
+        /* ── Full-width tabs ── */
+        <div className="pb-8">
+          {activeTab === "shell" && (
+            <ShellDesignTab key={`shell-${product.id}`} productId={productId} product={product} />
+          )}
+          {activeTab === "fillingHistory" && <ProductFillingHistorySection productId={productId} />}
+          {activeTab === "batches" && <BatchHistoryTab productId={productId} />}
+          {activeTab === "cost" && (
+            <ProductCostTab
+              productId={productId}
+              product={product}
+              productFillings={productFillings}
+              allMoulds={allMoulds}
+              sym={sym}
+            />
+          )}
+          {activeTab === "nutrition" && (
+            <ProductNutritionTab productId={productId} productFillings={productFillings} market={market} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Fill mode toggle ────────────────────────────────────────────────────────
+
+/** Segmented control in the Fillings card footer. Commits on change — the mode
+ *  alone can't put the product into an invalid state; the mould requirement it
+ *  implies is enforced by the configuration card below. */
+function FillModeToggle({ productId, fillMode }: { productId: string; fillMode: FillMode }) {
+  return (
+    <div className="inline-flex rounded-full border border-border overflow-hidden" role="group" aria-label="Fill mode">
+      {(["percentage", "grams"] as const).map((mode) => (
+        <button
+          key={mode}
+          onClick={() => updateProductFields(productId, { fillMode: mode })}
+          aria-pressed={fillMode === mode}
+          className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+            fillMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {mode === "percentage" ? "By %" : "By grams"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Configuration card (scoped Save) ────────────────────────────────────────
+
+/**
+ * The one place on this page that is NOT autosaved.
+ *
+ * Category, default mould, shell ingredient and shell % are read together by
+ * the production planner and the cost engine, and four rules bind them:
+ * a category is required; grams mode needs a mould to size against; the derived
+ * shell % must sit inside the category's range; and any shell above 0% needs a
+ * chocolate. Some invalid combinations have no valid single-field exit — you
+ * cannot get from "grams mode, no mould" to a valid state one autosaved field
+ * at a time — so the group commits together or not at all, and the errors that
+ * used to block the page-level Save now block only this card.
+ */
+function ConfigurationCard({
+  productId,
+  product,
+  productCategories,
+  productCategory,
+  allMoulds,
+  shellCapableIngredients,
+  productFillings,
+  defaultFillMode,
+}: {
+  productId: string;
+  product: Product;
+  productCategories: import("@/types").ProductCategory[];
+  productCategory: import("@/types").ProductCategory | undefined;
+  allMoulds: import("@/types").Mould[];
+  shellCapableIngredients: import("@/types").Ingredient[];
+  productFillings: ProductFilling[];
+  defaultFillMode: FillMode;
+}) {
+  const [categoryId, setCategoryId] = useState(product.productCategoryId ?? "");
+  const [mouldId, setMouldId] = useState(product.defaultMouldId ?? "");
+  const [shellIngredientId, setShellIngredientId] = useState(product.shellIngredientId ?? "");
+  const [shellPercentStr, setShellPercentStr] = useState(
+    String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37),
+  );
+  const [errors, setErrors] = useState<string[]>([]);
+  const [saved, setSaved] = useState(false);
+
+  const fillMode = product.fillMode ?? defaultFillMode;
+  const selectedCategory = productCategories.find((c) => c.id === categoryId);
+
+  const dirty =
+    categoryId !== (product.productCategoryId ?? "") ||
+    mouldId !== (product.defaultMouldId ?? "") ||
+    shellIngredientId !== (product.shellIngredientId ?? "") ||
+    shellPercentStr !== String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37);
+
+  function handleSave() {
+    const shellPct = parseFloat(shellPercentStr);
+    const nextErrors: string[] = [];
+
+    if (!categoryId) nextErrors.push("Category is required.");
+    if (fillMode === "grams" && !mouldId) {
+      nextErrors.push("Default mould is required when fill mode is By grams — shell % is derived from the cavity weight.");
+    }
+
+    let effectiveShellPct = isNaN(shellPct) ? 0 : shellPct;
+    if (fillMode === "grams" && mouldId && categoryId) {
+      const mould = allMoulds.find((m) => m.id === mouldId);
+      const category = productCategories.find((c) => c.id === categoryId);
+      if (mould && category) {
+        const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
+        const derived = deriveShellPercentageFromFractions(totalFillFraction);
+        effectiveShellPct = derived;
+        if (derived < category.shellPercentMin || derived > category.shellPercentMax) {
+          nextErrors.push(`Derived shell % (${derived}%) is outside the ${category.name} category range (${category.shellPercentMin}%–${category.shellPercentMax}%). Adjust fill grams or pick a different mould.`);
+        }
+      }
+    }
+    if (effectiveShellPct > 0 && !shellIngredientId) {
+      nextErrors.push("Shell chocolate is required when shell % is greater than 0.");
+    }
+
+    if (nextErrors.length > 0) {
+      setErrors(nextErrors);
+      setSaved(false);
+      return;
+    }
+
+    setErrors([]);
+    updateProductFields(productId, {
+      productCategoryId: categoryId,
+      defaultMouldId: mouldId || undefined,
+      shellIngredientId: shellIngredientId || undefined,
+      shellPercentage: isNaN(shellPct) ? undefined : shellPct,
+    }, "Configuration");
+    setSaved(true);
+  }
+
+  function handleReset() {
+    setCategoryId(product.productCategoryId ?? "");
+    setMouldId(product.defaultMouldId ?? "");
+    setShellIngredientId(product.shellIngredientId ?? "");
+    setShellPercentStr(String(product.shellPercentage ?? productCategory?.defaultShellPercent ?? 37));
+    setErrors([]);
+    setSaved(false);
+  }
+
+  const derivedShellLabel = (() => {
+    if (fillMode !== "grams") return null;
+    if (!mouldId) return "Set a mould to see derived shell %";
+    const totalFillFraction = productFillings.reduce((sum, pf) => sum + (pf.fillFraction ?? 0), 0);
+    return `Derived from fill grams: ${deriveShellPercentageFromFractions(totalFillFraction)}%`;
+  })();
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-semibold">Configuration</h2>
+        {saved && !dirty && <span className="text-[11px] text-status-ok">Saved</span>}
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label" htmlFor="product-category">Category *</label>
+            <select
+              id="product-category"
+              value={categoryId}
+              onChange={(e) => { setCategoryId(e.target.value); setSaved(false); }}
+              className="input"
+            >
+              <option value="">— select —</option>
+              {productCategories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="product-mould">
+              Default mould{fillMode === "grams" && <span className="text-destructive"> *</span>}
+            </label>
+            <select
+              id="product-mould"
+              value={mouldId}
+              onChange={(e) => { setMouldId(e.target.value); setSaved(false); }}
+              className="input"
+            >
+              <option value="">— No default mould —</option>
+              {allMoulds.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_140px] gap-3">
+          <div>
+            <label className="label" htmlFor="product-shell-ingredient">Shell chocolate</label>
+            <select
+              id="product-shell-ingredient"
+              value={shellIngredientId}
+              onChange={(e) => { setShellIngredientId(e.target.value); setSaved(false); }}
+              className="input"
+            >
+              <option value="">— none —</option>
+              {shellCapableIngredients.map((i) => (
+                <option key={i.id} value={i.id}>{i.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="product-shell-percent">Shell %</label>
+            <input
+              id="product-shell-percent"
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={shellPercentStr}
+              onChange={(e) => { setShellPercentStr(e.target.value); setSaved(false); }}
+              disabled={fillMode === "grams"}
+              className="input disabled:bg-muted/40 disabled:text-muted-foreground"
+            />
+          </div>
+        </div>
+        {derivedShellLabel && (
+          <p className="text-xs text-muted-foreground">{derivedShellLabel}</p>
+        )}
+        {selectedCategory && (
+          <p className="text-xs text-muted-foreground">
+            {selectedCategory.name} allows {selectedCategory.shellPercentMin}%–{selectedCategory.shellPercentMax}% shell.
+          </p>
+        )}
+
+        {errors.length > 0 && (
+          <ul className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+            {errors.map((err, i) => (
+              <li key={i} className="text-xs text-destructive">{err}</li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button onClick={handleSave} disabled={!dirty} className="btn-primary px-4 py-2 text-sm disabled:opacity-40">
+            Save configuration
+          </button>
+          {dirty && (
+            <button onClick={handleReset} className="btn-secondary px-4 py-2 text-sm">Cancel</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sidebar: Properties ─────────────────────────────────────────────────────
+
+function ProductPropertiesCard({ productId, product }: { productId: string; product: Product }) {
+  const [batchQty, setBatchQty] = useState(String(product.defaultBatchQty ?? 1));
+  const [shelfLife, setShelfLife] = useState(product.shelfLifeWeeks ?? "");
+  const [lowStock, setLowStock] = useState(
+    product.lowStockThreshold != null ? String(product.lowStockThreshold) : "",
+  );
+  const [tagInput, setTagInput] = useState("");
+
+  const tags = product.tags ?? [];
+
+  function commitBatchQty() {
+    const next = Math.max(1, parseInt(batchQty, 10) || 1);
+    if (String(next) !== batchQty) setBatchQty(String(next));
+    if (next === (product.defaultBatchQty ?? 1)) return;
+    updateProductFields(productId, { defaultBatchQty: next });
+  }
+
+  function commitShelfLife() {
+    const trimmed = shelfLife.trim();
+    if (trimmed === (product.shelfLifeWeeks ?? "")) return;
+    updateProductFields(productId, { shelfLifeWeeks: trimmed || undefined });
+  }
+
+  function commitLowStock() {
+    const parsed = parseInt(lowStock.trim(), 10);
+    const next = isNaN(parsed) || parsed < 0 ? undefined : parsed;
+    if (next === product.lowStockThreshold) return;
+    updateProductFields(productId, { lowStockThreshold: next });
+  }
+
+  function addTag(raw: string) {
+    const trimmed = raw.trim().toLowerCase();
+    if (!trimmed || tags.includes(trimmed)) return;
+    updateProductFields(productId, { tags: [...tags, trimmed] });
+    setTagInput("");
+  }
+
+  function removeTag(tag: string) {
+    const next = tags.filter((t) => t !== tag);
+    updateProductFields(productId, { tags: next.length > 0 ? next : undefined });
+  }
+
+  return (
+    <SidebarCard title="Properties">
+      <div className="space-y-1">
+        <PropertyRow label="Batch quantity">
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={batchQty}
+            onChange={(e) => setBatchQty(e.target.value)}
+            onBlur={commitBatchQty}
+            aria-label="Batch quantity"
+            className={`w-14 ${PROPERTY_NUMBER_CLASS}`}
+          />
+        </PropertyRow>
+
+        <PropertyRow label="Shelf life">
+          <span className="flex items-baseline gap-1">
+            <input
+              type="text"
+              value={shelfLife}
+              onChange={(e) => setShelfLife(e.target.value)}
+              onBlur={commitShelfLife}
+              placeholder="—"
+              aria-label="Shelf life"
+              className={`w-16 ${PROPERTY_NUMBER_CLASS}`}
+            />
+            <span className="text-xs text-muted-foreground">weeks</span>
+          </span>
+        </PropertyRow>
+
+        <PropertyRow label="Low-stock at">
+          <span className="flex items-baseline gap-1">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={lowStock}
+              onChange={(e) => setLowStock(e.target.value)}
+              onBlur={commitLowStock}
+              placeholder="—"
+              aria-label="Low-stock threshold"
+              className={`w-12 ${PROPERTY_NUMBER_CLASS}`}
+            />
+            <span className="text-xs text-muted-foreground">pcs</span>
+          </span>
+        </PropertyRow>
+      </div>
+
+      {/* Tags are a list, so they get their own block rather than a value slot. */}
+      <div className="mt-2 pt-2 border-t border-border">
+        <span className="text-xs text-muted-foreground">Tags</span>
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[11px] font-medium capitalize"
+              >
                 {tag}
-                <button onClick={() => handleRemoveTag(tag)} aria-label={`Remove tag ${tag}`}>
-                  <X className="w-3 h-3" />
+                <button onClick={() => removeTag(tag)} aria-label={`Remove tag ${tag}`} className="hover:text-destructive">
+                  <X className="w-2.5 h-2.5" />
                 </button>
               </span>
             ))}
           </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddTag(tagInput); } }}
-              placeholder="Add tag (e.g. christmas)"
-              className="input"
-            />
-            <button
-              onClick={() => handleAddTag(tagInput)}
-              disabled={!tagInput.trim()}
-              className="btn-primary px-3 py-1.5"
-            >
-              Add
-            </button>
-          </div>
-        </div>
-
-        {/* Notes */}
-        <div className="px-4 pb-4">
-          <label className="label">Notes</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Tasting notes, storage tips, variations…"
-            rows={3}
-            className="input"
-          />
-        </div>
-
-        {/* Shelf life + low-stock threshold */}
-        <div className="px-4 pb-4 flex gap-4 flex-wrap">
-          <div>
-            <label className="label">Shelf life (weeks)</label>
-            <input
-              type="text"
-              value={localShelfLife}
-              onChange={(e) => setLocalShelfLife(e.target.value)}
-              placeholder={recommendedShelfLife ? String(recommendedShelfLife.weeks) : "e.g. 4 or 4–6…"}
-              className="input w-32"
-            />
-            {recommendedShelfLife && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Suggested: <button
-                  type="button"
-                  onClick={() => setLocalShelfLife(String(recommendedShelfLife.weeks))}
-                  className="text-primary font-medium hover:underline"
-                >{recommendedShelfLife.weeks} weeks</button>
-                <span className="ml-1">— based on {recommendedShelfLife.fillingName}</span>
-              </p>
-            )}
-          </div>
-          <div>
-            <label className="label">Low-stock threshold</label>
-            <input
-              type="number"
-              min={0}
-              value={localLowStockThreshold}
-              onChange={(e) => setLocalLowStockThreshold(e.target.value)}
-              placeholder="e.g. 12"
-              className="input w-32"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Pieces below which this product is flagged low in the production wizard.
-            </p>
-          </div>
-        </div>
-
-        {/* Fill mode toggle + fillings — hidden when shell % = 100 (pure shell product, e.g. plain bar) */}
-        {(parseFloat(localShellPercentageStr) || 0) < 100 && (
-        <>
-        {/* Fill mode toggle */}
-        <div className="px-4 pb-4">
-          <label className="label">Fill mode</label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setLocalFillMode("percentage")}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${localFillMode === "percentage" ? "bg-accent text-accent-foreground" : "border border-border"}`}
-            >
-              By percentage
-            </button>
-            <button
-              type="button"
-              onClick={() => setLocalFillMode("grams")}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${localFillMode === "grams" ? "bg-accent text-accent-foreground" : "border border-border"}`}
-            >
-              By grams
-            </button>
-          </div>
-        </div>
-        <div className="px-4 space-y-3 pb-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Fillings ({productFillings.length})
-            </h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowAssign(true)}
-                className="flex items-center gap-1 text-xs text-primary font-medium"
-              >
-                <Plus className="w-3.5 h-3.5" /> Assign filling
-              </button>
-              <Link
-                href="/fillings"
-                className="text-xs text-muted-foreground underline"
-              >
-                Create new filling
-              </Link>
-            </div>
-          </div>
-
-          {/* Assign existing filling picker */}
-          {showAssign && (
-            <div className="rounded-lg border border-border bg-card p-3 space-y-2">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  value={fillingSearch}
-                  onChange={(e) => setFillingSearch(e.target.value)}
-                  placeholder="Search fillings to assign..."
-                  autoFocus
-                  className="input !pl-8"
-                />
-              </div>
-              {filteredAvailable.length > 0 ? (
-                <ul className="max-h-48 overflow-y-auto space-y-1">
-                  {filteredAvailable.map((filling) => (
-                    <li key={filling.id}>
-                      <button
-                        onClick={() => handleAssignFilling(filling.id!)}
-                        className="w-full text-left rounded-full px-2 py-1.5 hover:bg-muted transition-colors"
-                      >
-                        <span className="text-sm font-medium">{filling.name}</span>
-                        {(filling.category || filling.description) && (
-                          <div className="text-xs text-muted-foreground truncate">
-                            {[filling.category, filling.description].filter(Boolean).join(" · ")}
-                          </div>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground py-2 text-center">
-                  {availableFillings.length === 0
-                    ? "All fillings are already assigned."
-                    : "No fillings match your search."}
-                </p>
-              )}
-              <button
-                onClick={() => { setShowAssign(false); setFillingSearch(""); }}
-                className="text-xs text-muted-foreground"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {/* Assigned fillings */}
-          {productFillings.length === 0 && !showAssign ? (
-            <p className="text-muted-foreground text-sm py-4 text-center">
-              No fillings assigned yet. Assign an existing filling or create a new one.
-            </p>
-          ) : (
-            <>
-              {localFillMode === "grams" && (
-                <p className="text-xs text-muted-foreground italic">
-                  Grams are entered against the default mould and stored as a proportion of cavity volume.
-                  When you produce on a different mould, the grams scale automatically to preserve the recipe.
-                </p>
-              )}
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFillingDragEnd}>
-                <SortableContext items={productFillings.map((bl) => bl.id!)} strategy={verticalListSortingStrategy}>
-                  <ul className="space-y-2">
-                    {productFillings.map((bl) => {
-                      const editMould = allMoulds.find((m) => m.id === localMouldId);
-                      const editCavityG = editMould?.cavityWeightG ?? null;
-                      return (
-                        <SortableProductFillingRow
-                          key={bl.id}
-                          productFilling={bl}
-                          fillMode={localFillMode}
-                          cavityWeightG={editCavityG}
-                          onRemove={() => handleRemoveFilling(bl.id!)}
-                          onUpdatePercentage={(pct) => updateProductFillingPercentage(bl.id!, pct)}
-                          onUpdateGrams={(g) => {
-                            // Convert the user's grams (against the default mould) to a
-                            // mould-agnostic fraction before storing. Skip if no default
-                            // mould — the grams input is disabled in that state.
-                            if (editCavityG == null) return;
-                            const fraction = gramsToFillFraction(g, editCavityG);
-                            void updateProductFillingFraction(bl.id!, fraction);
-                          }}
-                        />
-                      );
-                    })}
-                  </ul>
-                </SortableContext>
-              </DndContext>
-              {productFillings.length > 1 && localFillMode !== "grams" && (
-                <FillBar productFillings={productFillings.map((bl) => {
-                  const filling = allFillings.find((l) => l.id === bl.fillingId);
-                  return {
-                    ...bl,
-                    fillingName: filling?.name ?? "Filling",
-                    categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
-                  };
-                })} />
-              )}
-            </>
-          )}
-        </div>
-        </>
         )}
-
-        {/* Production defaults */}
-        <div className="px-4 pb-6 space-y-3 border-t border-border pt-4">
-          <h2 className="text-sm font-medium text-muted-foreground">Production defaults</h2>
-          <div className="space-y-2">
-            <div>
-              <label className="label">
-                Default mould{localFillMode === "grams" && <span className="text-destructive"> *</span>}
-              </label>
-              <select
-                value={localMouldId}
-                onChange={(e) => setLocalMouldId(e.target.value)}
-                className="input"
-              >
-                <option value="">— No default mould —</option>
-                {allMoulds.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.cavityWeightG} g · {m.numberOfCavities} cavities)
-                  </option>
-                ))}
-              </select>
-              {localFillMode === "grams" && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Required in By grams mode — cavity weight is used to derive shell %.
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="label">Default batch quantity</label>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={batchQtyInput}
-                onChange={(e) => setBatchQtyInput(e.target.value)}
-                className="input w-32"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Validation errors */}
-        {saveErrors.length > 0 && (
-          <div className="px-4 pb-3">
-            <ul className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
-              {saveErrors.map((err, i) => (
-                <li key={i} className="text-xs text-destructive">{err}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Save / Cancel */}
-        <div className="px-4 pb-6 flex gap-2">
-          <button onClick={handleSave} className="btn-primary px-4 py-2">Save</button>
-          <button onClick={handleCancel} className="btn-secondary px-4 py-2">Cancel</button>
-        </div>
-        </>
-      ) : (
-        <>
-        {/* --- VIEW MODE --- */}
-
-        {/* Category + Shell info */}
-        {(productCategory || product.shellIngredientId) && (
-          <div className="px-4 pb-4 flex flex-wrap gap-2">
-            {productCategory && (
-              <span className="rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium capitalize">{productCategory.name}</span>
-            )}
-            {product.shellIngredientId && (() => {
-              const shellIng = shellCapableIngredients.find((i) => i.id === product.shellIngredientId);
-              return shellIng ? (
-                <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-xs font-medium">
-                  {shellIng.name} · {product.shellPercentage ?? 37}%
-                </span>
-              ) : null;
-            })()}
-          </div>
-        )}
-
-        {/* Tags */}
-        {(product.tags ?? []).length > 0 && (
-          <div className="px-4 pb-4 flex flex-wrap gap-1.5">
-            {(product.tags ?? []).map((tag) => (
-              <span key={tag} className="rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-xs font-medium capitalize">{tag}</span>
-            ))}
-          </div>
-        )}
-
-        {/* Notes */}
-        {product.notes && (
-          <div className="px-4 pb-4">
-            <h2 className="text-sm font-medium text-muted-foreground mb-1">Notes</h2>
-            <p className="text-sm whitespace-pre-wrap">{product.notes}</p>
-          </div>
-        )}
-
-        {/* Shelf life + low-stock threshold */}
-        {(product.shelfLifeWeeks || recommendedShelfLife || product.lowStockThreshold != null) && (
-          <div className="px-4 pb-4 flex gap-8 flex-wrap">
-            {(product.shelfLifeWeeks || recommendedShelfLife) && (
-              <div>
-                <h2 className="text-sm font-medium text-muted-foreground mb-1">Shelf life</h2>
-                {product.shelfLifeWeeks ? (
-                  <>
-                    <p className="text-sm">{product.shelfLifeWeeks} weeks</p>
-                    {recommendedShelfLife && parseFloat(product.shelfLifeWeeks) > recommendedShelfLife.weeks && (
-                      <p className="text-xs text-status-warn mt-0.5">
-                        Note: {recommendedShelfLife.fillingName} has a {recommendedShelfLife.weeks}-week shelf life
-                      </p>
-                    )}
-                  </>
-                ) : recommendedShelfLife ? (
-                  <p className="text-xs text-muted-foreground">
-                    Suggested: {recommendedShelfLife.weeks} weeks (based on {recommendedShelfLife.fillingName})
-                  </p>
-                ) : null}
-              </div>
-            )}
-            {product.lowStockThreshold != null && (
-              <div>
-                <h2 className="text-sm font-medium text-muted-foreground mb-1">Low-stock threshold</h2>
-                <p className="text-sm">{product.lowStockThreshold} pcs</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Fillings */}
-        <div className="px-4 space-y-3 pb-6">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Fillings ({productFillings.length})
-          </h2>
-          {productFillings.length === 0 ? (
-            <p className="text-muted-foreground text-sm py-4 text-center">
-              No fillings assigned yet.
-            </p>
-          ) : (
-            <>
-              <ul className="space-y-2">
-                {productFillings.map((bl) => {
-                  const viewMould = allMoulds.find((m) => m.id === product.defaultMouldId);
-                  return (
-                    <ProductFillingRow
-                      key={bl.id}
-                      productFilling={bl}
-                      fillMode={product?.fillMode ?? defaultFillMode}
-                      cavityWeightG={viewMould?.cavityWeightG ?? null}
-                      onRemove={() => {}}
-                      onUpdatePercentage={() => {}}
-                      onUpdateGrams={() => {}}
-                      readonly
-                    />
-                  );
-                })}
-              </ul>
-              {productFillings.length > 1 && (
-                <FillBar productFillings={productFillings.map((bl) => {
-                  const filling = allFillings.find((l) => l.id === bl.fillingId);
-                  return {
-                    ...bl,
-                    fillingName: filling?.name ?? "Filling",
-                    categoryColor: fillingCategoryMap.get(filling?.category ?? "")?.color ?? NEUTRAL_CATEGORY_HEX,
-                  };
-                })} />
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Production defaults — read-only */}
-        {(product.defaultMouldId || (product.defaultBatchQty && product.defaultBatchQty > 1)) && (
-          <div className="px-4 pb-6 space-y-2 border-t border-border pt-4">
-            <h2 className="text-sm font-medium text-muted-foreground">Production defaults</h2>
-            {product.defaultMouldId && (
-              <p className="text-sm">
-                <span className="text-muted-foreground">Mould:</span>{" "}
-                {allMoulds.find((m) => m.id === product.defaultMouldId)?.name ?? "Unknown"}
-              </p>
-            )}
-            {product.defaultBatchQty && product.defaultBatchQty > 1 && (
-              <p className="text-sm">
-                <span className="text-muted-foreground">Batch qty:</span> {product.defaultBatchQty}
-              </p>
-            )}
-          </div>
-        )}
-        </>
-      )}
-
-      {/* Delete product — always accessible */}
-      {!editing && (
-      <div className="px-4 pb-8 border-t border-border pt-4 space-y-4">
-        {/* Duplicate */}
-        {showDuplicatePanel ? (
-          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Copy className="w-4 h-4 text-muted-foreground shrink-0" />
-              <p className="text-sm font-medium">Duplicate &ldquo;{product?.name}&rdquo;</p>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              A new product will be created with the same type, coating, tags, notes, shell design, and production defaults.
-            </p>
-            {productFillings.length > 0 && (
-              <>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={duplicateFillings}
-                    onChange={(e) => setDuplicateFillings(e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-xs">
-                    Also duplicate {productFillings.length === 1 ? "the filling" : `all ${productFillings.length} fillings`} as new copies
-                  </span>
-                </label>
-                <p className="text-xs text-muted-foreground ml-6 -mt-2">
-                  {duplicateFillings
-                    ? "Each filling will be copied as an independent filling you can edit separately."
-                    : "The duplicate will share the same fillings as the original."}
-                </p>
-              </>
-            )}
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={async () => {
-                  setDuplicatingProduct(true);
-                  try {
-                    const newId = await duplicateProduct(productId, { duplicateFillings });
-                    router.push(`/products/${encodeURIComponent(newId)}?new=1&duplicate=1`);
-                  } finally {
-                    setDuplicatingProduct(false);
-                  }
-                }}
-                disabled={duplicatingProduct}
-                className="btn-primary px-3 py-1.5 text-sm disabled:opacity-50"
-              >
-                {duplicatingProduct ? "Duplicating…" : "Duplicate product"}
-              </button>
-              <button
-                onClick={() => { setShowDuplicatePanel(false); setDuplicateFillings(false); }}
-                className="btn-secondary px-3 py-1.5 text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => { setShowDuplicatePanel(true); setConfirmDelete(false); }}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Copy className="w-4 h-4" /> Duplicate product
-          </button>
-        )}
-
-        {/* Unarchive (for archived products) */}
-        {product?.archived && (
-          <button
-            onClick={async () => { await unarchiveProduct(productId); }}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArchiveRestore className="w-4 h-4" /> Unarchive product
-          </button>
-        )}
-
-        {/* Archive (for produced products) */}
-        {!product?.archived && productProduced && (
-          confirmDelete ? (
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Archive className="w-4 h-4 text-muted-foreground shrink-0" />
-                <p className="text-sm font-medium">Archive this product?</p>
-              </div>
-              <p className="text-xs text-muted-foreground">This product has been used in production and cannot be deleted. Archiving will hide it from lists but preserve it for production history.</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={async () => { await archiveProduct(productId); router.replace("/products"); }}
-                  className="btn-primary px-4 py-2 text-sm"
-                >
-                  Yes, archive product
-                </button>
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  className="btn-secondary px-4 py-2"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Archive className="w-4 h-4" /> Archive product
-            </button>
-          )
-        )}
-
-        {/* Delete (only for non-archived, non-produced products) */}
-        {!product?.archived && !productProduced && (
-          confirmDelete ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
-              <p className="text-sm font-medium text-destructive">Delete this product?</p>
-              <p className="text-xs text-muted-foreground">This will permanently remove the product and all its filling assignments. This cannot be undone.</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={async () => { await deleteProduct(productId); router.replace("/products"); }}
-                  className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-4 py-2 text-sm font-medium transition-colors hover:bg-destructive/90"
-                >
-                  Yes, delete product
-                </button>
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  className="btn-secondary px-4 py-2"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
-            >
-              <Trash2 className="w-4 h-4" /> Delete product
-            </button>
-          )
-        )}
+        <input
+          type="text"
+          value={tagInput}
+          onChange={(e) => setTagInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(tagInput); } }}
+          onBlur={() => addTag(tagInput)}
+          placeholder="Add a tag…"
+          aria-label="Add tag"
+          className="w-full mt-1.5 text-sm bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/50"
+        />
       </div>
-      )}
+    </SidebarCard>
+  );
+}
 
-      </>
-      )}
+// ─── Main: Notes ─────────────────────────────────────────────────────────────
+
+function NotesCard({ productId, product }: { productId: string; product: Product }) {
+  const [value, setValue] = useState(product.notes ?? "");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function commit(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === (product.notes ?? "")) return;
+    updateProductFields(productId, { notes: trimmed || undefined }, "Notes");
+  }
+
+  function handleChange(next: string) {
+    setValue(next);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => commit(next), 600);
+  }
+
+  function handleBlur() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    commit(value);
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-[13px] font-semibold">Notes</h2>
+      </div>
+      <div className="p-4">
+        <textarea
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="Tasting notes, storage tips, variations…"
+          rows={3}
+          aria-label="Notes"
+          className="w-full text-sm bg-transparent border-0 resize-none focus:outline-none placeholder:text-muted-foreground/60"
+        />
+      </div>
     </div>
+  );
+}
+
+// ─── Shell design tab ────────────────────────────────────────────────────────
+
+/** Wraps the existing shell-design editor so its step list and the shop colour
+ *  both autosave, replacing the old page-level Save. */
+function ShellDesignTab({ productId, product }: { productId: string; product: Product }) {
+  const steps = product.shellDesign ?? [];
+  return (
+    <>
+      <ShopColorControl
+        value={product.shopColor ?? ""}
+        onChange={(next) => updateProductFields(productId, { shopColor: next || undefined })}
+        productName={product.name}
+        shellDesign={steps}
+      />
+      <ShellDesignSection
+        steps={steps}
+        onUpdate={(next) => updateProductFields(productId, { shellDesign: next }, "Shell design")}
+        readonly={false}
+      />
+    </>
   );
 }
 

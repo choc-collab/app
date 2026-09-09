@@ -1,29 +1,34 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   usePackaging, usePackagingOrders, useAllPackagingSuppliers,
-  savePackaging, deletePackaging, archivePackaging, unarchivePackaging, isPackagingInUse,
-  savePackagingOrder, deletePackagingOrder,
+  updatePackagingFields, deletePackaging, archivePackaging, unarchivePackaging,
+  getPackagingCollectionNames, savePackagingOrder, deletePackagingOrder,
   setPackagingLowStock, setPackagingOutOfStock, markPackagingOrdered, useCurrencySymbol,
 } from "@/lib/hooks";
-import { ArrowLeft, Pencil, Trash2, Plus, Package, Archive, ArchiveRestore } from "lucide-react";
+import { db } from "@/lib/db";
+import { ArrowLeft, Trash2, Plus, Archive, ArchiveRestore } from "lucide-react";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { StockStatusPanel } from "@/components/stock-status-panel";
-import { useNavigationGuard } from "@/lib/useNavigationGuard";
+import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
+import {
+  SidebarCard, PropertyRow, DerivedRow, PROPERTY_INPUT_CLASS, PROPERTY_NUMBER_CLASS,
+} from "@/components/detail-sidebar";
 import { useSpaId } from "@/lib/use-spa-id";
-import type { PackagingKind } from "@/types";
+import type { Packaging, PackagingOrder, PackagingKind } from "@/types";
 
-const PACKAGING_KIND_OPTIONS: ReadonlyArray<{
-  value: PackagingKind;
-  label: string;
-  description: string;
-}> = [
-  { value: "bonbon",    label: "Bonbon box",        description: "Multi-cavity gift box for moulded + enrobed bonbons." },
-  { value: "snack-bar", label: "Snack-bar pack",    description: "Multi-pack of snack bars (e.g. 2-, 3-, 4-pack)." },
-  { value: "bar",       label: "Bar wrapper",       description: "Single-bar wrapper. Capacity is always 1." },
+const PACKAGING_KIND_OPTIONS: ReadonlyArray<{ value: PackagingKind; label: string }> = [
+  { value: "bonbon", label: "Bonbon box" },
+  { value: "snack-bar", label: "Snack-bar pack" },
+  { value: "bar", label: "Bar wrapper" },
 ];
+
+function kindLabel(kind: PackagingKind | undefined): string {
+  return PACKAGING_KIND_OPTIONS.find((o) => o.value === (kind ?? "bonbon"))?.label ?? "Box";
+}
 
 function formatDate(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
@@ -36,551 +41,606 @@ function todayISO(): string {
 export default function PackagingDetailPage() {
   const packagingId = useSpaId("packaging");
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const isNew = searchParams.get("new") === "1";
 
   const sym = useCurrencySymbol();
   const pkg = usePackaging(packagingId);
   const orders = usePackagingOrders(packagingId);
   const allSuppliers = useAllPackagingSuppliers();
 
-  const [editing, setEditing] = useState(isNew);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [inUse, setInUse] = useState<boolean | null>(null);
-  const [showOrderForm, setShowOrderForm] = useState(false);
-  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [usedByCollections, setUsedByCollections] = useState<string[] | null>(null);
 
-  // Edit form state
-  const [capacity, setCapacity] = useState("");
-  const [manufacturer, setManufacturer] = useState("");
-  const [notes, setNotes] = useState("");
-  const [productKind, setProductKind] = useState<PackagingKind>("bonbon");
-
-  // Order form state
-  const [orderDate, setOrderDate] = useState(todayISO());
-  const [orderQty, setOrderQty] = useState("");
-  const [orderPrice, setOrderPrice] = useState("");
-  const [orderSupplier, setOrderSupplier] = useState("");
-  const [orderNotes, setOrderNotes] = useState("");
+  // Loading vs. not-found — `usePackaging`'s live query returns `undefined` both
+  // while pending and when the row genuinely doesn't exist, so a one-shot direct
+  // read resolves which one it actually is.
+  const [status, setStatus] = useState<"loading" | "found" | "not-found">("loading");
+  useEffect(() => {
+    if (!packagingId) return;
+    let cancelled = false;
+    db.packaging.get(packagingId).then((p) => {
+      if (!cancelled) setStatus(p ? "found" : "not-found");
+    });
+    return () => { cancelled = true; };
+  }, [packagingId]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (confirmDelete) setConfirmDelete(false);
-      else if (deletingOrderId) setDeletingOrderId(null);
-      else if (showOrderForm) setShowOrderForm(false);
-      else if (editing) setEditing(false);
+      else if (confirmArchive) setConfirmArchive(false);
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [confirmDelete, deletingOrderId, showOrderForm, editing]);
+  }, [confirmDelete, confirmArchive]);
 
-  // Sync edit form when pkg loads
-  if (pkg && (!editing || isNew) && capacity === "" && pkg.name) {
-    setCapacity(String(pkg.capacity));
-    setManufacturer(pkg.manufacturer ?? "");
-    setNotes(pkg.notes ?? "");
-    setProductKind(pkg.productKind ?? "bonbon");
+  if (!packagingId || status === "loading" || (status === "found" && !pkg)) {
+    return <DetailSkeleton cards={2} sidebar={3} label="Loading packaging" />;
   }
-
-  const [savedOnce, setSavedOnce] = useState(false);
-  const formDirty = editing && pkg != null && (
-    capacity !== String(pkg.capacity) ||
-    manufacturer !== (pkg.manufacturer ?? "") ||
-    notes !== (pkg.notes ?? "") ||
-    productKind !== (pkg.productKind ?? "bonbon")
-  );
-  const isDirty = (isNew && !savedOnce) || formDirty;
-
-  const handleConfirmLeave = useCallback(async () => {
-    if (isNew && packagingId) await deletePackaging(packagingId);
-  }, [isNew, packagingId]);
-
-  const { safeBack } = useNavigationGuard(isDirty, isNew ? handleConfirmLeave : undefined);
-
-  if (!packagingId || !pkg) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading…</p>
-      </div>
-    );
-  }
-
-  function startEditing() {
-    setCapacity(String(pkg!.capacity));
-    setManufacturer(pkg!.manufacturer ?? "");
-    setNotes(pkg!.notes ?? "");
-    setProductKind(pkg!.productKind ?? "bonbon");
-    setEditing(true);
-  }
-
-  function handleCancel() {
-    setEditing(false);
-    if (isNew && packagingId) router.replace(`/packaging/${encodeURIComponent(packagingId)}`);
-  }
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    if (!packagingId) return;
-    // Bar wrappers are single-piece by definition — clamp on save so the user
-    // can't accidentally configure a bar wrapper that holds multiple bars.
-    const rawCap = parseInt(capacity) || 1;
-    const cap = productKind === "bar" ? 1 : rawCap;
-    await savePackaging({
-      id: packagingId,
-      name: pkg!.name,
-      capacity: cap,
-      productKind,
-      manufacturer: manufacturer.trim() || undefined,
-      notes: notes.trim() || undefined,
-      createdAt: pkg!.createdAt,
-      updatedAt: new Date(),
-    });
-    setSavedOnce(true);
-    setEditing(false);
-    if (isNew) {
-      router.replace(`/packaging/${encodeURIComponent(packagingId)}`);
-      // Auto-open order form so user can immediately log a price
-      setShowOrderForm(true);
-    }
-  }
-
-  async function handleLogOrder(e: React.FormEvent) {
-    e.preventDefault();
-    if (!packagingId) return;
-    const qty = parseInt(orderQty);
-    const price = parseFloat(orderPrice);
-    if (!qty || !price || !orderDate) return;
-    await savePackagingOrder({
-      packagingId,
-      quantity: qty,
-      pricePerUnit: price,
-      supplier: orderSupplier.trim() || undefined,
-      orderedAt: new Date(orderDate),
-      notes: orderNotes.trim() || undefined,
-    });
-    setOrderQty("");
-    setOrderPrice("");
-    setOrderSupplier("");
-    setOrderNotes("");
-    setOrderDate(todayISO());
-    setShowOrderForm(false);
+  if (status === "not-found" || !pkg) {
+    return <DetailNotFound entity="packaging" backHref="/packaging" backLabel="Packaging" />;
   }
 
   const latestOrder = orders[0];
+  const totalUnits = orders.reduce((sum, o) => sum + o.quantity, 0);
+  const totalSpend = orders.reduce((sum, o) => sum + o.quantity * o.pricePerUnit, 0);
+  const avgPerUnit = totalUnits > 0 ? totalSpend / totalUnits : null;
+
+  const subtitle = [
+    `${kindLabel(pkg.productKind)} · fits ${pkg.capacity}`,
+    pkg.manufacturer,
+    orders.length > 0 ? `${orders.length} order${orders.length !== 1 ? "s" : ""} logged` : null,
+    latestOrder ? `${sym}${latestOrder.pricePerUnit.toFixed(2)}/unit latest` : null,
+  ].filter(Boolean).join(" · ");
+
+  async function openDeletePanel() {
+    if (!packagingId) return;
+    const names = await getPackagingCollectionNames(packagingId);
+    setUsedByCollections(names);
+    setConfirmDelete(true);
+    setConfirmArchive(false);
+  }
 
   return (
     <div>
       <div className="px-4 pt-6 pb-2">
-        <button onClick={() => safeBack()} className="inline-flex items-center gap-1 text-sm text-muted-foreground mb-3">
-          <ArrowLeft className="w-4 h-4" /> Back
-        </button>
+        <Link href="/packaging" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Packaging
+        </Link>
       </div>
 
-      <div className="px-4 pb-6 space-y-6">
-        {/* Name row — always visible */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-start gap-3">
-            <div className="w-12 h-12 rounded-lg bg-muted shrink-0 flex items-center justify-center text-muted-foreground mt-0.5">
-              <Package className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <InlineNameEditor
-                  name={pkg.name}
-                  onSave={async (n) => { await savePackaging({ ...pkg, name: n, updatedAt: new Date() }); }}
-                  className="text-xl font-bold"
-                />
-                {pkg.archived && (
-                  <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-medium flex items-center gap-1 shrink-0">
-                    <Archive className="w-3 h-3" /> Archived
-                  </span>
-                )}
-              </div>
-              {!editing && (
-                <>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {(PACKAGING_KIND_OPTIONS.find((o) => o.value === (pkg.productKind ?? "bonbon"))?.label ?? "Box")}
-                    {" · "}
-                    fits {pkg.capacity} product{pkg.capacity !== 1 ? "s" : ""}
-                  </p>
-                  {pkg.manufacturer && (
-                    <p className="text-sm text-muted-foreground">{pkg.manufacturer}</p>
-                  )}
-                  {latestOrder && (
-                    <p className="text-sm font-medium text-primary mt-1">
-                      {sym}{latestOrder.pricePerUnit.toFixed(2)}/unit
-                      <span className="text-xs text-muted-foreground font-normal ml-1">(latest)</span>
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-          {!editing && (
-            <button
-              onClick={startEditing}
-              className="p-1.5 rounded-full hover:bg-muted transition-colors shrink-0"
-              aria-label="Edit packaging"
-            >
-              <Pencil className="w-4 h-4 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-
-        {/* Stock status — hidden while editing */}
-        {!editing && (
-          <StockStatusPanel
-            lowStock={pkg.lowStock}
-            lowStockOrdered={pkg.lowStockOrdered}
-            outOfStock={pkg.outOfStock}
-            itemName={pkg.name}
-            onFlagLowStock={() => setPackagingLowStock(packagingId, true)}
-            onFlagOutOfStock={() => setPackagingOutOfStock(packagingId, true)}
-            onMarkOrdered={() => markPackagingOrdered(packagingId)}
-            onClearOutOfStock={() => setPackagingOutOfStock(packagingId, false)}
-            onClearLowStock={() => setPackagingLowStock(packagingId, false)}
+      {/* Header */}
+      <div className="px-4 pb-5">
+        <div className="flex items-center gap-2">
+          <InlineNameEditor
+            name={pkg.name}
+            onSave={async (n) => { await updatePackagingFields(packagingId, { name: n }); }}
+            className="text-xl font-bold"
           />
-        )}
-
-        {editing ? (
-          /* ── Edit form (excludes name — handled by InlineNameEditor) ── */
-          <form onSubmit={handleSave} className="space-y-3">
-            <div>
-              <label className="label" htmlFor="pkg-product-kind">Holds</label>
-              <select
-                id="pkg-product-kind"
-                value={productKind}
-                onChange={(e) => {
-                  const next = e.target.value as PackagingKind;
-                  setProductKind(next);
-                  // Bar wrappers are always 1; force-correct any stale value
-                  // the moment the user picks "bar" so the input matches.
-                  if (next === "bar") setCapacity("1");
-                }}
-                className="input"
-              >
-                {PACKAGING_KIND_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {PACKAGING_KIND_OPTIONS.find((o) => o.value === productKind)?.description}
-              </p>
-            </div>
-            <div>
-              <label className="label">Product capacity *</label>
-              <input
-                type="number"
-                value={capacity}
-                onChange={(e) => setCapacity(e.target.value)}
-                placeholder="e.g. 9"
-                min="1"
-                step="1"
-                required
-                disabled={productKind === "bar"}
-                autoFocus={isNew}
-                className="input"
-              />
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {productKind === "bar"
-                  ? "Bar wrappers always hold a single bar."
-                  : "How many products fit in this packaging"}
-              </p>
-            </div>
-            <div>
-              <label className="label">Manufacturer / Brand</label>
-              <input
-                type="text"
-                list="manufacturer-list"
-                value={manufacturer}
-                onChange={(e) => setManufacturer(e.target.value)}
-                placeholder="e.g. Keylink"
-                className="input"
-              />
-              {allSuppliers.length > 0 && (
-                <datalist id="manufacturer-list">
-                  {allSuppliers.map((s) => <option key={s} value={s} />)}
-                </datalist>
-              )}
-            </div>
-            <div>
-              <label className="label">Notes</label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Optional notes…"
-                rows={2}
-                className="input resize-none"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="btn-primary flex-1 py-2">Save</button>
-              <button type="button" onClick={handleCancel} className="btn-secondary px-4 py-2">Cancel</button>
-            </div>
-          </form>
-        ) : (
-          <>
-            {pkg.notes && (
-              <p className="text-sm text-muted-foreground italic">{pkg.notes}</p>
-            )}
-          </>
-        )}
-
-        {/* Order history — always visible */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-primary">Purchase History</h2>
-            {!showOrderForm && !editing && (
-              <button
-                onClick={() => setShowOrderForm(true)}
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> Log purchase
-              </button>
-            )}
-          </div>
-
-          {showOrderForm && (
-            <form onSubmit={handleLogOrder} className="rounded-lg border border-border bg-card p-3 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="label">Date *</label>
-                  <input
-                    type="date"
-                    value={orderDate}
-                    onChange={(e) => setOrderDate(e.target.value)}
-                    required
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Quantity *</label>
-                  <input
-                    type="number"
-                    value={orderQty}
-                    onChange={(e) => setOrderQty(e.target.value)}
-                    placeholder="e.g. 1500"
-                    min="1"
-                    step="1"
-                    required
-                    autoFocus
-                    className="input"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="label">Price per unit ({sym}) *</label>
-                  <input
-                    type="number"
-                    value={orderPrice}
-                    onChange={(e) => setOrderPrice(e.target.value)}
-                    placeholder="e.g. 1.99"
-                    min="0.01"
-                    step="0.01"
-                    required
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Supplier</label>
-                  <input
-                    type="text"
-                    list="supplier-list"
-                    value={orderSupplier}
-                    onChange={(e) => setOrderSupplier(e.target.value)}
-                    placeholder="e.g. Keylink"
-                    className="input"
-                  />
-                  {allSuppliers.length > 0 && (
-                    <datalist id="supplier-list">
-                      {allSuppliers.map((s) => <option key={s} value={s} />)}
-                    </datalist>
-                  )}
-                </div>
-              </div>
-              {orderQty && orderPrice && !isNaN(parseInt(orderQty)) && !isNaN(parseFloat(orderPrice)) && (
-                <p className="text-xs text-muted-foreground">
-                  Total: {sym}{(parseInt(orderQty) * parseFloat(orderPrice)).toFixed(2)}
-                </p>
-              )}
-              <div>
-                <label className="label">Notes</label>
-                <input
-                  type="text"
-                  value={orderNotes}
-                  onChange={(e) => setOrderNotes(e.target.value)}
-                  placeholder="Optional…"
-                  className="input"
-                />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  disabled={!orderQty || !orderPrice || !orderDate}
-                  className="btn-primary flex-1 py-2"
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowOrderForm(false)}
-                  className="btn-secondary px-4 py-2"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
-
-          {orders.length === 0 && !showOrderForm ? (
-            <button
-              onClick={() => setShowOrderForm(true)}
-              disabled={editing}
-              className="w-full rounded-full border border-dashed border-border py-4 text-sm text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Plus className="w-4 h-4 inline mr-1.5 -mt-0.5" />
-              Log first purchase
-            </button>
-          ) : (
-            <ul className="space-y-2">
-              {orders.map((order) => (
-                <li key={order.id} className="rounded-lg border border-border bg-card">
-                  {deletingOrderId === order.id ? (
-                    <div className="p-3 space-y-2">
-                      <p className="text-sm font-medium text-destructive">Delete this entry?</p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={async () => {
-                            await deletePackagingOrder(order.id!);
-                            setDeletingOrderId(null);
-                          }}
-                          className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-3 py-1.5 text-xs font-medium transition-colors hover:bg-destructive/90"
-                        >
-                          Yes, delete
-                        </button>
-                        <button
-                          onClick={() => setDeletingOrderId(null)}
-                          className="btn-secondary px-3 py-1.5 text-xs"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start gap-3 p-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2 flex-wrap">
-                          <span className="text-sm font-medium">{order.quantity.toLocaleString()} units</span>
-                          <span className="text-xs text-muted-foreground">@ {sym}{order.pricePerUnit.toFixed(2)}/unit</span>
-                          <span className="text-xs font-medium text-primary">
-                            = {sym}{(order.quantity * order.pricePerUnit).toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span className="text-xs text-muted-foreground">{formatDate(order.orderedAt)}</span>
-                          {order.supplier && (
-                            <>
-                              <span className="text-muted-foreground/40 text-xs">·</span>
-                              <span className="text-xs text-muted-foreground">{order.supplier}</span>
-                            </>
-                          )}
-                        </div>
-                        {order.notes && (
-                          <p className="text-xs text-muted-foreground mt-0.5 italic">{order.notes}</p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => setDeletingOrderId(order.id!)}
-                        className="p-1 rounded hover:bg-muted transition-colors shrink-0 text-muted-foreground hover:text-destructive"
-                        aria-label="Delete entry"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+          <span className="rounded-full bg-accent text-accent-foreground px-2.5 py-0.5 text-[11px] font-medium shrink-0">
+            {kindLabel(pkg.productKind)}
+          </span>
+          {pkg.archived && (
+            <span className="rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-medium flex items-center gap-1 shrink-0">
+              <Archive className="w-3 h-3" /> Archived
+            </span>
           )}
         </div>
+        <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
       </div>
 
-      {!editing && (
-        <div className="px-4 pb-8 border-t border-border pt-4 space-y-4">
-          {pkg.archived && (
-            <button
-              onClick={async () => { await unarchivePackaging(packagingId); }}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArchiveRestore className="w-4 h-4" /> Unarchive packaging
-            </button>
-          )}
-          {confirmDelete ? (
-            inUse ? (
-              /* In use by collections — archive only */
+      <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+        {/* ── Main column ── */}
+        <div className="space-y-4 min-w-0">
+          {/* Notes sit above the purchase history: the history grows without
+              bound as orders are logged, and would otherwise push the notes
+              off the bottom of the page. */}
+          <NotesCard key={pkg.id} packagingId={packagingId} pkg={pkg} />
+
+          <PurchaseHistoryCard
+            packagingId={packagingId}
+            orders={orders}
+            suppliers={allSuppliers}
+            sym={sym}
+            totalUnits={totalUnits}
+            totalSpend={totalSpend}
+          />
+
+          {/* ── Destructive actions ── */}
+          <div className="pt-2 space-y-3">
+            {pkg.archived ? (
+              <button
+                onClick={async () => { await unarchivePackaging(packagingId); }}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ArchiveRestore className="w-4 h-4" /> Unarchive packaging
+              </button>
+            ) : confirmArchive ? (
               <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Archive className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <p className="text-sm font-medium">Archive this packaging?</p>
-                </div>
+                <p className="text-sm font-medium">Archive this packaging?</p>
                 <p className="text-xs text-muted-foreground">
-                  This packaging is referenced by one or more collections and cannot be deleted.
-                  Archiving will hide it from lists but preserve it for existing collections.
+                  It stays available to any collection already using it, but is hidden from lists
+                  and pickers.
                 </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={async () => {
-                      await archivePackaging(packagingId);
-                      router.replace("/packaging");
-                    }}
+                    onClick={async () => { await archivePackaging(packagingId); router.replace("/packaging"); }}
                     className="btn-primary px-4 py-2 text-sm"
                   >
                     Yes, archive packaging
                   </button>
-                  <button onClick={() => setConfirmDelete(false)} className="btn-secondary px-4 py-2">
-                    Cancel
-                  </button>
+                  <button onClick={() => setConfirmArchive(false)} className="btn-secondary px-4 py-2">Cancel</button>
                 </div>
               </div>
             ) : (
-              /* Not in use — allow full delete */
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
-                <p className="text-sm font-medium text-destructive">Delete this packaging?</p>
-                <p className="text-xs text-muted-foreground">
-                  This will permanently remove the packaging and all {orders.length} purchase{orders.length !== 1 ? "s" : ""} logged for it. This cannot be undone.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={async () => {
-                      await deletePackaging(packagingId);
-                      router.replace("/packaging");
-                    }}
-                    className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-4 py-2 text-sm font-medium transition-colors hover:bg-destructive/90"
-                  >
-                    Yes, delete packaging
-                  </button>
-                  <button onClick={() => setConfirmDelete(false)} className="btn-secondary px-4 py-2">
-                    Cancel
-                  </button>
+              <button
+                onClick={() => { setConfirmArchive(true); setConfirmDelete(false); }}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Archive className="w-4 h-4" /> Archive packaging
+              </button>
+            )}
+
+            {confirmDelete ? (
+              usedByCollections && usedByCollections.length > 0 ? (
+                /* In use by collections — archive is the only way out */
+                <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Archive className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <p className="text-sm font-medium">Delete is blocked</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    In use by {usedByCollections.length} collection{usedByCollections.length !== 1 ? "s" : ""} —{" "}
+                    {usedByCollections.join(", ")} — which would lose their box pricing.
+                    Archiving hides it from lists while keeping that pricing intact.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => { await archivePackaging(packagingId); router.replace("/packaging"); }}
+                      className="btn-primary px-4 py-2 text-sm"
+                    >
+                      Archive instead
+                    </button>
+                    <button onClick={() => setConfirmDelete(false)} className="btn-secondary px-4 py-2">Cancel</button>
+                  </div>
                 </div>
-              </div>
-            )
-          ) : (
-            <button
-              onClick={async () => {
-                const used = await isPackagingInUse(packagingId);
-                setInUse(used);
-                setConfirmDelete(true);
-              }}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
-            >
-              <Trash2 className="w-4 h-4" /> Delete packaging
-            </button>
-          )}
+              ) : (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+                  <p className="text-sm font-medium text-destructive">Delete this packaging?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Permanently removes the packaging and all {orders.length} logged purchase
+                    order{orders.length !== 1 ? "s" : ""}. This cannot be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => { await deletePackaging(packagingId); router.replace("/packaging"); }}
+                      className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-4 py-2 text-sm font-medium transition-colors hover:bg-destructive/90"
+                    >
+                      Yes, delete packaging
+                    </button>
+                    <button onClick={() => setConfirmDelete(false)} className="btn-secondary px-4 py-2">Cancel</button>
+                  </div>
+                </div>
+              )
+            ) : (
+              <button
+                onClick={openDeletePanel}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="w-4 h-4" /> Delete packaging
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* ── Sidebar ── */}
+        <div className="space-y-4 lg:sticky lg:top-4">
+          <SidebarCard title="Stock">
+            <StockStatusPanel
+              lowStock={pkg.lowStock}
+              lowStockOrdered={pkg.lowStockOrdered}
+              outOfStock={pkg.outOfStock}
+              itemName={pkg.name}
+              onFlagLowStock={() => setPackagingLowStock(packagingId, true)}
+              onFlagOutOfStock={() => setPackagingOutOfStock(packagingId, true)}
+              onMarkOrdered={() => markPackagingOrdered(packagingId)}
+              onClearOutOfStock={() => setPackagingOutOfStock(packagingId, false)}
+              onClearLowStock={() => setPackagingLowStock(packagingId, false)}
+            />
+          </SidebarCard>
+
+          <PropertiesCard key={pkg.id} packagingId={packagingId} pkg={pkg} suppliers={allSuppliers} />
+
+          <SidebarCard title="Derived" tinted className="space-y-2">
+            <DerivedRow
+              label="Latest per unit"
+              value={latestOrder ? `${sym}${latestOrder.pricePerUnit.toFixed(2)}` : "—"}
+            />
+            <DerivedRow
+              label="Average per unit"
+              value={avgPerUnit != null ? `${sym}${avgPerUnit.toFixed(2)}` : "—"}
+            />
+            <DerivedRow label="Units ordered" value={totalUnits > 0 ? totalUnits.toLocaleString() : "—"} />
+            <DerivedRow label="Orders logged" value={orders.length} />
+            <DerivedRow
+              label="Last ordered"
+              value={latestOrder ? formatDate(latestOrder.orderedAt) : "—"}
+            />
+          </SidebarCard>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sidebar: Properties ─────────────────────────────────────────────────────
+
+function PropertiesCard({
+  packagingId,
+  pkg,
+  suppliers,
+}: {
+  packagingId: string;
+  pkg: Packaging;
+  suppliers: string[];
+}) {
+  // Keyed by `pkg.id` at the call site, so local draft state resets only when
+  // navigating to a different record — not on every autosave re-render.
+  const [capacity, setCapacity] = useState(String(pkg.capacity));
+  const [manufacturer, setManufacturer] = useState(pkg.manufacturer ?? "");
+
+  const isBar = (pkg.productKind ?? "bonbon") === "bar";
+
+  function commitCapacity() {
+    const parsed = parseInt(capacity, 10);
+    const next = !isNaN(parsed) && parsed > 0 ? parsed : 1;
+    // Reflect the clamp back into the input so it can't sit showing a value the
+    // record doesn't hold.
+    if (String(next) !== capacity) setCapacity(String(next));
+    if (next === pkg.capacity) return;
+    updatePackagingFields(packagingId, { capacity: next }, "Capacity");
+  }
+
+  function commitManufacturer() {
+    const trimmed = manufacturer.trim();
+    if (trimmed === (pkg.manufacturer ?? "")) return;
+    updatePackagingFields(packagingId, { manufacturer: trimmed || undefined }, "Manufacturer");
+  }
+
+  function commitKind(next: PackagingKind) {
+    // A bar wrapper holds exactly one bar by definition, so picking it clamps
+    // capacity in the same write rather than leaving an impossible pair behind.
+    if (next === "bar") {
+      setCapacity("1");
+      updatePackagingFields(packagingId, { productKind: next, capacity: 1 }, "Kind");
+    } else {
+      updatePackagingFields(packagingId, { productKind: next }, "Kind");
+    }
+  }
+
+  return (
+    <SidebarCard title="Properties">
+      <div className="space-y-1">
+        <PropertyRow label="Kind">
+          <select
+            value={pkg.productKind ?? "bonbon"}
+            onChange={(e) => commitKind(e.target.value as PackagingKind)}
+            aria-label="Kind"
+            className={PROPERTY_INPUT_CLASS}
+          >
+            {PACKAGING_KIND_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </PropertyRow>
+
+        <PropertyRow label="Capacity">
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            onBlur={commitCapacity}
+            disabled={isBar}
+            aria-label="Capacity"
+            title={isBar ? "Bar wrappers always hold a single bar." : undefined}
+            className={`w-14 ${PROPERTY_NUMBER_CLASS} disabled:text-muted-foreground disabled:cursor-not-allowed`}
+          />
+        </PropertyRow>
+
+        <PropertyRow label="Manufacturer">
+          <input
+            type="text"
+            list="packaging-manufacturer-list"
+            value={manufacturer}
+            onChange={(e) => setManufacturer(e.target.value)}
+            onBlur={commitManufacturer}
+            placeholder="—"
+            aria-label="Manufacturer"
+            className={PROPERTY_INPUT_CLASS}
+          />
+          {suppliers.length > 0 && (
+            <datalist id="packaging-manufacturer-list">
+              {suppliers.map((s) => <option key={s} value={s} />)}
+            </datalist>
+          )}
+        </PropertyRow>
+      </div>
+    </SidebarCard>
+  );
+}
+
+// ─── Main: Notes ─────────────────────────────────────────────────────────────
+
+function NotesCard({ packagingId, pkg }: { packagingId: string; pkg: Packaging }) {
+  const [value, setValue] = useState(pkg.notes ?? "");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function commit(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === (pkg.notes ?? "")) return;
+    updatePackagingFields(packagingId, { notes: trimmed || undefined }, "Notes");
+  }
+
+  // Debounce so a long note isn't one write per keystroke, then flush on blur so
+  // leaving the field can never lose the last few characters.
+  function handleChange(next: string) {
+    setValue(next);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => commit(next), 600);
+  }
+
+  function handleBlur() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    commit(value);
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-[13px] font-semibold">Notes</h2>
+      </div>
+      <div className="p-4">
+        <textarea
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="Anything worth remembering about this packaging…"
+          rows={3}
+          aria-label="Notes"
+          className="w-full text-sm bg-transparent border-0 resize-none focus:outline-none placeholder:text-muted-foreground/60"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Main: Purchase history ──────────────────────────────────────────────────
+
+const ORDER_GRID = "96px minmax(0,1fr) 78px 88px 84px 32px";
+
+function PurchaseHistoryCard({
+  packagingId,
+  orders,
+  suppliers,
+  sym,
+  totalUnits,
+  totalSpend,
+}: {
+  packagingId: string;
+  orders: PackagingOrder[];
+  suppliers: string[];
+  sym: string;
+  totalUnits: number;
+  totalSpend: number;
+}) {
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && pendingRemove) setPendingRemove(null);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [pendingRemove]);
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-semibold">Purchase history</h2>
+        {orders.length > 0 && (
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            {totalUnits.toLocaleString()} units · {sym}{totalSpend.toFixed(2)}
+          </span>
+        )}
+      </div>
+
+      {/* Column heads */}
+      <div
+        className="grid gap-3 px-4 py-2 bg-muted text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+        style={{ gridTemplateColumns: ORDER_GRID }}
+      >
+        <span>Date</span>
+        <span>Supplier</span>
+        <span className="text-right">Qty</span>
+        <span className="text-right">Total</span>
+        <span className="text-right">Per unit</span>
+        <span aria-hidden="true" />
+      </div>
+
+      {orders.map((order) => (
+        pendingRemove === order.id ? (
+          <div
+            key={order.id}
+            className="px-4 py-2.5 border-b border-border bg-status-alert-bg flex items-center justify-between gap-3 flex-wrap"
+          >
+            <p className="text-xs text-status-alert">
+              Remove the {formatDate(order.orderedAt)} order — {order.quantity.toLocaleString()} units,{" "}
+              {sym}{(order.quantity * order.pricePerUnit).toFixed(2)}?
+            </p>
+            <span className="flex items-center gap-3 text-xs shrink-0">
+              <button
+                onClick={async () => { await deletePackagingOrder(order.id!); setPendingRemove(null); }}
+                className="text-destructive font-medium underline underline-offset-2"
+              >
+                Yes, remove
+              </button>
+              <button
+                onClick={() => setPendingRemove(null)}
+                className="text-muted-foreground underline underline-offset-2"
+              >
+                Cancel
+              </button>
+            </span>
+          </div>
+        ) : (
+          <div
+            key={order.id}
+            className="grid gap-3 px-4 py-2.5 border-b border-border items-baseline hover:bg-muted/40 transition-colors"
+            style={{ gridTemplateColumns: ORDER_GRID }}
+          >
+            <span className="text-xs tabular-nums">{formatDate(order.orderedAt)}</span>
+            <span className="text-xs min-w-0">
+              <span className="block truncate">{order.supplier || "—"}</span>
+              {order.notes && (
+                <span className="block text-[11px] text-muted-foreground italic truncate">{order.notes}</span>
+              )}
+            </span>
+            <span className="text-xs text-right tabular-nums">{order.quantity.toLocaleString()}</span>
+            <span className="text-xs text-right tabular-nums">
+              {sym}{(order.quantity * order.pricePerUnit).toFixed(2)}
+            </span>
+            <span className="text-xs text-right tabular-nums font-medium">
+              {sym}{order.pricePerUnit.toFixed(2)}
+            </span>
+            <button
+              onClick={() => setPendingRemove(order.id!)}
+              aria-label={`Delete ${formatDate(order.orderedAt)} entry`}
+              className="justify-self-end p-1 rounded text-muted-foreground hover:text-destructive hover:bg-muted transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )
+      ))}
+
+      <AddOrderRow packagingId={packagingId} suppliers={suppliers} sym={sym} />
+    </div>
+  );
+}
+
+/** The last row of the table is the add-entry row — entering a purchase is the
+ *  page's primary action, so it lives where the next row would go rather than
+ *  behind a disclosure. */
+function AddOrderRow({
+  packagingId,
+  suppliers,
+  sym,
+}: {
+  packagingId: string;
+  suppliers: string[];
+  sym: string;
+}) {
+  const [date, setDate] = useState(todayISO());
+  const [supplier, setSupplier] = useState("");
+  const [qty, setQty] = useState("");
+  const [price, setPrice] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const qtyNum = parseInt(qty, 10);
+  const priceNum = parseFloat(price);
+  const valid = !!date && !isNaN(qtyNum) && qtyNum > 0 && !isNaN(priceNum) && priceNum > 0;
+  const total = valid ? qtyNum * priceNum : null;
+
+  async function handleAdd() {
+    if (!valid) return;
+    await savePackagingOrder({
+      packagingId,
+      quantity: qtyNum,
+      pricePerUnit: priceNum,
+      supplier: supplier.trim() || undefined,
+      orderedAt: new Date(date),
+      notes: notes.trim() || undefined,
+    });
+    setQty("");
+    setPrice("");
+    setSupplier("");
+    setNotes("");
+    setDate(todayISO());
+  }
+
+  return (
+    <div onKeyDown={(e) => { if (e.key === "Enter" && valid) handleAdd(); }}>
+    <div
+      className="grid gap-3 px-4 pt-2.5 items-center"
+      style={{ gridTemplateColumns: ORDER_GRID }}
+    >
+      <input
+        type="date"
+        value={date}
+        onChange={(e) => setDate(e.target.value)}
+        aria-label="Purchase date"
+        className="input !py-1 !px-2 text-xs"
+      />
+      <input
+        type="text"
+        list="packaging-supplier-list"
+        value={supplier}
+        onChange={(e) => setSupplier(e.target.value)}
+        placeholder="Supplier"
+        aria-label="Supplier"
+        className="input !py-1 !px-2 text-xs min-w-0"
+      />
+      {suppliers.length > 0 && (
+        <datalist id="packaging-supplier-list">
+          {suppliers.map((s) => <option key={s} value={s} />)}
+        </datalist>
       )}
+      <input
+        type="number"
+        min="1"
+        step="1"
+        value={qty}
+        onChange={(e) => setQty(e.target.value)}
+        placeholder="Qty"
+        aria-label="Quantity"
+        className="input !py-1 !px-2 text-xs text-right"
+      />
+      <input
+        type="number"
+        min="0.01"
+        step="0.01"
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        placeholder="Per unit"
+        aria-label={`Price per unit (${sym})`}
+        className="input !py-1 !px-2 text-xs text-right"
+      />
+      <span className="text-xs text-right tabular-nums text-muted-foreground">
+        {total != null ? `${sym}${total.toFixed(2)}` : "—"}
+      </span>
+      <button
+        onClick={handleAdd}
+        disabled={!valid}
+        aria-label="Log purchase"
+        className="justify-self-end w-6 h-6 rounded-md bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <Plus className="w-3.5 h-3.5" />
+      </button>
+    </div>
+    {/* Order notes sit on their own line — they're free text and would squeeze
+        every other column if they shared the grid row. */}
+    <div className="px-4 pt-1.5 pb-2.5">
+      <input
+        type="text"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="Notes for this order (optional)"
+        aria-label="Order notes"
+        className="input !py-1 !px-2 text-xs w-full"
+      />
+    </div>
     </div>
   );
 }

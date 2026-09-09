@@ -29,6 +29,7 @@ import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DuplicatedToast } from "@/components/duplicated-toast";
 import { StepListEditor } from "@/components/step-list-editor";
+import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
 import type { Ingredient, Product, Filling, FillingIngredient, FillingStock } from "@/types";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
 
@@ -189,10 +190,10 @@ export default function FillingDetailPage() {
   }
 
   if (!fillingId || status === "loading" || (status === "found" && !filling)) {
-    return <FillingDetailSkeleton />;
+    return <DetailSkeleton cards={3} sidebar={3} label="Loading filling" />;
   }
   if (status === "not-found" || !filling) {
-    return <FillingNotFound />;
+    return <DetailNotFound entity="filling" backHref="/fillings" backLabel="Fillings" />;
   }
 
   const versionLabel = filling.version != null ? `v${filling.version}` : null;
@@ -1388,38 +1389,3 @@ function FillingVersionHistoryTab({ versions, currentId }: { versions: Filling[]
   );
 }
 
-// ─── Loading / not-found states ──────────────────────────────────────────────
-
-function FillingDetailSkeleton() {
-  return (
-    <div className="px-4 pt-6 pb-8 animate-pulse" aria-busy="true" aria-label="Loading filling">
-      <div className="h-4 w-16 bg-muted rounded mb-4" />
-      <div className="h-7 w-48 bg-muted rounded mb-2" />
-      <div className="h-4 w-64 bg-muted rounded mb-6" />
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5">
-        <div className="space-y-4">
-          <div className="h-40 bg-muted rounded-lg" />
-          <div className="h-24 bg-muted rounded-lg" />
-          <div className="h-24 bg-muted rounded-lg" />
-        </div>
-        <div className="space-y-4">
-          <div className="h-32 bg-muted rounded-lg" />
-          <div className="h-24 bg-muted rounded-lg" />
-          <div className="h-28 bg-muted rounded-lg" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FillingNotFound() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[50vh] px-4 text-center gap-1.5">
-      <p className="text-sm font-medium">This filling doesn&rsquo;t exist.</p>
-      <p className="text-sm text-muted-foreground">It may have been deleted.</p>
-      <Link href="/fillings" className="text-sm text-primary underline underline-offset-2 mt-2">
-        Back to Fillings
-      </Link>
-    </div>
-  );
-}
