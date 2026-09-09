@@ -15,16 +15,16 @@ function isoFromToday(days: number): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** Create an order via the Orders tab quick-add, land on detail, save. */
+/** Create an order via the Orders tab quick-add and land on its (autosaving)
+ *  detail page. */
 async function createOrder(page: Page, { title, date }: { title: string; date: string }) {
   await page.goto("/orders?tab=orders");
   await page.getByRole("button", { name: "Add order" }).click();
   await page.getByLabel("Order title").fill(title);
   await page.getByLabel("Event date").fill(date);
   await page.getByRole("button", { name: "Create Order" }).click();
-  await expect(page).toHaveURL(/\/orders\/[^/]+\/?\?new=1/);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Edit order" })).toBeVisible();
+  await expect(page).toHaveURL(/\/orders\/[^/?]+\/?$/);
+  await expect(page.getByText(title, { exact: true })).toBeVisible();
 }
 
 /** Create a customer via the Customers tab quick-add, land on detail, save. */
@@ -38,12 +38,10 @@ async function createCustomer(page: Page, name: string) {
   await expect(page.getByRole("button", { name: "Edit customer" })).toBeVisible();
 }
 
-/** Assign an existing customer to an existing order via the order's edit form.
- *  Assumes the page is currently on that order's read view. */
+/** Assign an existing customer to an existing order via the sidebar picker —
+ *  it saves on change. Assumes the page is currently on that order. */
 async function assignCustomer(page: Page, customerName: string) {
-  await page.getByRole("button", { name: "Edit order" }).click();
   await page.getByLabel("Customer").selectOption({ label: customerName });
-  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("link", { name: customerName })).toBeVisible();
 }
 
@@ -110,11 +108,11 @@ test.describe("Customers — tab & detail", () => {
     await expect(page.getByRole("link", { name: /Bakkerij Jansen/ })).toBeVisible();
   });
 
-  test("assigning a customer to an order shows on order read view and list card", async ({ page }) => {
+  test("assigning a customer to an order shows in the header and the list row", async ({ page }) => {
     await createCustomer(page, "Hotel De Wijk");
     await createOrder(page, { title: "Petit fours order", date: isoFromToday(21) });
     await assignCustomer(page, "Hotel De Wijk");
-    // Orders list card subtitle carries the customer name
+    // Orders table row subtitle carries the customer name
     await page.goto("/orders?tab=orders");
     const card = page.getByRole("link", { name: /Petit fours order/ });
     await expect(card).toBeVisible();
@@ -134,8 +132,11 @@ test.describe("Customers — tab & detail", () => {
     await page.getByRole("link", { name: "Restaurant Vled" }).click();
     await expect(page.getByRole("heading", { name: "Restaurant Vled" })).toBeVisible();
     await expect(page.getByText("Orders (2)")).toBeVisible();
-    await expect(page.getByRole("link", { name: /Spring tasting/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Summer terrace/ })).toBeVisible();
+    // Same table as the Orders list, grouped Upcoming / Past & closed
+    const table = page.getByRole("table", { name: "Orders for Restaurant Vled" });
+    await expect(table.getByRole("button", { name: /Upcoming/ })).toBeVisible();
+    await expect(table.getByRole("link", { name: /Spring tasting/ })).toBeVisible();
+    await expect(table.getByRole("link", { name: /Summer terrace/ })).toBeVisible();
   });
 
   test("customer with orders offers Archive instead of delete", async ({ page }) => {

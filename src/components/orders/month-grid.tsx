@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { monthGridDays, ordersByDate, ORDER_STATUS_LABEL, MONTH_NAMES } from "@/lib/orders";
+import { monthGridDays, ordersByDate, eventDayOf, ORDER_STATUS_LABEL, MONTH_NAMES } from "@/lib/orders";
 import type { Order, OrderStatus } from "@/types";
 
 const MAX_CHIPS_PER_DAY = 3;
@@ -21,7 +21,8 @@ const STATUS_DOT: Record<OrderStatus, string> = {
 
 /** Presentational month calendar. All state (which month is shown) lives in
  *  the parent; the grid just renders `monthGridDays(year, month)` and hangs
- *  order chips on their `eventDate` cells. */
+ *  order chips on their cells — one per day the event occupies, so a two-day
+ *  market shows on both days (the title says which day it is). */
 export function MonthGrid({
   year,
   month,
@@ -110,18 +111,27 @@ export function MonthGrid({
               >
                 {dayNum}
               </span>
-              {visible.map((o) => (
-                <Link
-                  key={o.id}
-                  href={`/orders/${o.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  title={`${o.title} · ${ORDER_STATUS_LABEL[o.status]}`}
-                  className="flex items-center gap-1 rounded bg-muted px-1 py-0.5 text-[10px] leading-tight font-medium hover:bg-muted/70 transition-colors min-w-0"
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[o.status]}`} aria-hidden />
-                  <span className="truncate">{o.title}</span>
-                </Link>
-              ))}
+              {visible.map((o) => {
+                const dayOf = eventDayOf(o, iso);
+                const multi = dayOf != null && dayOf.total > 1;
+                return (
+                  <Link
+                    key={o.id}
+                    href={`/orders/${encodeURIComponent(o.id ?? "")}`}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`${o.title} · ${ORDER_STATUS_LABEL[o.status]}${multi ? ` · day ${dayOf.day} of ${dayOf.total}` : ""}`}
+                    className="flex items-center gap-1 rounded bg-muted px-1 py-0.5 text-[10px] leading-tight font-medium hover:bg-muted/70 transition-colors min-w-0"
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[o.status]}`} aria-hidden />
+                    <span className="truncate">{o.title}</span>
+                    {multi && (
+                      <span className="ml-auto shrink-0 text-muted-foreground tabular-nums font-normal">
+                        {dayOf.day}/{dayOf.total}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
               {overflow > 0 && (
                 <span className="text-[10px] text-muted-foreground px-1">+{overflow} more</span>
               )}

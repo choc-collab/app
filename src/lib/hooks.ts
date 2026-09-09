@@ -17,6 +17,7 @@ import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib
 import { ancestorFillingIds, buildChildMap, buildParentMap, reachableIngredientIds, wouldCreateCycle } from "@/lib/fillingComponents";
 import { normaliseFillSplit } from "@/lib/fillSplit";
 import { guardedWrite } from "@/lib/writeErrors";
+import { venueSuggestions, PICKUP_VENUE } from "@/lib/orders";
 
 // --- Ingredients ---
 
@@ -3173,6 +3174,25 @@ export async function saveOrder(obj: Omit<Order, "id" | "createdAt" | "updatedAt
   return db.orders.add({ ...obj, createdAt: now, updatedAt: now } as Order) as Promise<string>;
 }
 
+/** Distinct venues already used on orders (Pick-up first) — datalist
+ *  suggestions for the venue field. Derived live, nothing stored. */
+export function useOrderVenues(): string[] {
+  return useLiveQuery(() => db.orders.toArray().then(venueSuggestions)) ?? [PICKUP_VENUE];
+}
+
+/** Partial update for the autosaving order detail page — one field at a time,
+ *  so two fields committing from stale snapshots can't clobber each other.
+ *  `description` names the field in the failure toast ("Venue wasn't saved."). */
+export async function updateOrderFields(
+  id: string,
+  changes: Partial<Omit<Order, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.orders.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function deleteOrder(id: string): Promise<void> {
   await db.transaction("rw", [db.orders, db.orderProductionLinks, db.orderLineItems], async () => {
     await db.orderProductionLinks.where("orderId").equals(id).delete();
@@ -3200,6 +3220,24 @@ export async function saveOrderLineItem(obj: Omit<OrderLineItem, "id"> & { id?: 
     return obj.id;
   }
   return db.orderLineItems.add(obj as OrderLineItem) as Promise<string>;
+}
+
+/** Per-row partial update for the line-items table (quantity, product, note
+ *  each commit on their own). Reports failures through the write-error toast. */
+export async function updateOrderLineItemFields(
+  id: string,
+  changes: Partial<Omit<OrderLineItem, "id" | "orderId">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.orderLineItems.update(id, changes);
+  });
+}
+
+/** Every line item across all orders — for the list page's pieces/progress
+ *  columns, bucketed per order by `orderProgressByOrder`. */
+export function useAllOrderLineItems() {
+  return useLiveQuery(() => db.orderLineItems.toArray()) ?? [];
 }
 
 export async function deleteOrderLineItem(id: string): Promise<void> {
@@ -3269,6 +3307,12 @@ export function useOrderProductionLinks(orderId: string | undefined) {
       : Promise.resolve([] as OrderProductionLink[]),
     [orderId]
   ) ?? [];
+}
+
+/** Every order↔batch link across all orders — for the list page's progress
+ *  column (allocations from done batches = made). */
+export function useAllOrderProductionLinks() {
+  return useLiveQuery(() => db.orderProductionLinks.toArray()) ?? [];
 }
 
 /** Associate a batch with an order via one "bare" link row. No-op when any

@@ -171,7 +171,7 @@ When you add a new Dexie table, you must update `backup.ts` in the same session:
 3. **`importBackup`** — add the table to the transaction table list, the `clear()` list, and the `bulkAdd` list
 
 **Coverage checklist** — all tables currently handled in backup/restore:
-`ingredients`, `products`, `productCategories`, `fillings`, `fillingCategories`, `ingredientCategories`, `productFillings`, `fillingIngredients`, `moulds`, `productionPlans`, `planProducts`, `planStepStatus`, `settings`, `userPreferences`, `productFillingHistory`, `ingredientPriceHistory`, `coatingChocolateMappings`, `productCostSnapshots`, `packaging`, `packagingOrders`, `decorationMaterials`, `decorationCategories`, `shellDesigns`, `experiments`, `experimentIngredients`, `shoppingItems`, `collections`, `collectionProducts`, `collectionPackagings`, `collectionPricingSnapshots`, `fillingStock`, `sales`, `giveaways`, `labelTemplates`
+`ingredients`, `products`, `productCategories`, `fillings`, `fillingCategories`, `ingredientCategories`, `productFillings`, `fillingIngredients`, `moulds`, `productionPlans`, `planProducts`, `planStepStatus`, `settings`, `userPreferences`, `productFillingHistory`, `ingredientPriceHistory`, `coatingChocolateMappings`, `productCostSnapshots`, `packaging`, `packagingOrders`, `decorationMaterials`, `decorationCategories`, `shellDesigns`, `experiments`, `experimentIngredients`, `shoppingItems`, `collections`, `collectionProducts`, `collectionPackagings`, `collectionPricingSnapshots`, `fillingStock`, `sales`, `giveaways`, `labelTemplates`, `orders`, `customers`, `orderLineItems`, `orderProductionLinks`
 
 ### Data-loss protections
 Three layered safeguards work together so neither a browser eviction, a misclick, nor a schema upgrade can silently wipe a user's data:
@@ -560,6 +560,22 @@ PlanProduct     id, planId, productId, mouldId, quantity (number of moulds), sor
 
 PlanStepStatus id, planId, stepKey, done, doneAt
 
+Order          id, title, eventDate (ISO date, first day; indexed), endDate? (ISO date, last day of a
+               multi-day event; unset = single day; unindexed — use orderEndDate() in lib/orders),
+               status ("lead" | "confirmed" | "in_production" | "fulfilled" | "cancelled"; indexed),
+               customerId? (FK → Customer.id; indexed), venue?, notes?,
+               source? ("market" | "holiday" | "restaurant" | "private" | "other"), createdAt, updatedAt
+
+Customer       id, name, email?, phone?, address? (multi-line), instagram? (handle, no @), notes?,
+               archived? (soft-delete: hidden from pickers, preserved on existing orders), createdAt, updatedAt
+
+OrderLineItem  id, orderId, productId? (unset = untyped placeholder such as "40 × mix TBD"),
+               quantity (pieces), notes?, sortOrder
+
+OrderProductionLink  id, orderId, planId (FK → ProductionPlan.id),
+               productId?, quantity? — both unset = "bare" link (whole batch loosely associated);
+               both set = per-product allocation ("20 × Dark caramel from this batch")
+
 Experiment     id, name, ganacheType ("dark"|"milk"|"white"),
                applicationType ("moulded"|"coated"),
                notes?, sourceFillingId? (if cloned from a filling),
@@ -642,6 +658,8 @@ Collection Packagings: `useCollectionPackagings(collectionId)`, `useAllCollectio
 
 Collection Pricing History: `useCollectionPricingSnapshots(collectionId)` — all snapshots newest-first; `saveCollectionPricingSnapshot(obj)` — record a new snapshot (called on sell-price change, recalculate button)
 
+Orders & Events: `useOrders()` (by eventDate), `useOrder(id)`, `saveOrder(obj)` (create/upsert), `updateOrderFields(id, changes, description)` (partial autosave write — the detail page's only write path), `deleteOrder(id)` (cascades line items + batch links), `useCustomers(includeArchived?)`, `useCustomer(id)`, `saveCustomer(obj)`, `archiveCustomer(id)`, `unarchiveCustomer(id)`, `deleteCustomer(id)` (throws when orders reference it), `useOrdersByCustomer(customerId)`, `useOrderVenues()` (live datalist suggestions). Line items: `useOrderLineItems(orderId)`, `useAllOrderLineItems()` (list page — one subscription, bucketed by `orderProgressByOrder`), `saveOrderLineItem(obj)`, `updateOrderLineItemFields(id, changes, description)` (per-row autosave), `deleteOrderLineItem(id)`. Batch links: `useOrderProductionLinks(orderId)`, `useAllOrderProductionLinks()`, `linkOrderToPlan(orderId, planId)` (bare link), `addOrderPlanAllocation(orderId, planId, productId, qty)` (upsert; upgrades a bare row in place), `removeOrderPlanAllocation(linkId)` (last allocation downgrades to a bare link), `unlinkOrderFromPlan(orderId, planId)`.
+
 Shopping list: `useShoppingItems()`, `usePendingShoppingCount()` (badge count), `saveShoppingItem(obj)`, `markShoppingItemOrdered(id)`, `deleteShoppingItem(id)`, `setIngredientLowStock(id, bool)`, `setIngredientOutOfStock(id, bool)`, `markIngredientOrdered(id)`, `unorderIngredient(id)` (moves back to pending), `setPackagingLowStock(id, bool)`, `markPackagingOrdered(id)`, `unorderPackaging(id)` (moves back to pending)
 
 Decoration materials: `useDecorationMaterials()`, `useDecorationMaterial(id)`, `useDecorationMaterialUsage(materialId)`, `useDecorationMaterialUsageCounts()` (aggregate `Map<materialId, productCount>` — use on list pages instead of N per-row subscriptions), `useAllDecorationManufacturers()`, `useAllDecorationVendors()`, `useAllDecorationSources()`, `saveDecorationMaterial(obj)`, `deleteDecorationMaterial(id)`, `archiveDecorationMaterial(id)`, `unarchiveDecorationMaterial(id)`, `setDecorationMaterialLowStock(id, bool)`, `setDecorationMaterialOutOfStock(id, bool)`, `markDecorationMaterialOrdered(id)`, `unorderDecorationMaterial(id)`
@@ -714,6 +732,18 @@ Pure pricing/margin calculations for collection profitability:
 - `formatPrice(amount)` — locale-aware price formatting
 - `formatMarginPercent(percent)` — formatted margin % string
 
+## Orders & Events (`src/lib/orders.ts`)
+Pure selectors and date math for the Orders area. Everything takes `todayISO` as a parameter (never `new Date()` internally) and renders dates with fixed EN month names, so the statically-built HTML can't disagree with the client.
+- `ACTIVE_ORDER_STATUSES`, `ORDER_STATUS_LABEL`, `ORDER_STATUS_STYLE` — lifecycle vocabulary (lead → confirmed → in_production → fulfilled, plus cancelled).
+- `formatISODate(iso)`, `monthLabel(iso)`, `daysUntil(iso, todayISO)`, `relativeToToday(iso, todayISO)`, `toISODate(date)` (local-timezone YYYY-MM-DD).
+- `upcomingOrders(orders, todayISO, limit?)`, `groupOrdersForList(orders, todayISO)` → `{ upcoming, past }`, `isWithinPeriod(eventDate, todayISO, period)`.
+- `monthGridDays(year, month)`, `ordersByDate(orders)`, `shiftMonth(year, month, delta)` — calendar view.
+- `groupLinksByPlan(links)`, `allocatedByProduct(links)`, `lineItemFulfillment(item, allocated)` — per-line "10/40 allocated".
+- `orderProgress(lineItems, links, planStatusById)` → `{ needed, made, planned }` — pieces the order calls for (every line item, typed or not), pieces allocated from **done** batches, pieces allocated from batches still draft/active. Allocations are summed across products, not matched per line, because lines may stay vague while batches are concrete. `orderProgressByOrder(orders, lineItems, links, planStatusById)` does it for a whole list in one pass; `progressSegments(progress)` clamps the two bar segments; `formatPieces(n)` groups thousands.
+- `PICKUP_VENUE`, `isPickupVenue(venue)`, `venueSuggestions(orders)` — venue autocomplete (datalist pattern; Pick-up always first, then distinct venues from existing orders).
+- `orderEndDate(o)`, `isMultiDay(o)`, `eventLengthDays(o)`, `eventDayOf(o, iso)`, `formatEventDates(o, { year? })`, `eventRelative(o, todayISO)`, `orderWithinPeriod(o, todayISO, period)` — multi-day events (`endDate`); `ordersByDate` fans an event out over every day it occupies.
+- `normalizeCustomerKey(name)` — dedupe key used by the v18 customer migration.
+
 ## Nutrition Tracking (`src/lib/nutrition.ts`)
 Per-ingredient nutrition data entry (values per 100g) and per-product aggregation. Supports four target markets with different mandatory nutrient sets:
 - **EU / UK** — FIC 1169/2011: energy (kJ+kcal), fat, saturates, carbohydrate, sugars, protein, salt
@@ -780,6 +810,10 @@ src/
     packaging/
       page.tsx              — packaging library (search, add, flat list with latest price)
       [id]/page.tsx         — packaging detail (edit, order history, log orders, delete)
+    orders/
+      page.tsx              — two tabs: Orders (grouped-by-month table with pieces/made progress, list⇄calendar toggle, filter panel, quick-add) + Customers (flat list, quick-add)
+      [id]/page.tsx         — order detail (autosaving; notes + line-items table + linked batches in the main column; Status pills, Properties, Production progress in the sidebar; two-step delete)
+      customers/[id]/page.tsx — customer detail (contacts, notes, order history as the shared OrdersTable, archive/delete)
     collections/
       page.tsx              — collections list (search by name, hide inactive filter)
       [id]/page.tsx         — collection detail (edit name/dates, add/remove products, delete)
@@ -819,6 +853,12 @@ src/
       page.tsx              — production statistics: KPIs, monthly bar chart, product leaderboard with trend indicators
     settings/page.tsx       — export/import backup; CSV import (Import tab); Target Market tab (currency, market region EU/UK/US/AU/CA, facility allergens)
   components/
+    orders/
+      orders-table.tsx      — grouped table of orders (PantryTable chrome): status, date, venue (Pick-up chip), type, order size, made-progress; used by the Orders list and customer detail
+      order-progress-bar.tsx — two-segment made/planned bar (compact for table rows, full for the sidebar)
+      line-items-section.tsx — line-items table card: per-row qty/product/note autosave, allocated column, permanent add row, inline remove confirm
+      linked-batches-section.tsx — linked batches card: bare link → per-product allocations with "of ~N" denominators and over-allocation warning
+      month-grid.tsx        — presentational month calendar with order chips
     pantry/                 — shared primitives for ALL pantry list + detail pages (see "Pantry Shared Components" section)
       index.ts              — barrel export; import everything from here: `@/components/pantry`
       list-toolbar.tsx      — search input + filter toggle button (with badge) + add button
@@ -902,6 +942,7 @@ Vitest, node environment. Run with `npm test`.
 | `src/lib/csv-import-ingredients.test.ts` | `mapIngredientRow` (minimal, purchase, composition, allergens, nutrition, booleans, optional strings), `validateIngredientRow` (required name, composition sum, unknown category, partial pricing), `INGREDIENT_TEMPLATE_COLUMNS` (allergen + nutrition column counts) |
 | `src/lib/persistent-storage.test.ts` | `requestPersistentStorage` (SSR, unsupported browser, already-persisted short-circuit, grant/deny paths, error swallowing, persisted() missing), `getStorageStatus` (no navigator, no persist support, full happy path, missing estimate fields, errors from persisted()/estimate()), `formatBytes` (null/negative/NaN placeholders, B/KB/MB/GB boundaries, precision switch at ≥10) |
 | `src/lib/upgrade-snapshot.test.ts` | `decideUpgradeSnapshot` (unsupported browser, fresh install, already-current, downgrade, one-step-behind trigger, multi-step-behind trigger), `buildUpgradeSnapshotFilename` (both versions + ISO date in name, multi-step upgrades, default-now date shape) |
+| `src/lib/orders.test.ts` | Date helpers (`toISODate`, `formatISODate`, `relativeToToday`, `daysUntil`), `upcomingOrders`, `groupOrdersForList`, `monthGridDays`, `ordersByDate`, `shiftMonth`, `isWithinPeriod`, `groupLinksByPlan`, `allocatedByProduct`, `lineItemFulfillment`, `orderProgress` (needed/made/planned split, bare links ignored, unknown plan counts as planned), `orderProgressByOrder`, `progressSegments` (clamping), `formatPieces`, `normalizeCustomerKey` |
 
 When adding new pure functions to `lib/` or `types/`, add a corresponding `.test.ts` file. Browser-dependent code (Dexie hooks, React components) is not unit-tested — test the pure logic layer instead.
 
@@ -929,6 +970,9 @@ Playwright, Chromium. Run with `npm run test:e2e`. Config: `playwright.config.ts
 | `e2e/decoration.spec.ts` | 3 tabs visible; Materials tab CRUD; Categories tab: seeded data, create, cancel, delete; Designs tab: seeded data, create with applyAt, cancel, delete, production step display |
 | `e2e/csv-import.spec.ts` | Import tab visible; template download; valid CSV preview + import; validation errors shown; duplicate detection; empty CSV error |
 | `e2e/fresh-load.spec.ts` | Detail pages (fillings, products, ingredients) resolve the real id from `window.location.pathname` when served from the `_spa` placeholder — catches any regression to `use(params)` that would strand the page on "Loading" after a reload / share / direct URL load. Uses `page.route()` to simulate the Cloudflare rewrite in dev mode. |
+| `e2e/orders.spec.ts` | Orders list: empty state, quick-add lands on the autosaving detail (no Save/Edit), grouped table with status badge and collapsible month group, pieces + progress bar columns (four-digit quantities), search; detail: per-field autosave surviving reload, inline rename, status pills, not-found state, two-step delete; calendar view; Today tile; filter panel (past & closed group, period, customer) |
+| `e2e/order-lineitems.spec.ts` | Line items table: add, inline qty edit into the thousands without clipping, two-step remove, untyped line firming up into a product in place; per-product batch allocations with "of ~N" denominator, over-allocation warning, sidebar "in production" count, list progress bar; last-allocation downgrade to bare link |
+| `e2e/customers.spec.ts` | Customers tab & detail: quick-add, contacts, assign to order via the sidebar picker (header link + list row), customer detail order history table, archive-instead-of-delete, two-step delete; linking/unlinking a batch |
 
 When adding a new page or flow, add E2E coverage in the appropriate spec file (or create a new one). See the E2E test patterns section above for timing/loading guidance.
 

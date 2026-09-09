@@ -3,10 +3,11 @@
 /**
  * Orders page — two tabs: Orders, Customers
  * ─────────────────────────────────────────
- * Orders: corporate orders and event bookings on a timeline, with a grouped
- *         upcoming/past list view and a month calendar view (toggle,
- *         persisted). Orders are captured early with just a title + date +
- *         status and refined on the detail page as the event approaches.
+ * Orders: corporate orders and event bookings on a timeline, as a table
+ *         grouped by month (with pieces needed and a made/needed progress bar
+ *         per order) or a month calendar view (toggle, persisted). Orders are
+ *         captured early with just a title + date + status and refined on the
+ *         detail page as the event approaches.
  * Customers: the people and businesses behind those orders, with contact
  *         details and per-customer order history on their detail pages.
  */
@@ -17,18 +18,22 @@ import { LayoutList, CalendarDays } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ListToolbar, QuickAddForm, EmptyState, ListItemCard, FilterPanel, FilterChipGroup } from "@/components/pantry";
 import { MonthGrid } from "@/components/orders/month-grid";
-import { OrderCard } from "@/components/orders/order-card";
-import { useOrders, saveOrder, useCustomers, saveCustomer } from "@/lib/hooks";
+import { OrdersTable, type OrdersTableGroup } from "@/components/orders/orders-table";
+import {
+  useOrders, saveOrder, useCustomers, saveCustomer,
+  useAllOrderLineItems, useAllOrderProductionLinks, useProductionPlans,
+} from "@/lib/hooks";
 import {
   groupOrdersForList,
   toISODate,
   shiftMonth,
   monthLabel,
+  orderProgressByOrder,
   ORDER_STATUS_LABEL,
-  isWithinPeriod,
+  orderWithinPeriod,
   type OrderPeriod,
 } from "@/lib/orders";
-import type { Order, OrderStatus, Customer } from "@/types";
+import type { OrderStatus, Customer } from "@/types";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
 
@@ -177,14 +182,22 @@ function OrdersTab() {
     includePast: false,
     period: "all" as OrderPeriod,
     filterCustomer: "", // customer id; "" = all customers
+    collapsedGroups: [] as string[],
   });
   const orders = useOrders();
   const customers = useCustomers(true);
+  const allLineItems = useAllOrderLineItems();
+  const allLinks = useAllOrderProductionLinks();
+  const plans = useProductionPlans();
   const todayISO = useMemo(() => toISODate(new Date()), []);
 
   const [showAdd, setShowAdd] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState(todayISO);
+  // Multi-day events (a two-day market) set an end date; hidden behind a
+  // toggle so the common single-day capture stays two fields.
+  const [newMultiDay, setNewMultiDay] = useState(false);
+  const [newEndDate, setNewEndDate] = useState("");
   const [newStatus, setNewStatus] = useState<OrderStatus>("lead");
   const [cal, setCal] = useState(() => {
     const now = new Date();
@@ -228,7 +241,7 @@ function OrdersTab() {
   );
 
   const listFiltered = useMemo(
-    () => (f.period === "all" ? baseFiltered : baseFiltered.filter((o) => isWithinPeriod(o.eventDate, todayISO, f.period))),
+    () => (f.period === "all" ? baseFiltered : baseFiltered.filter((o) => orderWithinPeriod(o, todayISO, f.period))),
     [baseFiltered, f.period, todayISO],
   );
 
@@ -237,17 +250,38 @@ function OrdersTab() {
     [listFiltered, todayISO],
   );
 
-  // Section the upcoming list by month ("December 2026") for scanability.
-  const upcomingByMonth = useMemo(() => {
-    const groups: { label: string; orders: Order[] }[] = [];
+  // Section the upcoming list by month ("December 2026") for scanability, with
+  // past & closed orders — when shown — as one dimmed group at the bottom.
+  const tableGroups = useMemo<OrdersTableGroup[]>(() => {
+    const groups: OrdersTableGroup[] = [];
     for (const o of upcoming) {
       const label = monthLabel(o.eventDate);
       const last = groups[groups.length - 1];
       if (last && last.label === label) last.orders.push(o);
-      else groups.push({ label, orders: [o] });
+      else groups.push({ key: label, label, orders: [o] });
+    }
+    if (f.includePast && past.length > 0) {
+      groups.push({ key: "past", label: "Past & closed", orders: past, dimmed: true });
     }
     return groups;
-  }, [upcoming]);
+  }, [upcoming, past, f.includePast]);
+
+  // Pieces needed / made per order, for the two production columns.
+  const planStatusById = useMemo(() => {
+    const m = new Map<string, "draft" | "active" | "done">();
+    for (const p of plans) if (p.id) m.set(p.id, p.status);
+    return m;
+  }, [plans]);
+  const progressByOrder = useMemo(
+    () => orderProgressByOrder(listFiltered, allLineItems, allLinks, planStatusById),
+    [listFiltered, allLineItems, allLinks, planStatusById],
+  );
+  const collapsedGroups = useMemo(() => new Set(f.collapsedGroups), [f.collapsedGroups]);
+  function toggleGroup(key: string) {
+    const next = new Set(collapsedGroups);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setF("collapsedGroups", Array.from(next));
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -255,9 +289,19 @@ function OrdersTab() {
     const id = await saveOrder({
       title: newTitle.trim(),
       eventDate: newDate,
+      endDate: newMultiDay && newEndDate > newDate ? newEndDate : undefined,
       status: newStatus,
     });
-    router.push(`/orders/${encodeURIComponent(String(id))}?new=1`);
+    router.push(`/orders/${encodeURIComponent(String(id))}`);
+  }
+
+  function resetAddForm() {
+    setShowAdd(false);
+    setNewTitle("");
+    setNewDate(todayISO);
+    setNewMultiDay(false);
+    setNewEndDate("");
+    setNewStatus("lead");
   }
 
   function openAddForDay(iso: string) {
@@ -333,14 +377,9 @@ function OrdersTab() {
       {showAdd && (
         <QuickAddForm
           onSubmit={handleAdd}
-          onCancel={() => {
-            setShowAdd(false);
-            setNewTitle("");
-            setNewDate(todayISO);
-            setNewStatus("lead");
-          }}
+          onCancel={resetAddForm}
           submitLabel="Create Order"
-          canSubmit={!!newTitle.trim() && !!newDate}
+          canSubmit={!!newTitle.trim() && !!newDate && (!newMultiDay || newEndDate > newDate)}
         >
           <input
             className="input w-full"
@@ -351,25 +390,64 @@ function OrdersTab() {
             autoFocus
             required
           />
-          <div className="flex gap-2">
-            <input
-              type="date"
-              className="input flex-1"
-              value={newDate}
-              onChange={(e) => setNewDate(e.target.value)}
-              aria-label="Event date"
-              required
-            />
-            <select
-              className="input flex-1"
-              value={newStatus}
-              onChange={(e) => setNewStatus(e.target.value as OrderStatus)}
-              aria-label="Status"
-            >
-              {CREATE_STATUSES.map((s) => (
-                <option key={s} value={s}>{ORDER_STATUS_LABEL[s]}</option>
-              ))}
-            </select>
+          {/* Single day: date + status side by side. Multi-day: the date
+              becomes "Starts" and an "Ends" field appears beside it, each with
+              a visible label so the two dates can't be confused. */}
+          <div className="flex flex-wrap gap-2">
+            <label className="flex-1 min-w-36 flex flex-col gap-1">
+              {newMultiDay && <span className="text-xs text-muted-foreground">Starts</span>}
+              <input
+                type="date"
+                className="input w-full"
+                value={newDate}
+                onChange={(e) => setNewDate(e.target.value)}
+                aria-label="Event date"
+                required
+              />
+            </label>
+            {newMultiDay && (
+              <label className="flex-1 min-w-36 flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Ends</span>
+                <input
+                  type="date"
+                  className="input w-full"
+                  value={newEndDate}
+                  min={newDate}
+                  onChange={(e) => setNewEndDate(e.target.value)}
+                  aria-label="End date"
+                  required
+                />
+              </label>
+            )}
+            <label className="flex-1 min-w-36 flex flex-col gap-1 justify-end">
+              {newMultiDay && <span className="text-xs text-muted-foreground">Status</span>}
+              <select
+                className="input w-full"
+                value={newStatus}
+                onChange={(e) => setNewStatus(e.target.value as OrderStatus)}
+                aria-label="Status"
+              >
+                {CREATE_STATUSES.map((s) => (
+                  <option key={s} value={s}>{ORDER_STATUS_LABEL[s]}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={newMultiDay}
+                onChange={(e) => { setNewMultiDay(e.target.checked); if (!e.target.checked) setNewEndDate(""); }}
+              />
+              Multi-day event
+            </label>
+            {newMultiDay && !newEndDate && (
+              <span className="text-xs text-muted-foreground">Pick the last day of the event.</span>
+            )}
+            {newMultiDay && newEndDate && newEndDate <= newDate && (
+              <span className="text-xs text-status-alert">The last day must come after the first.</span>
+            )}
           </div>
         </QuickAddForm>
       )}
@@ -398,38 +476,21 @@ function OrdersTab() {
             />
           )}
 
-          {upcomingByMonth.map((group) => (
-            <div key={group.label}>
-              <h2 className="mono-label text-muted-foreground mb-1.5">{group.label}</h2>
-              <div className="space-y-2">
-                {group.orders.map((o) => (
-                  <OrderCard
-                    key={o.id}
-                    order={o}
-                    todayISO={todayISO}
-                    customerName={customerNameById.get(o.customerId ?? "")}
-                  />
-                ))}
+          {tableGroups.length > 0 && (
+            <>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setF("collapsedGroups", tableGroups.map((g) => g.key))} className="text-xs text-muted-foreground">Collapse all</button>
+                <button onClick={() => setF("collapsedGroups", [])} className="text-xs text-muted-foreground">Expand all</button>
               </div>
-            </div>
-          ))}
-
-          {f.includePast && past.length > 0 && (
-            <div className="pt-2">
-              <h2 className="mono-label text-muted-foreground">
-                Past &amp; closed ({past.length})
-              </h2>
-              <div className="space-y-2 mt-2 opacity-70">
-                {past.map((o) => (
-                  <OrderCard
-                    key={o.id}
-                    order={o}
-                    todayISO={todayISO}
-                    customerName={customerNameById.get(o.customerId ?? "")}
-                  />
-                ))}
-              </div>
-            </div>
+              <OrdersTable
+                groups={tableGroups}
+                todayISO={todayISO}
+                progressByOrder={progressByOrder}
+                customerNameById={customerNameById}
+                collapsed={collapsedGroups}
+                onToggleGroup={toggleGroup}
+              />
+            </>
           )}
         </>
       )}

@@ -2409,6 +2409,7 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   await db.orders.add({
     title: "Winter market Dwingeloo",
     eventDate: isoDaysFromNow(70),
+    endDate: isoDaysFromNow(71), // two-day market, tracked as one order
     status: "lead",
     source: "market",
     venue: "Brink, Dwingeloo",

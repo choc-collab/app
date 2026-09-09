@@ -1281,6 +1281,12 @@ export interface Order {
    *  (day-granularity, timezone-agnostic — same convention as
    *  Collection.startDate; lexicographic sort = chronological sort). */
   eventDate: string;
+  /** Last day of a multi-day event (market weekend, two-day fair), ISO date
+   *  string on or after `eventDate`. Unset = single-day. Unindexed and
+   *  optional, so adding it needed no schema migration; sorting, grouping
+   *  and the calendar's month navigation all key off `eventDate` (the first
+   *  day) — see `orderEndDate()` in lib/orders for the resolved last day. */
+  endDate?: string;
   status: OrderStatus;
   /** FK → Customer.id. Replaces the v17 free-text `customerName`, which the
    *  v18 upgrade materialises into Customer rows. */
