@@ -23,7 +23,7 @@ import { InlineNameEditor } from "@/components/inline-name-editor";
 import { StockStatusPanel } from "@/components/stock-status-panel";
 import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
 import {
-  SidebarCard, PropertyRow, DerivedRow, PROPERTY_INPUT_CLASS,
+  SidebarCard, DerivedRow,
 } from "@/components/detail-sidebar";
 import { IngredientNutritionEditor } from "@/components/ingredient-nutrition-editor";
 import { fillDerivedNutrition, getMissingMandatoryNutrients } from "@/lib/nutrition";
@@ -346,26 +346,31 @@ function PropertiesCard({
       <div className="px-4 py-3 border-b border-border">
         <h2 className="text-[13px] font-semibold">Properties</h2>
       </div>
-      <div className="p-4 space-y-1">
-        <PropertyRow label="Category">
+      {/* Two pairs per row: in the 320px sidebar these fields read fine as
+          label-left/value-right, but in the main column that stranded the two
+          ends of each row a card-width apart. */}
+      <div className="p-4 grid gap-x-10 gap-y-1 sm:grid-cols-2">
+        <PropertyField label="Category">
           <select
             value={ingredient.category ?? ""}
             onChange={(e) => updateIngredientFields(ingredientId, { category: e.target.value || undefined })}
             aria-label="Category"
-            className={PROPERTY_INPUT_CLASS}
+            // Sized to its content, so the native chevron sits with the value
+            // instead of drifting to the far edge of the column.
+            className={`${FIELD_INPUT_CLASS} w-auto max-w-full`}
           >
             <option value="">— none —</option>
             {categoryNames.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-        </PropertyRow>
+        </PropertyField>
 
-        <TextPropertyRow
+        <TextPropertyField
           label="Commercial name"
           ariaLabel="Commercial name"
           value={ingredient.commercialName ?? ""}
           onCommit={(v) => updateIngredientFields(ingredientId, { commercialName: v || undefined })}
         />
-        <TextPropertyRow
+        <TextPropertyField
           label="Manufacturer"
           ariaLabel="Manufacturer"
           value={ingredient.manufacturer ?? ""}
@@ -374,7 +379,7 @@ function PropertiesCard({
           // `manufacturer` is non-optional on the type, so it empties to "" not undefined.
           onCommit={(v) => updateIngredientFields(ingredientId, { manufacturer: v })}
         />
-        <TextPropertyRow
+        <TextPropertyField
           label="Brand"
           ariaLabel="Brand"
           value={ingredient.brand ?? ""}
@@ -382,7 +387,7 @@ function PropertiesCard({
           listId="ing-brand-list"
           onCommit={(v) => updateIngredientFields(ingredientId, { brand: v || undefined })}
         />
-        <TextPropertyRow
+        <TextPropertyField
           label="Vendor"
           ariaLabel="Vendor"
           value={ingredient.vendor ?? ""}
@@ -390,7 +395,7 @@ function PropertiesCard({
           listId="ing-vendor-list"
           onCommit={(v) => updateIngredientFields(ingredientId, { vendor: v || undefined })}
         />
-        <TextPropertyRow
+        <TextPropertyField
           label="Source"
           ariaLabel="Source"
           value={ingredient.source ?? ""}
@@ -403,9 +408,27 @@ function PropertiesCard({
   );
 }
 
-/** A property row holding free text: local draft while typing, commit on blur,
+/** Borderless control filling its half of the Properties grid. The sidebar
+ *  variant right-aligns to sit flush against a narrow card; here the value
+ *  reads left, immediately after its label. */
+const FIELD_INPUT_CLASS =
+  "w-full min-w-0 text-sm font-medium bg-transparent border-0 focus:outline-none placeholder:font-normal placeholder:text-muted-foreground/50";
+
+/** One label/value pair. The label column is fixed so every pair lines up
+ *  across both columns of the grid, and the hover highlight covers just this
+ *  pair rather than the full card width. */
+function PropertyField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-3 px-2 py-1.5 -mx-2 rounded-md hover:bg-muted/60 transition-colors">
+      <span className="text-xs text-muted-foreground truncate">{label}</span>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/** A property field holding free text: local draft while typing, commit on blur,
  *  and only when the value actually moved. */
-function TextPropertyRow({
+function TextPropertyField({
   label,
   ariaLabel,
   value,
@@ -430,7 +453,7 @@ function TextPropertyRow({
   }
 
   return (
-    <PropertyRow label={label}>
+    <PropertyField label={label}>
       <input
         type="text"
         list={listId}
@@ -443,14 +466,14 @@ function TextPropertyRow({
         }}
         placeholder="—"
         aria-label={ariaLabel}
-        className={PROPERTY_INPUT_CLASS}
+        className={FIELD_INPUT_CLASS}
       />
       {listId && suggestions && suggestions.length > 0 && (
         <datalist id={listId}>
           {suggestions.map((s) => <option key={s} value={s} />)}
         </datalist>
       )}
-    </PropertyRow>
+    </PropertyField>
   );
 }
 
