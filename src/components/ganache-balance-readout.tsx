@@ -1,5 +1,7 @@
+import { Fragment } from "react";
+import Link from "next/link";
 import { AlertTriangle, CheckCircle, Info } from "lucide-react";
-import type { GanacheBalance, BalanceCheck } from "@/lib/ganacheBalance";
+import type { GanacheBalance, BalanceCheck, IncompleteIngredient } from "@/lib/ganacheBalance";
 import type { AwEstimate, ShelfLifeWindow } from "@/lib/ganacheAw";
 
 type Status = "ok" | "low" | "high" | "na";
@@ -134,14 +136,14 @@ export function GanacheBalanceReadout({
   check,
   awEstimate,
   shelfLife,
-  hasIncompleteComposition,
+  incompleteIngredients,
   emptyMessage = "Add ingredients to see the balance.",
 }: {
   balance: GanacheBalance | null;
   check: BalanceCheck | null;
   awEstimate: AwEstimate | null;
   shelfLife: ShelfLifeWindow | null;
-  hasIncompleteComposition: boolean;
+  incompleteIngredients: IncompleteIngredient[];
   emptyMessage?: string;
 }) {
   return (
@@ -149,10 +151,28 @@ export function GanacheBalanceReadout({
       {/* Balance readout */}
       <section className="mb-6">
         <h2 className="text-sm font-semibold text-primary mb-3">Balance</h2>
-        {hasIncompleteComposition && (
+        {incompleteIngredients.length > 0 && (
           <div className="flex items-start gap-2 mb-3 text-xs text-status-warn bg-status-warn-bg border border-status-warn-edge rounded-md px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-status-warn" />
-            <span>One or more ingredients have no composition data — the balance below is incomplete. Tap the warning icon next to each ingredient to fill in its composition.</span>
+            {/* Named and linked rather than counted: this readout can render on
+                a screen that shows no ingredient rows of its own (the filling
+                Composition tab), so pointing at the rows wouldn't help. */}
+            <span>
+              No composition data for{" "}
+              {incompleteIngredients.map((ing, i) => (
+                <Fragment key={ing.ingredientId}>
+                  {i > 0 && (i === incompleteIngredients.length - 1 ? " and " : ", ")}
+                  <Link
+                    href={`/ingredients/${encodeURIComponent(ing.ingredientId)}`}
+                    className="font-medium underline underline-offset-2 hover:no-underline"
+                  >
+                    {ing.name ?? "an archived or deleted ingredient"}
+                  </Link>
+                </Fragment>
+              ))}
+              {" "}— the balance below is incomplete. Open{" "}
+              {incompleteIngredients.length === 1 ? "it" : "each"} to fill in the composition.
+            </span>
           </div>
         )}
         {!balance ? (

@@ -94,24 +94,44 @@ export function calculateGanacheBalance(
   };
 }
 
+/** An ingredient that can't be counted toward the balance. `name` is null when
+ *  the record itself is unresolvable — archived ingredients are absent from the
+ *  pantry list the map is built from, as are deleted ones. */
+export interface IncompleteIngredient {
+  ingredientId: string;
+  name: string | null;
+}
+
 /**
- * True if any weighed ingredient is missing composition data — every
- * composition field reads as 0, which is indistinguishable from "never filled
- * in" unless the ingredient is flagged awIrrelevant (a deliberate, genuine
- * zero at typical usage, e.g. citric acid, salt, zest). Drives the "balance
- * below is incomplete" warning in the Lab calculator and the Fillings
- * Composition tab.
+ * The weighed ingredients missing composition data, in recipe order and
+ * deduplicated — every composition field reads as 0, which is indistinguishable
+ * from "never filled in" unless the ingredient is flagged awIrrelevant (a
+ * deliberate, genuine zero at typical usage, e.g. citric acid, salt, zest).
+ * Named rather than merely counted so the "balance is incomplete" warning in
+ * the Lab calculator and the Fillings Composition tab can link straight to the
+ * ingredients that need filling in.
  */
-export function hasIncompleteComposition(
+export function findIncompleteComposition(
   weighedIngredients: WeighedIngredient[],
   ingredientMap: Map<string, Ingredient>
-): boolean {
-  return weighedIngredients.some((wi) => {
+): IncompleteIngredient[] {
+  const seen = new Set<string>();
+  const incomplete: IncompleteIngredient[] = [];
+
+  for (const wi of weighedIngredients) {
+    if (seen.has(wi.ingredientId)) continue;
     const ing = ingredientMap.get(wi.ingredientId);
-    if (!ing) return true;
-    if (ing.awIrrelevant) return false;
-    return ing.cacaoFat === 0 && ing.sugar === 0 && ing.milkFat === 0 && ing.water === 0 && ing.solids === 0 && ing.otherFats === 0;
-  });
+    if (ing?.awIrrelevant) continue;
+    const blank = !ing || (
+      ing.cacaoFat === 0 && ing.sugar === 0 && ing.milkFat === 0 &&
+      ing.water === 0 && ing.solids === 0 && ing.otherFats === 0
+    );
+    if (!blank) continue;
+    seen.add(wi.ingredientId);
+    incomplete.push({ ingredientId: wi.ingredientId, name: ing?.name ?? null });
+  }
+
+  return incomplete;
 }
 
 /**

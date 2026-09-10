@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType, hasIncompleteComposition } from "./ganacheBalance";
+import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType, findIncompleteComposition } from "./ganacheBalance";
 import type { Ingredient, ExperimentIngredient } from "@/types";
 
 // Helpers to build test fixtures
@@ -171,27 +171,42 @@ describe("calculateGanacheBalance", () => {
   });
 });
 
-describe("hasIncompleteComposition", () => {
-  it("flags an ingredient whose composition is entirely zero", () => {
+describe("findIncompleteComposition", () => {
+  it("names an ingredient whose composition is entirely zero", () => {
     const blank = makeIngredient(20, { name: "Unfilled Ingredient" });
-    const result = hasIncompleteComposition([makeEI(1, 20, 50)], makeMap([blank]));
-    expect(result).toBe(true);
+    const result = findIncompleteComposition([makeEI(1, 20, 50)], makeMap([blank]));
+    expect(result).toEqual([{ ingredientId: "20", name: "Unfilled Ingredient" }]);
   });
 
-  it("does not flag an all-zero ingredient marked awIrrelevant", () => {
+  it("skips an all-zero ingredient marked awIrrelevant", () => {
     const zest = makeIngredient(21, { name: "Orange Zest", awIrrelevant: true });
-    const result = hasIncompleteComposition([makeEI(1, 2, 100), makeEI(1, 21, 3)], makeMap([cream35, zest]));
-    expect(result).toBe(false);
+    const result = findIncompleteComposition([makeEI(1, 2, 100), makeEI(1, 21, 3)], makeMap([cream35, zest]));
+    expect(result).toEqual([]);
   });
 
-  it("still flags a genuinely missing ingredient (not in the map)", () => {
-    const result = hasIncompleteComposition([makeEI(1, 99, 50)], new Map());
-    expect(result).toBe(true);
+  it("reports an unresolvable ingredient with a null name so it can still be linked", () => {
+    // Archived ingredients are absent from the pantry list the map is built from.
+    const result = findIncompleteComposition([makeEI(1, 99, 50)], new Map());
+    expect(result).toEqual([{ ingredientId: "99", name: null }]);
   });
 
-  it("returns false once every ingredient has real composition data", () => {
-    const result = hasIncompleteComposition([makeEI(1, 1, 100), makeEI(1, 2, 100)], makeMap([darkChoc65, cream35]));
-    expect(result).toBe(false);
+  it("returns an empty list once every ingredient has real composition data", () => {
+    const result = findIncompleteComposition([makeEI(1, 1, 100), makeEI(1, 2, 100)], makeMap([darkChoc65, cream35]));
+    expect(result).toEqual([]);
+  });
+
+  it("lists every blank ingredient in recipe order, deduplicated", () => {
+    const blankA = makeIngredient(20, { name: "Blank A" });
+    const blankB = makeIngredient(22, { name: "Blank B" });
+    const result = findIncompleteComposition(
+      // Blank A appears twice — the same ingredient added as two rows.
+      [makeEI(1, 20, 10), makeEI(1, 1, 100), makeEI(1, 22, 10), makeEI(1, 20, 5)],
+      makeMap([blankA, blankB, darkChoc65]),
+    );
+    expect(result).toEqual([
+      { ingredientId: "20", name: "Blank A" },
+      { ingredientId: "22", name: "Blank B" },
+    ]);
   });
 });
 

@@ -18,7 +18,7 @@ import type { FillingArchiveImpact, FillingDeleteImpact } from "@/lib/hooks";
 import { computeFillingRecipeCost } from "@/lib/fillingCost";
 import {
   calculateGanacheBalance, checkGanacheBalance, detectChocolateType,
-  hasIncompleteComposition as computeHasIncompleteComposition, type WeighedIngredient,
+  findIncompleteComposition, type WeighedIngredient,
 } from "@/lib/ganacheBalance";
 import { estimateAw, shelfLifeFromEstimate } from "@/lib/ganacheAw";
 import { GanacheBalanceReadout } from "@/components/ganache-balance-readout";
@@ -996,7 +996,7 @@ function FillingCompositionTab({
   const check = balance ? checkGanacheBalance(balance, detectedType) : null;
   const awEstimate = balance ? estimateAw(balance) : null;
   const shelfLife = awEstimate ? shelfLifeFromEstimate(awEstimate) : null;
-  const hasIncompleteComposition = computeHasIncompleteComposition(weighedIngredients, ingredientMap);
+  const incompleteIngredients = findIncompleteComposition(weighedIngredients, ingredientMap);
 
   return (
     <div>
@@ -1011,7 +1011,7 @@ function FillingCompositionTab({
         check={check}
         awEstimate={awEstimate}
         shelfLife={shelfLife}
-        hasIncompleteComposition={hasIncompleteComposition}
+        incompleteIngredients={incompleteIngredients}
         emptyMessage="Add ingredients to this filling to see its balance."
       />
     </div>

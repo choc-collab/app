@@ -249,7 +249,19 @@ test.describe("Fillings", () => {
     await expect(page.getByText("Water", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Shelf life" })).toBeVisible();
 
+    // The tab lists no ingredient rows of its own, so the incomplete-composition
+    // warning has to name the ingredient and link straight to it.
+    await expect(page.getByText(/No composition data for/)).toBeVisible();
+    const ingredientLink = page.getByRole("link", { name: "Test Cream" });
+    await expect(ingredientLink).toBeVisible();
+    await ingredientLink.click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+    await expect(page.getByRole("button", { name: "Rename" })).toBeVisible();
+    await expect(page.getByText("Test Cream").first()).toBeVisible();
+    await page.goBack();
+
     // Switching the category away from Ganaches (Emulsions) drops the tab.
+    await page.getByRole("button", { name: "Composition" }).click();
     await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
     await expect(page.getByRole("button", { name: "Composition" })).toHaveCount(0);
   });
