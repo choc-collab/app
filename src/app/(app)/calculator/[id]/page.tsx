@@ -17,7 +17,7 @@ import {
   saveFilling,
   saveFillingIngredient,
 } from "@/lib/hooks";
-import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType } from "@/lib/ganacheBalance";
+import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType, hasIncompleteComposition } from "@/lib/ganacheBalance";
 import { estimateAw, shelfLifeFromEstimate } from "@/lib/ganacheAw";
 import { GanacheBalanceReadout } from "@/components/ganache-balance-readout";
 import { SegmentedTabs } from "@/components/pantry/segmented-tabs";
@@ -610,10 +610,7 @@ export default function ExperimentPage() {
         check={check}
         awEstimate={awEstimate}
         shelfLife={shelfLife}
-        hasIncompleteComposition={experimentIngredients.some((ei) => {
-          const ing = ingredientMap.get(ei.ingredientId);
-          return !ing || (ing.cacaoFat === 0 && ing.sugar === 0 && ing.milkFat === 0 && ing.water === 0 && ing.solids === 0 && ing.otherFats === 0);
-        })}
+        hasIncompleteComposition={hasIncompleteComposition(experimentIngredients, ingredientMap)}
       />
 
       {/* Last batch feedback */}

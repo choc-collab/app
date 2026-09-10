@@ -60,6 +60,12 @@ export function calculateGanacheBalance(
   for (const ei of weighedIngredients) {
     const ing = ingredientMap.get(ei.ingredientId);
     if (!ing || ei.amount <= 0) continue;
+    // Ingredients flagged awIrrelevant (citric acid, salt, zest — negligible
+    // at typical usage) are left out of the balance entirely, weight included,
+    // rather than counted with a zero composition: counting their weight while
+    // contributing nothing to any bucket would dilute every other percentage
+    // by an amount that isn't real.
+    if (ing.awIrrelevant) continue;
 
     const g = ei.amount;
     totalWeight += g;
@@ -86,6 +92,26 @@ export function calculateGanacheBalance(
     water:     pct(water),
     alcohol:   pct(alcohol),
   };
+}
+
+/**
+ * True if any weighed ingredient is missing composition data — every
+ * composition field reads as 0, which is indistinguishable from "never filled
+ * in" unless the ingredient is flagged awIrrelevant (a deliberate, genuine
+ * zero at typical usage, e.g. citric acid, salt, zest). Drives the "balance
+ * below is incomplete" warning in the Lab calculator and the Fillings
+ * Composition tab.
+ */
+export function hasIncompleteComposition(
+  weighedIngredients: WeighedIngredient[],
+  ingredientMap: Map<string, Ingredient>
+): boolean {
+  return weighedIngredients.some((wi) => {
+    const ing = ingredientMap.get(wi.ingredientId);
+    if (!ing) return true;
+    if (ing.awIrrelevant) return false;
+    return ing.cacaoFat === 0 && ing.sugar === 0 && ing.milkFat === 0 && ing.water === 0 && ing.solids === 0 && ing.otherFats === 0;
+  });
 }
 
 /**

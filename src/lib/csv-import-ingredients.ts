@@ -46,7 +46,7 @@ export const INGREDIENT_TEMPLATE_COLUMNS = [
   // Composition
   "cacaoFat", "sugar", "milkFat", "water", "solids", "otherFats", "alcohol",
   // Flags
-  "shellCapable", "pricingIrrelevant",
+  "shellCapable", "pricingIrrelevant", "awIrrelevant",
   // Allergens (22 boolean columns)
   ...ALLERGEN_COLUMNS.map((id) => `allergen_${id}`),
   // Nutrition (17 numeric columns)
@@ -92,6 +92,7 @@ export function mapIngredientRow(row: Record<string, string>): Omit<Ingredient, 
     allergens: ALLERGEN_COLUMNS.filter((id) => toBoolOpt(row[`allergen_${id}`]) === true),
     shellCapable: toBoolOpt(row.shellCapable),
     pricingIrrelevant: toBoolOpt(row.pricingIrrelevant),
+    awIrrelevant: toBoolOpt(row.awIrrelevant),
     nutrition: parseNutritionColumns(row),
   };
 }
@@ -133,6 +134,7 @@ export function ingredientToCSVRow(i: Ingredient): string {
     i.alcohol,
     i.shellCapable,
     i.pricingIrrelevant,
+    i.awIrrelevant,
     ...ALLERGEN_COLUMNS.map((id) => allergenSet.has(id)),
     ...NUTRITION_COLUMNS.map((key) => i.nutrition?.[key]),
   ];

@@ -90,6 +90,11 @@ test.describe("Ingredients", () => {
     await page.getByLabel("Sugar").blur();
     await expect(page.getByText("35.0% accounted for")).toBeVisible();
 
+    // "Doesn't meaningfully affect shelf life" flag autosaves too.
+    const awCheckbox = page.getByRole("checkbox", { name: /Doesn.t meaningfully affect shelf life/i });
+    await awCheckbox.click();
+    await expect(awCheckbox).toBeChecked();
+
     // Allergens write the whole array on each toggle.
     await page.getByRole("button", { name: "Allergens" }).click();
     // .click() rather than .check(): the box is driven by the Dexie live query,
@@ -103,6 +108,7 @@ test.describe("Ingredients", () => {
     await expect(page.getByLabel("Notes", { exact: true })).toHaveValue("Roast before grinding");
     await page.getByRole("button", { name: "Composition" }).click();
     await expect(page.getByLabel("Sugar")).toHaveValue("35");
+    await expect(page.getByRole("checkbox", { name: /Doesn.t meaningfully affect shelf life/i })).toBeChecked();
     await page.getByRole("button", { name: "Allergens" }).click();
     await expect(page.getByRole("checkbox", { name: /Hazelnut/i }).first()).toBeChecked();
   });

@@ -102,10 +102,12 @@ describe("mapIngredientRow", () => {
       name: "Water",
       pricingIrrelevant: "true",
       shellCapable: "false",
+      awIrrelevant: "true",
     };
     const result = mapIngredientRow(row);
     expect(result.pricingIrrelevant).toBe(true);
     expect(result.shellCapable).toBe(false);
+    expect(result.awIrrelevant).toBe(true);
   });
 
   it("maps optional string fields", () => {
@@ -276,6 +278,7 @@ describe("ingredientToCSVRow", () => {
       allergens: ["milk", "soybeans"],
       shellCapable: true,
       pricingIrrelevant: false,
+      awIrrelevant: true,
       nutrition: { energyKcal: 580, fat: 42, sugars: 28 },
     });
     const csv = buildIngredientsCSV([original]);
@@ -293,6 +296,7 @@ describe("ingredientToCSVRow", () => {
     expect(roundTripped.allergens.sort()).toEqual(["milk", "soybeans"]);
     expect(roundTripped.shellCapable).toBe(true);
     expect(roundTripped.pricingIrrelevant).toBe(false);
+    expect(roundTripped.awIrrelevant).toBe(true);
     expect(roundTripped.nutrition).toEqual({ energyKcal: 580, fat: 42, sugars: 28 });
   });
 

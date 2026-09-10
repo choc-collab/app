@@ -628,6 +628,18 @@ function CompositionCard({ ingredientId, ingredient }: { ingredientId: string; i
             </div>
           ))}
         </div>
+
+        <label className="flex items-center gap-2 cursor-pointer mt-3 pt-3 border-t border-border">
+          <input
+            type="checkbox"
+            checked={ingredient.awIrrelevant ?? false}
+            onChange={(e) => updateIngredientFields(ingredientId, { awIrrelevant: e.target.checked || undefined })}
+            className="rounded border-border"
+          />
+          <span className="text-xs text-muted-foreground">
+            Doesn&rsquo;t meaningfully affect shelf life (e.g. citric acid, salt, zest) — excluded from Lab/Composition balance
+          </span>
+        </label>
       </div>
     </div>
   );

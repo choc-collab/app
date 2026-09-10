@@ -64,6 +64,7 @@ export interface Ingredient {
   allergens: string[];
   archived?: boolean; // soft-delete: hidden from lists, preserved for production history
   pricingIrrelevant?: boolean; // true = ingredient has no meaningful cost (e.g. water, salt) — treated as zero cost, no missing-pricing warning
+  awIrrelevant?: boolean; // true = ingredient doesn't meaningfully affect water activity/shelf life at typical usage (e.g. citric acid, salt, zest) — excluded from the ganache balance/Aw calculation and its "incomplete composition" warning
   /** True when this ingredient can serve as a product shell (couverture/coating chocolate).
    *  Only meaningful when category === "Chocolate"; UI shows the checkbox only for that category.
    *  Drives the shell-ingredient picker on the product detail page. */

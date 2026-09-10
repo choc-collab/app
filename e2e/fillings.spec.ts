@@ -254,6 +254,39 @@ test.describe("Fillings", () => {
     await expect(page.getByRole("button", { name: "Composition" })).toHaveCount(0);
   });
 
+  test("an ingredient marked awIrrelevant is excluded from the Composition balance and its warning", async ({ page }) => {
+    test.setTimeout(60000);
+
+    // Flag a blank-composition ingredient as not affecting shelf life.
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByRole("textbox", { name: "Ingredient name" }).fill("Test Citric Acid");
+    await page.getByRole("button", { name: "Create Ingredient" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/.+/);
+    await page.getByRole("button", { name: "Composition" }).click();
+    await page.getByRole("checkbox", { name: /Doesn.t meaningfully affect shelf life/i }).click();
+
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Acid Composition Check Ganache");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+    await page.locator("select").first().selectOption("Ganaches (Emulsions)");
+
+    // Only the flagged, blank-composition ingredient in the recipe.
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByPlaceholder("Search ingredient…").fill("Test Citric Acid");
+    await page.getByRole("button", { name: "Test Citric Acid" }).click();
+    await page.locator("form").getByRole("spinbutton").fill("2");
+    await page.locator("form").getByRole("button", { name: "Add" }).click();
+
+    await page.getByRole("button", { name: "Composition" }).click();
+    // No warning, since the one ingredient present is flagged rather than missing data —
+    // but with nothing left to compute a balance from, it reads as empty, not incomplete.
+    await expect(page.getByText(/no composition data/i)).toHaveCount(0);
+    await expect(page.getByText("Add ingredients to this filling to see its balance.")).toBeVisible();
+  });
+
   test("shows a distinct not-found state for a missing filling, not the loading string", async ({ page }) => {
     await page.goto("/fillings/does-not-exist");
     await expect(page.getByText(/This filling doesn.t exist\./)).toBeVisible();

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType } from "./ganacheBalance";
+import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType, hasIncompleteComposition } from "./ganacheBalance";
 import type { Ingredient, ExperimentIngredient } from "@/types";
 
 // Helpers to build test fixtures
@@ -149,6 +149,49 @@ describe("calculateGanacheBalance", () => {
     expect(balance.water).toBeLessThan(30);
     expect(balance.sugar).toBeGreaterThan(20);
     expect(balance.cacaoFat).toBeGreaterThan(10);
+  });
+
+  it("excludes an awIrrelevant ingredient entirely — weight and composition both", () => {
+    // A pinch of citric acid alongside a plain 1:1 dark ganache: flagged
+    // awIrrelevant, it should vanish from totalWeight too, not just contribute
+    // zero to every bucket (which would otherwise dilute the real percentages).
+    const citricAcid = makeIngredient(11, { name: "Citric Acid", solids: 100, awIrrelevant: true });
+    const withAcid = calculateGanacheBalance(
+      [makeEI(1, 1, 100), makeEI(1, 2, 100), makeEI(1, 11, 5)],
+      makeMap([darkChoc65, cream35, citricAcid]),
+    )!;
+    const withoutAcid = calculateGanacheBalance(
+      [makeEI(1, 1, 100), makeEI(1, 2, 100)],
+      makeMap([darkChoc65, cream35]),
+    )!;
+
+    expect(withAcid.totalWeight).toBe(withoutAcid.totalWeight);
+    expect(withAcid.cacaoFat).toBeCloseTo(withoutAcid.cacaoFat, 10);
+    expect(withAcid.water).toBeCloseTo(withoutAcid.water, 10);
+  });
+});
+
+describe("hasIncompleteComposition", () => {
+  it("flags an ingredient whose composition is entirely zero", () => {
+    const blank = makeIngredient(20, { name: "Unfilled Ingredient" });
+    const result = hasIncompleteComposition([makeEI(1, 20, 50)], makeMap([blank]));
+    expect(result).toBe(true);
+  });
+
+  it("does not flag an all-zero ingredient marked awIrrelevant", () => {
+    const zest = makeIngredient(21, { name: "Orange Zest", awIrrelevant: true });
+    const result = hasIncompleteComposition([makeEI(1, 2, 100), makeEI(1, 21, 3)], makeMap([cream35, zest]));
+    expect(result).toBe(false);
+  });
+
+  it("still flags a genuinely missing ingredient (not in the map)", () => {
+    const result = hasIncompleteComposition([makeEI(1, 99, 50)], new Map());
+    expect(result).toBe(true);
+  });
+
+  it("returns false once every ingredient has real composition data", () => {
+    const result = hasIncompleteComposition([makeEI(1, 1, 100), makeEI(1, 2, 100)], makeMap([darkChoc65, cream35]));
+    expect(result).toBe(false);
   });
 });
 

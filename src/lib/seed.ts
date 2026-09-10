@@ -110,6 +110,7 @@ async function seedIngredients() {
     allergens: ALLERGEN_COLUMNS.filter((id) => toBoolOpt(r[`allergen_${id}`]) === true),
     shellCapable: toBoolOpt(r.shellCapable),
     pricingIrrelevant: toBoolOpt(r.pricingIrrelevant),
+    awIrrelevant: toBoolOpt(r.awIrrelevant),
     nutrition: parseNutritionColumns(r),
   }));
   await db.ingredients.bulkAdd(items);

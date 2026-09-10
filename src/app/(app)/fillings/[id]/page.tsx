@@ -16,7 +16,10 @@ import { db } from "@/lib/db";
 import { useSpaId } from "@/lib/use-spa-id";
 import type { FillingArchiveImpact, FillingDeleteImpact } from "@/lib/hooks";
 import { computeFillingRecipeCost } from "@/lib/fillingCost";
-import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType, type WeighedIngredient } from "@/lib/ganacheBalance";
+import {
+  calculateGanacheBalance, checkGanacheBalance, detectChocolateType,
+  hasIncompleteComposition as computeHasIncompleteComposition, type WeighedIngredient,
+} from "@/lib/ganacheBalance";
 import { estimateAw, shelfLifeFromEstimate } from "@/lib/ganacheAw";
 import { GanacheBalanceReadout } from "@/components/ganache-balance-readout";
 import { SortableFillingIngredientRow } from "@/components/sortable-filling-ingredient-row";
@@ -993,10 +996,7 @@ function FillingCompositionTab({
   const check = balance ? checkGanacheBalance(balance, detectedType) : null;
   const awEstimate = balance ? estimateAw(balance) : null;
   const shelfLife = awEstimate ? shelfLifeFromEstimate(awEstimate) : null;
-  const hasIncompleteComposition = fillingIngredients.some((fi) => {
-    const ing = ingredientMap.get(fi.ingredientId);
-    return !ing || (ing.cacaoFat === 0 && ing.sugar === 0 && ing.milkFat === 0 && ing.water === 0 && ing.solids === 0 && ing.otherFats === 0);
-  });
+  const hasIncompleteComposition = computeHasIncompleteComposition(weighedIngredients, ingredientMap);
 
   return (
     <div>
