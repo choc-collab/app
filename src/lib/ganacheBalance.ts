@@ -1,5 +1,13 @@
-import type { Ingredient, ExperimentIngredient, GanacheType } from "@/types";
+import type { Ingredient, GanacheType } from "@/types";
 import { UNIVERSAL_GANACHE_RANGES } from "@/types";
+
+/** The only two fields the balance/type-detection math actually reads off a
+ *  weighed ingredient row — satisfied structurally by both `ExperimentIngredient`
+ *  and a `FillingIngredient` row already converted to grams. */
+export interface WeighedIngredient {
+  ingredientId: string;
+  amount: number; // grams
+}
 
 export interface GanacheBalance {
   totalWeight: number;  // grams
@@ -37,7 +45,7 @@ export interface BalanceCheck {
  * full ingredient records. Returns null if total weight is 0.
  */
 export function calculateGanacheBalance(
-  experimentIngredients: ExperimentIngredient[],
+  weighedIngredients: WeighedIngredient[],
   ingredientMap: Map<string, Ingredient>
 ): GanacheBalance | null {
   let totalWeight = 0;
@@ -49,7 +57,7 @@ export function calculateGanacheBalance(
   let water = 0;
   let alcohol = 0;
 
-  for (const ei of experimentIngredients) {
+  for (const ei of weighedIngredients) {
     const ing = ingredientMap.get(ei.ingredientId);
     if (!ing || ei.amount <= 0) continue;
 
@@ -88,12 +96,12 @@ export function calculateGanacheBalance(
  * ingredients are present.
  */
 export function detectChocolateType(
-  experimentIngredients: ExperimentIngredient[],
+  weighedIngredients: WeighedIngredient[],
   ingredientMap: Map<string, Ingredient>
 ): GanacheType | null {
   const totals: Record<GanacheType, number> = { white: 0, milk: 0, dark: 0 };
 
-  for (const ei of experimentIngredients) {
+  for (const ei of weighedIngredients) {
     const ing = ingredientMap.get(ei.ingredientId);
     if (!ing || ei.amount <= 0) continue;
     if (ing.category?.toLowerCase() !== "chocolate") continue;

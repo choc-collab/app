@@ -16,6 +16,9 @@ import { db } from "@/lib/db";
 import { useSpaId } from "@/lib/use-spa-id";
 import type { FillingArchiveImpact, FillingDeleteImpact } from "@/lib/hooks";
 import { computeFillingRecipeCost } from "@/lib/fillingCost";
+import { calculateGanacheBalance, checkGanacheBalance, detectChocolateType, type WeighedIngredient } from "@/lib/ganacheBalance";
+import { estimateAw, shelfLifeFromEstimate } from "@/lib/ganacheAw";
+import { GanacheBalanceReadout } from "@/components/ganache-balance-readout";
 import { SortableFillingIngredientRow } from "@/components/sortable-filling-ingredient-row";
 import { AddFillingIngredient } from "@/components/add-filling-ingredient";
 import { AddFillingComponent } from "@/components/add-filling-component";
@@ -24,7 +27,7 @@ import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSe
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { DragEndEvent, SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import { CategoryPicker } from "@/components/category-picker";
-import { ArrowLeft, Trash2, Lock, LockOpen, GitBranch, Plus, Search, Copy, ArchiveRestore, Archive } from "lucide-react";
+import { ArrowLeft, Trash2, Lock, LockOpen, GitBranch, Plus, Search, Copy, ArchiveRestore, Archive, Info } from "lucide-react";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DuplicatedToast } from "@/components/duplicated-toast";
@@ -59,7 +62,7 @@ export default function FillingDetailPage() {
   const stockHistory = useFillingStockHistory(fillingId);
   const statusSuggestions = [...new Set([...DEFAULT_FILLING_STATUSES, ...existingStatuses])].sort();
 
-  const [activeTab, setActiveTab] = useState<"ingredients" | "batches" | "history">("ingredients");
+  const [activeTab, setActiveTab] = useState<"ingredients" | "composition" | "batches" | "history">("ingredients");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [unlocked, setUnlocked] = useState(isForked);
 
@@ -200,11 +203,17 @@ export default function FillingDetailPage() {
   const versionLabel = filling.version != null ? `v${filling.version}` : null;
   // Show history tab only if this filling is part of a version chain
   const hasVersionHistory = versionHistory.length > 1 || filling.rootId != null;
-  // Tabs only appear when there's something to switch between: batches once
-  // any stock has ever been recorded, History once the filling is part of a
-  // version chain.
-  const tabs: { id: "ingredients" | "batches" | "history"; label: string }[] = [
+  // The balance/Aw model is Wybauw's ganache-specific heuristic — showing its
+  // target ranges and advisory notes against a caramel or fruit filling's very
+  // different composition would be actively misleading, so Composition is
+  // scoped to the one category it's calibrated for.
+  const isGanache = filling.category === "Ganaches (Emulsions)";
+  // Tabs only appear when there's something to switch between: Composition for
+  // ganache fillings, Batches once any stock has ever been recorded, History
+  // once the filling is part of a version chain.
+  const tabs: { id: "ingredients" | "composition" | "batches" | "history"; label: string }[] = [
     { id: "ingredients", label: "Recipe" },
+    ...(isGanache ? [{ id: "composition" as const, label: "Composition" }] : []),
     ...(stockHistory.length > 0 ? [{ id: "batches" as const, label: "Batches" }] : []),
     ...(hasVersionHistory ? [{ id: "history" as const, label: "History" }] : []),
   ];
@@ -361,6 +370,12 @@ export default function FillingDetailPage() {
             <FillingVersionHistoryTab versions={versionHistory} currentId={fillingId} />
           ) : visibleTab === "batches" ? (
             <FillingBatchesTab entries={stockHistory} />
+          ) : visibleTab === "composition" ? (
+            <FillingCompositionTab
+              fillingIngredients={fillingIngredients}
+              ingredientMap={ingredientMap}
+              hasNestedComponents={ownComponents.length > 0}
+            />
           ) : (
             <div className="space-y-4">
               <IngredientsCard
@@ -946,6 +961,59 @@ function StockCard({ entries }: { entries: FillingStock[] }) {
         <span className="text-xs text-muted-foreground">Last made</span>
         <span className="text-sm font-medium tabular-nums">{lastMade ? formatMadeAt(lastMade) : "—"}</span>
       </div>
+    </div>
+  );
+}
+
+// ─── Composition tab ────────────────────────────────────────────────────────
+
+/** Ganache balance/Aw readout computed from this filling's own ingredient
+ *  rows — same engine as the Lab calculator, just fed committed filling
+ *  ingredients instead of an in-progress experiment. Only rendered for the
+ *  "Ganaches (Emulsions)" category (gated by the caller): the target ranges
+ *  and advisory notes are Wybauw's ganache-specific model and would be
+ *  misleading applied to a caramel or fruit-based recipe. */
+function FillingCompositionTab({
+  fillingIngredients,
+  ingredientMap,
+  hasNestedComponents,
+}: {
+  fillingIngredients: FillingIngredient[];
+  ingredientMap: Map<string, Ingredient>;
+  hasNestedComponents: boolean;
+}) {
+  const weighedIngredients: WeighedIngredient[] = fillingIngredients.reduce<WeighedIngredient[]>((acc, fi) => {
+    const grams = toGrams(fi.amount, fi.unit);
+    if (grams != null) acc.push({ ingredientId: fi.ingredientId, amount: grams });
+    return acc;
+  }, []);
+
+  const balance = calculateGanacheBalance(weighedIngredients, ingredientMap);
+  const detectedType = detectChocolateType(weighedIngredients, ingredientMap);
+  const check = balance ? checkGanacheBalance(balance, detectedType) : null;
+  const awEstimate = balance ? estimateAw(balance) : null;
+  const shelfLife = awEstimate ? shelfLifeFromEstimate(awEstimate) : null;
+  const hasIncompleteComposition = fillingIngredients.some((fi) => {
+    const ing = ingredientMap.get(fi.ingredientId);
+    return !ing || (ing.cacaoFat === 0 && ing.sugar === 0 && ing.milkFat === 0 && ing.water === 0 && ing.solids === 0 && ing.otherFats === 0);
+  });
+
+  return (
+    <div>
+      {hasNestedComponents && (
+        <div className="flex items-start gap-2 mb-4 text-xs text-muted-foreground bg-muted/40 border border-border rounded-md px-3 py-2">
+          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>This recipe nests other fillings as components — the balance below only reflects this filling&rsquo;s own ingredient rows, not what the nested fillings contribute.</span>
+        </div>
+      )}
+      <GanacheBalanceReadout
+        balance={balance}
+        check={check}
+        awEstimate={awEstimate}
+        shelfLife={shelfLife}
+        hasIncompleteComposition={hasIncompleteComposition}
+        emptyMessage="Add ingredients to this filling to see its balance."
+      />
     </div>
   );
 }

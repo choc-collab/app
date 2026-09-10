@@ -225,6 +225,35 @@ test.describe("Fillings", () => {
     await expect(page.getByRole("button", { name: "Batches" })).toHaveCount(0);
   });
 
+  test("Composition tab shows the ganache balance readout, gated to Ganaches (Emulsions)", async ({ page }) => {
+    test.setTimeout(60000);
+
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Composition Check Ganache");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+
+    // Category lives in the sidebar Properties card and autosaves on change.
+    await page.locator("select").first().selectOption("Ganaches (Emulsions)");
+
+    // Add an ingredient so the recipe has a non-zero base weight.
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByPlaceholder("Search ingredient…").fill("Test Cream");
+    await page.getByText(/Create.*Test Cream/i).click();
+    await page.locator("form").getByRole("spinbutton").fill("100");
+    await page.locator("form").getByRole("button", { name: "Add" }).click();
+
+    await page.getByRole("button", { name: "Composition" }).click();
+    await expect(page.getByRole("heading", { name: "Balance" })).toBeVisible();
+    await expect(page.getByText("Water", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Shelf life" })).toBeVisible();
+
+    // Switching the category away from Ganaches (Emulsions) drops the tab.
+    await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
+    await expect(page.getByRole("button", { name: "Composition" })).toHaveCount(0);
+  });
+
   test("shows a distinct not-found state for a missing filling, not the loading string", async ({ page }) => {
     await page.goto("/fillings/does-not-exist");
     await expect(page.getByText(/This filling doesn.t exist\./)).toBeVisible();
