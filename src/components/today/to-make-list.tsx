@@ -2,9 +2,19 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Plus, Snowflake } from "lucide-react";
-import { useProductsList, useProductStockMap, useProductFrozenMap, useCollections, useAllCollectionProducts } from "@/lib/hooks";
+import { Check, Clock, Plus, Snowflake } from "lucide-react";
+import {
+  useProductsList,
+  useProductStockMap,
+  useProductFrozenMap,
+  useCollections,
+  useAllCollectionProducts,
+  useOrders,
+  useAllOrderLineItems,
+  useAllOrderProductionLinks,
+} from "@/lib/hooks";
 import { buildToMakeRows, writeSeedFromTodayList, type ToMakeRow } from "@/lib/todaySeed";
+import { productsNeededForUpcomingOrders, relativeToToday, toISODate } from "@/lib/orders";
 import { SegmentedTabs, type SegmentedTabOption } from "@/components/pantry";
 
 type StockView = "all" | "in-stock" | "frozen" | "low-out";
@@ -32,9 +42,21 @@ export function ToMakeList() {
   const frozenByProduct = useProductFrozenMap();
   const collections = useCollections();
   const allCollectionProducts = useAllCollectionProducts();
+  const orders = useOrders();
+  const orderLineItems = useAllOrderLineItems();
+  const orderProductionLinks = useAllOrderProductionLinks();
   const router = useRouter();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toISODate(new Date());
+
+  // Outstanding demand from orders/events happening soon — surfaced here so
+  // a bonbon due for an upcoming order shows up as a quick shortcut into
+  // production, even when its shelf stock is otherwise healthy.
+  const orderDemandByProduct = useMemo(
+    () => productsNeededForUpcomingOrders(orders, orderLineItems, orderProductionLinks, today),
+    [orders, orderLineItems, orderProductionLinks, today],
+  );
+
   const activeCollectionProductIds = useMemo(() => {
     const activeIds = new Set(
       collections
@@ -51,19 +73,27 @@ export function ToMakeList() {
 
   const scopedProducts = useMemo(() => {
     if (!activeCollectionProductIds) return products;
-    return products.filter((p) => p.id && activeCollectionProductIds.has(p.id));
-  }, [products, activeCollectionProductIds]);
+    // A product owed to an upcoming order stays visible even outside any
+    // currently-active collection — the order is the reason to make it,
+    // not the season.
+    return products.filter(
+      (p) => p.id && (activeCollectionProductIds.has(p.id) || orderDemandByProduct.has(p.id))
+    );
+  }, [products, activeCollectionProductIds, orderDemandByProduct]);
 
   const scopedRows = useMemo(
-    () => buildToMakeRows({ products: scopedProducts, stockByProduct, frozenByProduct }),
-    [scopedProducts, stockByProduct, frozenByProduct],
+    () => buildToMakeRows({ products: scopedProducts, stockByProduct, frozenByProduct, orderDemandByProduct }),
+    [scopedProducts, stockByProduct, frozenByProduct, orderDemandByProduct],
   );
 
   const counts = useMemo(() => {
     let inStock = 0, frozen = 0, lowOut = 0;
     for (const r of scopedRows) {
       if (r.status === "healthy") inStock += 1;
-      else lowOut += 1;
+      // A healthy-stock product still counts toward "Low / out" when an
+      // upcoming order owes it pieces — that tab is the actionable todo
+      // list, not strictly a stock-threshold view.
+      if (r.status !== "healthy" || r.orderDemand) lowOut += 1;
       if (r.frozen > 0) frozen += 1;
     }
     return { inStock, frozen, lowOut };
@@ -76,7 +106,7 @@ export function ToMakeList() {
     if (view === "all") return scopedRows;
     if (view === "in-stock") return scopedRows.filter((r) => r.status === "healthy");
     if (view === "frozen") return scopedRows.filter((r) => r.frozen > 0);
-    return scopedRows.filter((r) => r.status !== "healthy");
+    return scopedRows.filter((r) => r.status !== "healthy" || r.orderDemand);
   }, [view, scopedRows]);
   const allVisibleSelected = visible.length > 0 && visible.every((r) => selected.has(r.productId));
   const selectedCount = selected.size;
@@ -176,6 +206,7 @@ export function ToMakeList() {
               <Row
                 key={row.productId}
                 row={row}
+                today={today}
                 checked={selected.has(row.productId)}
                 onToggle={() => toggleRow(row.productId)}
               />
@@ -193,8 +224,18 @@ export function ToMakeList() {
   );
 }
 
-function Row({ row, checked, onToggle }: { row: ToMakeRow; checked: boolean; onToggle: () => void }) {
-  const urgent = row.status === "out" || row.status === "low";
+function Row({
+  row,
+  today,
+  checked,
+  onToggle,
+}: {
+  row: ToMakeRow;
+  today: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const urgent = row.status === "out" || row.status === "low" || !!row.orderDemand;
 
   // Pill colour mirrors the stock view: neutral when healthy, warn-yellow
   // when below threshold. Out-of-stock gets an alert-red variant — the
@@ -240,6 +281,15 @@ function Row({ row, checked, onToggle }: { row: ToMakeRow; checked: boolean; onT
               <Snowflake className="w-2.5 h-2.5" aria-hidden />
               {row.frozen}
               <span className="sr-only"> frozen</span>
+            </span>
+          )}
+          {row.orderDemand && (
+            <span
+              className="shrink-0 rounded-full border border-violet-200 bg-violet-50 text-violet-700 px-1.5 py-0 text-[10px] font-semibold inline-flex items-center gap-0.5"
+              title={`${row.orderDemand.quantity} needed for ${row.orderDemand.orderTitles.join(", ")}`}
+            >
+              <Clock className="w-2.5 h-2.5" aria-hidden />
+              {row.orderDemand.quantity} for order · {relativeToToday(row.orderDemand.nearestEventDate, today)}
             </span>
           )}
         </span>

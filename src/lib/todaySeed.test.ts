@@ -148,4 +148,57 @@ describe("buildToMakeRows", () => {
     });
     expect(rows.map((r) => r.productId)).toEqual(["a"]);
   });
+
+  it("attaches order demand to a row without changing its stock status", () => {
+    const rows = buildToMakeRows({
+      products: [{ id: "a", name: "A", lowStockThreshold: 5 }], // 80 in stock → healthy
+      stockByProduct: new Map([["a", 80]]),
+      orderDemandByProduct: new Map([
+        ["a", { quantity: 40, nearestEventDate: "2026-09-10", orderTitles: ["Market"] }],
+      ]),
+    });
+    expect(rows[0].status).toBe("healthy");
+    expect(rows[0].orderDemand).toEqual({ quantity: 40, nearestEventDate: "2026-09-10", orderTitles: ["Market"] });
+  });
+
+  it("leaves orderDemand unset for products with no upcoming order", () => {
+    const rows = buildToMakeRows({
+      products: [{ id: "a", name: "A" }],
+      stockByProduct: new Map([["a", 10]]),
+      orderDemandByProduct: new Map([
+        ["b", { quantity: 5, nearestEventDate: "2026-09-10", orderTitles: ["Market"] }],
+      ]),
+    });
+    expect(rows[0].orderDemand).toBeUndefined();
+  });
+
+  it("sorts a healthy-but-demanded row after low/out but before plain healthy rows", () => {
+    const rows = buildToMakeRows({
+      products: [
+        { id: "healthy", name: "Healthy", lowStockThreshold: 5 },
+        { id: "demanded", name: "Zeta", lowStockThreshold: 5 }, // healthy stock, but owed to an order
+        { id: "low", name: "Low", lowStockThreshold: 50 },
+      ],
+      stockByProduct: new Map([["healthy", 100], ["demanded", 100], ["low", 10]]),
+      orderDemandByProduct: new Map([
+        ["demanded", { quantity: 20, nearestEventDate: "2026-09-10", orderTitles: ["Market"] }],
+      ]),
+    });
+    expect(rows.map((r) => r.productId)).toEqual(["low", "demanded", "healthy"]);
+  });
+
+  it("among order-demand rows, sorts by soonest event date before name", () => {
+    const rows = buildToMakeRows({
+      products: [
+        { id: "later", name: "Aardvark" }, // name would sort first alphabetically
+        { id: "sooner", name: "Zebra" },
+      ],
+      stockByProduct: new Map([["later", 100], ["sooner", 100]]),
+      orderDemandByProduct: new Map([
+        ["later", { quantity: 10, nearestEventDate: "2026-09-20", orderTitles: ["Later fair"] }],
+        ["sooner", { quantity: 10, nearestEventDate: "2026-09-05", orderTitles: ["Sooner market"] }],
+      ]),
+    });
+    expect(rows.map((r) => r.productId)).toEqual(["sooner", "later"]);
+  });
 });

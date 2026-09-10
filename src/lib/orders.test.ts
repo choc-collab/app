@@ -29,6 +29,7 @@ import {
   PICKUP_VENUE,
   isPickupVenue,
   venueSuggestions,
+  productsNeededForUpcomingOrders,
 } from "./orders";
 import type { Order, OrderStatus, OrderProductionLink, OrderLineItem } from "@/types";
 
@@ -329,6 +330,88 @@ describe("lineItemFulfillment", () => {
   it("reports zero when the product has no allocations", () => {
     expect(lineItemFulfillment(lineItem({ productId: "prodX", quantity: 40 }), allocated))
       .toEqual({ allocated: 0, needed: 40 });
+  });
+});
+
+describe("productsNeededForUpcomingOrders", () => {
+  it("flags a product needed by an order within the default 14-day window", () => {
+    const orders = [order({ id: "o1", title: "Market", eventDate: "2026-09-10", status: "confirmed" })];
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    const map = productsNeededForUpcomingOrders(orders, items, [], TODAY);
+    expect(map.get("prodA")).toEqual({ quantity: 40, nearestEventDate: "2026-09-10", orderTitles: ["Market"] });
+  });
+
+  it("excludes orders further out than the window", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-10-01", status: "confirmed" })]; // 29 days out
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    expect(productsNeededForUpcomingOrders(orders, items, [], TODAY).size).toBe(0);
+  });
+
+  it("respects a custom windowDays", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-10-01", status: "confirmed" })]; // 29 days out
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    expect(productsNeededForUpcomingOrders(orders, items, [], TODAY, 30).get("prodA")?.quantity).toBe(40);
+  });
+
+  it("excludes fulfilled and cancelled orders", () => {
+    const orders = [
+      order({ id: "o1", eventDate: "2026-09-05", status: "fulfilled" }),
+      order({ id: "o2", eventDate: "2026-09-06", status: "cancelled" }),
+    ];
+    const items = [
+      lineItem({ orderId: "o1", productId: "prodA", quantity: 40 }),
+      lineItem({ orderId: "o2", productId: "prodA", quantity: 10 }),
+    ];
+    expect(productsNeededForUpcomingOrders(orders, items, [], TODAY).size).toBe(0);
+  });
+
+  it("includes a multi-day event already under way even though eventDate is in the past", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-08-30", endDate: "2026-09-03", status: "confirmed" })];
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    expect(productsNeededForUpcomingOrders(orders, items, [], TODAY).get("prodA")?.quantity).toBe(40);
+  });
+
+  it("excludes an event that has fully ended", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-08-25", endDate: "2026-08-30", status: "confirmed" })];
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    expect(productsNeededForUpcomingOrders(orders, items, [], TODAY).size).toBe(0);
+  });
+
+  it("skips line items with no product typed yet", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-09-10", status: "lead" })];
+    const items = [lineItem({ orderId: "o1", quantity: 40 })]; // no productId
+    expect(productsNeededForUpcomingOrders(orders, items, [], TODAY).size).toBe(0);
+  });
+
+  it("nets out quantity already allocated to a linked batch", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-09-10", status: "confirmed" })];
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    const links = [link({ orderId: "o1", planId: "p1", productId: "prodA", quantity: 25 })];
+    expect(productsNeededForUpcomingOrders(orders, items, links, TODAY).get("prodA")?.quantity).toBe(15);
+  });
+
+  it("drops a product once its allocation fully covers the line item", () => {
+    const orders = [order({ id: "o1", eventDate: "2026-09-10", status: "confirmed" })];
+    const items = [lineItem({ orderId: "o1", productId: "prodA", quantity: 40 })];
+    const links = [link({ orderId: "o1", planId: "p1", productId: "prodA", quantity: 40 })];
+    expect(productsNeededForUpcomingOrders(orders, items, links, TODAY).size).toBe(0);
+  });
+
+  it("aggregates the same product across multiple upcoming orders, keeping the soonest date", () => {
+    const orders = [
+      order({ id: "o1", title: "Later fair", eventDate: "2026-09-14", status: "confirmed" }),
+      order({ id: "o2", title: "Sooner market", eventDate: "2026-09-05", status: "lead" }),
+    ];
+    const items = [
+      lineItem({ id: "li1", orderId: "o1", productId: "prodA", quantity: 20 }),
+      lineItem({ id: "li2", orderId: "o2", productId: "prodA", quantity: 10 }),
+    ];
+    const result = productsNeededForUpcomingOrders(orders, items, [], TODAY).get("prodA");
+    expect(result).toEqual({
+      quantity: 30,
+      nearestEventDate: "2026-09-05",
+      orderTitles: ["Later fair", "Sooner market"],
+    });
   });
 });
 

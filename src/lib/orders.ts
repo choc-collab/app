@@ -315,6 +315,76 @@ export function lineItemFulfillment(
   return { allocated: allocated.get(item.productId) ?? 0, needed: item.quantity };
 }
 
+// ─── Upcoming-order production demand ────────────────────────────────────────
+
+/** How many days before an event its line items start surfacing as "to make"
+ *  nudges on the Today dashboard — see `productsNeededForUpcomingOrders`. */
+export const PRODUCE_FOR_ORDER_WINDOW_DAYS = 14;
+
+export interface UpcomingOrderDemand {
+  /** Pieces still unaccounted for by any linked batch, summed across every
+   *  due order that needs this product. */
+  quantity: number;
+  /** Soonest event date among the orders contributing to `quantity`. */
+  nearestEventDate: string;
+  orderTitles: string[];
+}
+
+/** Per-product outstanding demand from orders whose event starts within
+ *  `windowDays` (or is already under way) — "outstanding" meaning the line
+ *  item's quantity minus whatever a linked batch already allocates to it, so
+ *  a product doesn't keep nagging once a production plan exists for it.
+ *  Line items with no product typed yet ("40 × mix TBD") can't be matched to
+ *  a specific product and are skipped. */
+export function productsNeededForUpcomingOrders(
+  orders: ReadonlyArray<Order>,
+  lineItems: ReadonlyArray<OrderLineItem>,
+  links: ReadonlyArray<OrderProductionLink>,
+  todayISO: string,
+  windowDays: number = PRODUCE_FOR_ORDER_WINDOW_DAYS,
+): Map<string, UpcomingOrderDemand> {
+  const dueOrders = orders.filter((o) => {
+    if (!o.id || !ACTIVE_ORDER_STATUSES.includes(o.status)) return false;
+    if (orderEndDate(o) < todayISO) return false; // already over
+    return daysUntil(o.eventDate, todayISO) <= windowDays;
+  });
+  if (dueOrders.length === 0) return new Map();
+  const dueOrderIds = new Set(dueOrders.map((o) => o.id!));
+  const orderById = new Map(dueOrders.map((o) => [o.id!, o]));
+
+  const linksByOrder = new Map<string, OrderProductionLink[]>();
+  for (const l of links) {
+    if (!dueOrderIds.has(l.orderId)) continue;
+    const group = linksByOrder.get(l.orderId);
+    if (group) group.push(l);
+    else linksByOrder.set(l.orderId, [l]);
+  }
+  const allocatedByOrder = new Map<string, Map<string, number>>();
+
+  const out = new Map<string, UpcomingOrderDemand>();
+  for (const item of lineItems) {
+    if (!item.productId || !dueOrderIds.has(item.orderId)) continue;
+    let allocated = allocatedByOrder.get(item.orderId);
+    if (!allocated) {
+      allocated = allocatedByProduct(linksByOrder.get(item.orderId) ?? []);
+      allocatedByOrder.set(item.orderId, allocated);
+    }
+    const outstanding = Math.max(0, item.quantity - (allocated.get(item.productId) ?? 0));
+    if (outstanding <= 0) continue;
+
+    const order = orderById.get(item.orderId)!;
+    const existing = out.get(item.productId);
+    if (existing) {
+      existing.quantity += outstanding;
+      if (order.eventDate < existing.nearestEventDate) existing.nearestEventDate = order.eventDate;
+      if (!existing.orderTitles.includes(order.title)) existing.orderTitles.push(order.title);
+    } else {
+      out.set(item.productId, { quantity: outstanding, nearestEventDate: order.eventDate, orderTitles: [order.title] });
+    }
+  }
+  return out;
+}
+
 // ─── Production progress ─────────────────────────────────────────────────────
 
 /** How far an order is from being made, in pieces.

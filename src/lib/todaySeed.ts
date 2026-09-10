@@ -44,6 +44,8 @@ export function consumeSeedFromTodayList(): string[] {
   }
 }
 
+import type { UpcomingOrderDemand } from "@/lib/orders";
+
 /** Compose a list of products with stock info into the row shape the
  *  ToMakeList renders. Pure derivation — used in tests and at runtime. */
 export interface ToMakeRow {
@@ -60,6 +62,10 @@ export interface ToMakeRow {
    *  reserves); "low" — non-zero but below threshold; "healthy" — at or
    *  above threshold OR no threshold set with non-zero stock. */
   status: "out" | "low" | "healthy";
+  /** Set when an upcoming order still needs pieces of this product that no
+   *  linked batch accounts for yet — independent of `status`, since a
+   *  healthy-stock product can still owe a specific order. */
+  orderDemand?: UpcomingOrderDemand;
 }
 
 export interface BuildRowsInput {
@@ -69,10 +75,22 @@ export interface BuildRowsInput {
    *  Frozen pieces never influence status; they're displayed alongside the
    *  in-stock count as a "reserve" signal. */
   frozenByProduct?: ReadonlyMap<string, number>;
+  /** Optional — outstanding demand from upcoming orders, keyed by product
+   *  id (see `productsNeededForUpcomingOrders`). A product present here is
+   *  included in the row list even if its stock is otherwise healthy. */
+  orderDemandByProduct?: ReadonlyMap<string, UpcomingOrderDemand>;
 }
 
-/** Sort: most-urgent first. Within a status bucket, alphabetical by name. */
-const STATUS_ORDER: Record<ToMakeRow["status"], number> = { out: 0, low: 1, healthy: 2 };
+/** Sort rank: most-urgent first. Out-of-stock and below-threshold rows still
+ *  outrank an order nudge — those are already actionable regardless of any
+ *  order. A healthy-stock product with order demand ranks just above plain
+ *  healthy ones, soonest event first; everything else falls back to name. */
+function urgencyRank(row: ToMakeRow): number {
+  if (row.status === "out") return 0;
+  if (row.status === "low") return 1;
+  if (row.orderDemand) return 2;
+  return 3;
+}
 
 export function buildToMakeRows(input: BuildRowsInput): ToMakeRow[] {
   const rows: ToMakeRow[] = [];
@@ -93,11 +111,17 @@ export function buildToMakeRows(input: BuildRowsInput): ToMakeRow[] {
       status = "healthy";
     }
     const frozen = input.frozenByProduct?.get(p.id) ?? 0;
-    rows.push({ productId: p.id, name: p.name, pieces, frozen, threshold, status });
+    const orderDemand = input.orderDemandByProduct?.get(p.id);
+    rows.push({ productId: p.id, name: p.name, pieces, frozen, threshold, status, orderDemand });
   }
   rows.sort((a, b) => {
-    const s = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
-    if (s !== 0) return s;
+    const ra = urgencyRank(a);
+    const rb = urgencyRank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 2) {
+      const d = a.orderDemand!.nearestEventDate.localeCompare(b.orderDemand!.nearestEventDate);
+      if (d !== 0) return d;
+    }
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
   return rows;
