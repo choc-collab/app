@@ -15,8 +15,7 @@ test.describe("Stock — Freezer", () => {
     await page.getByRole("textbox", { name: "Filling name" }).fill("Freezer Test Praline");
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/fillings\/.+/);
-    await page.locator("select.input").first().selectOption("Pralines & Giandujas (Nut-Based)");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.locator("select").first().selectOption("Pralines & Giandujas (Nut-Based)");
 
     // Register leftover stock (500g)
     await page.goto("/stock");

@@ -4,8 +4,9 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { useProductsList, useMouldsList, useIngredients, useCurrencySymbol, useProductCategoryMap, useFillingCategoryMap } from "@/lib/hooks";
+import { useProductsList, useMouldsList, useIngredients, useCurrencySymbol, useProductCategoryMap, useFillingCategoryMap, useCurrentCoatingMappings } from "@/lib/hooks";
 import { deserializeBreakdown } from "@/lib/costCalculation";
+import { resolveCoating } from "@/lib/production";
 import { getProductFillingCategories, rankSimilarProducts } from "@/lib/productSimilarity";
 import { PageHeader } from "@/components/page-header";
 import { chipTextColor, tintBg, tintEdge, NEUTRAL_CATEGORY_HEX } from "@/lib/categoryColor";
@@ -212,6 +213,12 @@ export default function ProductCostPage() {
   const sym = useCurrencySymbol();
   const productCategoryMap = useProductCategoryMap();
   const fillingCategoryMap = useFillingCategoryMap();
+  const currentCoatingMappings = useCurrentCoatingMappings();
+  const coatingNameByIngredientId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const mapping of currentCoatingMappings.values()) map.set(mapping.ingredientId, mapping.coatingName);
+    return map;
+  }, [currentCoatingMappings]);
   const allFillings = useLiveQuery(() => db.fillings.toArray()) ?? [];
   const allProductFillings = useLiveQuery(() => db.productFillings.toArray()) ?? [];
   const allSnapshots = useLiveQuery(() => db.productCostSnapshots.toArray()) ?? [];
@@ -680,7 +687,7 @@ export default function ProductCostPage() {
                         })}
                       </div>
                       {/* Mini bar */}
-                      <CategoryBar breakdown={breakdown} total={snap.costPerProduct} shellColor={getShellColor(product.coating)} categoryMap={fillingCategoryMap} sym={sym} />
+                      <CategoryBar breakdown={breakdown} total={snap.costPerProduct} shellColor={getShellColor(resolveCoating(product, coatingNameByIngredientId))} categoryMap={fillingCategoryMap} sym={sym} />
                     </div>
 
                     {/* Cost/product */}
@@ -833,12 +840,12 @@ export default function ProductCostPage() {
 
         {/* Category bar */}
         <div className="mb-2">
-          <CategoryBar breakdown={focusCategoryBreakdown} total={focusSnapshot.costPerProduct} shellColor={getShellColor(focusProduct.coating)} categoryMap={fillingCategoryMap} sym={sym} />
+          <CategoryBar breakdown={focusCategoryBreakdown} total={focusSnapshot.costPerProduct} shellColor={getShellColor(resolveCoating(focusProduct, coatingNameByIngredientId))} categoryMap={fillingCategoryMap} sym={sym} />
         </div>
         {/* Bar legend with values */}
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           {focusCategoryBreakdown.map(({ category, subtotal }) => {
-            const hex = resolveCategoryHex(category, fillingCategoryMap, getShellColor(focusProduct.coating));
+            const hex = resolveCategoryHex(category, fillingCategoryMap, getShellColor(resolveCoating(focusProduct, coatingNameByIngredientId)));
             return (
               <span key={category} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span
@@ -1118,7 +1125,7 @@ export default function ProductCostPage() {
                         <CategoryBar
                           breakdown={bd}
                           total={snap?.costPerProduct ?? 0}
-                          shellColor={getShellColor(product?.coating)}
+                          shellColor={getShellColor(resolveCoating(product, coatingNameByIngredientId))}
                           categoryMap={fillingCategoryMap}
                           sym={sym}
                         />

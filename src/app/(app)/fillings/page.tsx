@@ -11,21 +11,41 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, QuickAddForm, EmptyState, ListItemCard, FillingStockPills, SegmentedTabs, type SegmentedTabOption, ViewDensityToggle } from "@/components/pantry";
+import { ListToolbar, FilterPanel, FilterChipGroup, ArchiveFilterChip, QuickAddForm, EmptyState, FillingStockPills, SegmentedTabs, type SegmentedTabOption, GroupHeader, PantryTableHeader, PantryTableGroupHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import { CategoryPicker } from "@/components/category-picker";
 import {
   useFillings, saveFilling, useAllFillingStatuses,
   useFillingCategories, useFillingCategoryUsageCounts, saveFillingCategory,
-  useFillingStockMap,
+  useFillingStockMap, useFillingUsageCounts, useFillingProductionMap,
 } from "@/lib/hooks";
 import { DEFAULT_FILLING_STATUSES, allergenLabel } from "@/types";
 import type { Filling } from "@/types";
-import { ChevronRight, ChevronDown } from "lucide-react";
-import Link from "next/link";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
-import { usePersistedDensity } from "@/lib/use-persisted-density";
 import { shelfLifeBucket, SHELF_LIFE_BUCKET_LABELS, SHELF_LIFE_BUCKET_ORDER, type ShelfLifeBucket } from "@/lib/shelfLifeBuckets";
+
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
+}
+
+const FILLINGS_GRID = "minmax(180px,1.5fr) 100px minmax(140px,1fr) 64px 92px 92px 20px";
+const FILLINGS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Filling" },
+  { key: "status", label: "Status" },
+  { key: "stock", label: "In stock" },
+  { key: "usedIn", label: "Used in", align: "right" },
+  { key: "lastMade", label: "Last made", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
+
+const FILLING_CATEGORIES_GRID = "minmax(180px,1.4fr) 100px 60px 80px 90px 20px";
+const FILLING_CATEGORIES_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Category" },
+  { key: "shelfStable", label: "Shelf-stable" },
+  { key: "color", label: "Colour" },
+  { key: "fillings", label: "Fillings", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 type FillingsTab = "fillings" | "categories";
 
@@ -99,9 +119,12 @@ function FillingsTab() {
     filterExcludeAllergens: [] as string[],
     filterShelfLife: [] as ShelfLifeBucket[],
     showArchived: false,
+    collapsedCategories: [] as string[],
   });
   const fillings = useFillings(f.showArchived);
   const fillingStockMap = useFillingStockMap();
+  const fillingUsageCounts = useFillingUsageCounts();
+  const fillingProductionMap = useFillingProductionMap();
   const allCategories = useFillingCategories();
   const existingStatuses = useAllFillingStatuses();
   const statusOptions = useMemo(() => {
@@ -115,9 +138,7 @@ function FillingsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("");
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
-  const [density, setDensity] = usePersistedDensity("fillings");
-  const isCompact = density === "compact";
+  const collapsedCategories = useMemo(() => new Set(f.collapsedCategories), [f.collapsedCategories]);
 
   const filterCategoriesSet = useMemo(() => new Set(f.filterCategories), [f.filterCategories]);
   const filterAllergensSet = useMemo(() => new Set(f.filterAllergens), [f.filterAllergens]);
@@ -244,11 +265,9 @@ function FillingsTab() {
   }, [filtered, allCategories]);
 
   function toggleCategory(cat: string) {
-    setCollapsedCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat); else next.add(cat);
-      return next;
-    });
+    const next = new Set(collapsedCategories);
+    if (next.has(cat)) next.delete(cat); else next.add(cat);
+    setF("collapsedCategories", Array.from(next));
   }
 
   async function handleAdd(e: React.FormEvent) {
@@ -390,91 +409,79 @@ function FillingsTab() {
             : "No fillings match your filters."}
         </p>
       ) : (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <ViewDensityToggle value={density} onChange={setDensity} />
-          </div>
+        <div className="space-y-3">
           <div className="flex justify-end gap-3">
-            <button onClick={() => setCollapsedCategories(new Set(grouped.map((g) => g.category)))} className="text-xs text-muted-foreground">Collapse all</button>
-            <button onClick={() => setCollapsedCategories(new Set())} className="text-xs text-muted-foreground">Expand all</button>
+            <button onClick={() => setF("collapsedCategories", grouped.map((g) => g.category))} className="text-xs text-muted-foreground">Collapse all</button>
+            <button onClick={() => setF("collapsedCategories", [])} className="text-xs text-muted-foreground">Expand all</button>
           </div>
-          {grouped.map((group) => {
-            const isCollapsed = collapsedCategories.has(group.category);
-            return (
-              <div key={group.category}>
-                <button
-                  onClick={() => toggleCategory(group.category)}
-                  aria-expanded={!isCollapsed}
-                  className="flex items-center gap-2 w-full text-left mb-2"
-                >
-                  <ChevronDown aria-hidden="true" className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform duration-150 ${isCollapsed ? "-rotate-90" : ""}`} />
-                  <h2 className="text-sm font-semibold text-primary">{group.label}</h2>
-                  <span className="text-xs text-muted-foreground">({group.fillings.length})</span>
-                </button>
-                {!isCollapsed && (
-                  <ul className="space-y-2 ml-6">
-                    {group.fillings.map((filling) => (
-                      <li
+          <div role="table" aria-label="Fillings" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+            <PantryTableHeader columns={FILLINGS_COLUMNS} gridTemplateColumns={FILLINGS_GRID} />
+            {grouped.map((group) => {
+              const isCollapsed = collapsedCategories.has(group.category);
+              return (
+                <div key={group.category}>
+                  <PantryTableGroupHeader>
+                    <GroupHeader
+                      label={group.label}
+                      count={group.fillings.length}
+                      isCollapsed={isCollapsed}
+                      onToggle={() => toggleCategory(group.category)}
+                    />
+                  </PantryTableGroupHeader>
+                  {!isCollapsed && group.fillings.map((filling) => {
+                    const totals = fillingStockMap.get(filling.id ?? "");
+                    const hasStock = !!totals && (totals.availableG > 0 || totals.frozenG > 0);
+                    const usedIn = fillingUsageCounts.get(filling.id ?? "") ?? 0;
+                    const lastMade = fillingProductionMap.get(filling.id ?? "");
+                    return (
+                      <PantryTableRow
                         key={filling.id}
-                        className={`rounded-lg border bg-card ${filling.archived ? "border-muted opacity-60" : "border-border"}`}
-                        style={{ contentVisibility: "auto", containIntrinsicSize: isCompact ? "0 40px" : "0 72px" }}
+                        href={`/fillings/${encodeURIComponent(filling.id ?? "")}`}
+                        archived={filling.archived}
+                        gridTemplateColumns={FILLINGS_GRID}
                       >
-                        <Link
-                          href={`/fillings/${encodeURIComponent(filling.id ?? '')}`}
-                          className={`flex items-center gap-3 ${isCompact ? "px-3 py-1.5" : "p-3"} min-w-0`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="font-medium text-sm truncate min-w-0">
-                                {filling.name}
-                                {filling.archived && <span className="ml-1.5 text-[10px] text-muted-foreground font-normal">(archived)</span>}
-                              </h3>
-                              {(() => {
-                                const totals = fillingStockMap.get(filling.id ?? "");
-                                if (!totals) return null;
-                                return (
-                                  <FillingStockPills
-                                    availableG={totals.availableG}
-                                    frozenG={totals.frozenG}
-                                  />
-                                );
-                              })()}
-                            </div>
-                            {!isCompact && filling.description && (
-                              <p className="text-xs text-muted-foreground truncate mt-0.5">{filling.description}</p>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-medium text-sm truncate">{filling.name}</h3>
+                            {!!filling.version && (
+                              <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-1 py-0.5 rounded shrink-0">
+                                v{filling.version}
+                              </span>
                             )}
-                            {!isCompact && (filling.status || filling.allergens.length > 0) && (
-                              <div className="flex flex-wrap items-center gap-1 mt-1">
-                                {filling.status && (
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                                    filling.status === "confirmed" ? "bg-success-muted text-success" :
-                                    filling.status === "testing"   ? "bg-warning-muted text-warning" :
-                                    filling.status === "to try"    ? "bg-muted text-muted-foreground" :
-                                                                     "bg-sky-50 text-sky-700 border border-sky-200"
-                                  }`}>
-                                    {filling.status.charAt(0).toUpperCase() + filling.status.slice(1)}
-                                  </span>
-                                )}
-                                {filling.allergens.map((a) => (
-                                  <span
-                                    key={a}
-                                    className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-2 py-0.5 text-[10px]"
-                                  >
-                                    {allergenLabel(a)}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            {filling.archived && <span className="text-[10px] text-muted-foreground font-normal shrink-0">(archived)</span>}
                           </div>
-                          <ChevronRight aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0" />
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+                        </div>
+                        <div>
+                          {filling.status ? (
+                            <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                              filling.status === "confirmed" ? "bg-success-muted text-success" :
+                              filling.status === "testing"   ? "bg-warning-muted text-warning" :
+                              filling.status === "to try"    ? "bg-muted text-muted-foreground" :
+                                                                "bg-sky-50 text-sky-700 border border-sky-200"
+                            }`}>
+                              {filling.status.charAt(0).toUpperCase() + filling.status.slice(1)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        <div>
+                          {hasStock ? (
+                            <FillingStockPills availableG={totals!.availableG} frozenG={totals!.frozenG} />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        <span className="text-xs tabular-nums text-muted-foreground text-right">{usedIn}</span>
+                        <span className="text-xs tabular-nums text-muted-foreground text-right">{lastMade ? formatDate(lastMade) : "—"}</span>
+                        <span className="text-xs tabular-nums text-muted-foreground text-right">{filling.updatedAt ? formatDate(filling.updatedAt) : "—"}</span>
+                      </PantryTableRow>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -614,57 +621,37 @@ function CategoriesTab() {
       )}
 
       {filtered.length > 0 && (
-        <ul className="space-y-2">
+        <div role="table" aria-label="Filling categories" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+          <PantryTableHeader columns={FILLING_CATEGORIES_COLUMNS} gridTemplateColumns={FILLING_CATEGORIES_GRID} />
           {filtered.map((c) => {
             const usage = usageCounts.get(c.name) ?? 0;
             const sharedWith = !c.archived && c.color
               ? (colorCollisions.get(c.color.toLowerCase()) ?? []).filter((n) => n !== c.name)
               : [];
             return (
-              <ListItemCard
+              <PantryTableRow
                 key={c.id}
                 href={`/fillings/categories/${encodeURIComponent(c.id!)}`}
                 archived={c.archived}
+                gridTemplateColumns={FILLING_CATEGORIES_GRID}
               >
-                {/* Colour swatch — visually anchors the row to its bar segment on the
-                    product-cost page. Falls back to a hollow ring when no colour is set. */}
+                <h3 className="font-medium text-sm truncate">
+                  {c.name}
+                  {c.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+                </h3>
+                <span className="text-xs text-muted-foreground">{c.shelfStable ? "Yes" : "—"}</span>
                 <span
-                  className="w-3 h-3 rounded-sm shrink-0 border border-border/60"
-                  style={c.color ? { backgroundColor: c.color } : { backgroundColor: "transparent" }}
-                  title={c.color ? `Colour ${c.color}` : "No colour set"}
-                  aria-hidden="true"
+                  aria-label={c.color ? `Colour ${c.color}` : "No colour set"}
+                  title={sharedWith.length > 0 ? `Shares its colour with: ${sharedWith.join(", ")}` : (c.color ? `Colour ${c.color}` : "No colour set")}
+                  className={`w-5 h-5 rounded-md border shadow-inner ${sharedWith.length > 0 ? "border-status-warn-edge" : "border-black/10"}`}
+                  style={{ backgroundColor: c.color ?? "transparent" }}
                 />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm truncate">{c.name}</span>
-                    {c.shelfStable && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                        Shelf-stable
-                      </span>
-                    )}
-                    {c.archived && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
-                    )}
-                    {sharedWith.length > 0 && (
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
-                        title={`Shares its colour with: ${sharedWith.join(", ")}`}
-                      >
-                        Shared colour
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {usage === 0 ? "No fillings" : `${usage} filling${usage === 1 ? "" : "s"}`}
-                    {sharedWith.length > 0 && (
-                      <> · same colour as {sharedWith.slice(0, 2).join(", ")}{sharedWith.length > 2 ? ` +${sharedWith.length - 2}` : ""}</>
-                    )}
-                  </div>
-                </div>
-              </ListItemCard>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{usage}</span>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{c.updatedAt ? formatDate(c.updatedAt) : "—"}</span>
+              </PantryTableRow>
             );
           })}
-        </ul>
+        </div>
       )}
     </div>
   );

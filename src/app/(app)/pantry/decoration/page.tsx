@@ -14,7 +14,7 @@ import {
   useDecorationMaterials, saveDecorationMaterial, setDecorationMaterialLowStock,
   useDecorationMaterialUsageCounts,
   useDecorationCategories, useDecorationCategoryUsageCounts, saveDecorationCategory,
-  useShellDesigns, saveShellDesign, useShellDesignUsage,
+  useShellDesigns, saveShellDesign, useShellDesignUsageCounts,
 } from "@/lib/hooks";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
 import { PageHeader } from "@/components/page-header";
@@ -28,11 +28,43 @@ import {
   EmptyState,
   GroupHeader,
   StockBadge,
-  ListItemCard,
   LowStockFlagButton,
+  PantryTableHeader,
+  PantryTableGroupHeader,
+  PantryTableRow,
+  type PantryTableColumn,
 } from "@/components/pantry";
 import { DECORATION_APPLY_AT_OPTIONS, normalizeApplyAt } from "@/types";
 import type { ShellDesignApplyAt } from "@/types";
+
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
+}
+
+const MATERIALS_GRID = "minmax(180px,1.4fr) 100px minmax(120px,1fr) 90px 60px 90px 20px";
+const MATERIALS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Material" },
+  { key: "stock", label: "Stock" },
+  { key: "manufacturer", label: "Manufacturer" },
+  { key: "usedIn", label: "Used in", align: "right" },
+  { key: "color", label: "Colour" },
+  { key: "updated", label: "Updated", align: "right" },
+];
+
+const DESIGNS_GRID = "minmax(200px,1.6fr) 130px 90px 90px 20px";
+const DESIGNS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Design" },
+  { key: "applyAt", label: "Apply at" },
+  { key: "usedIn", label: "Used in", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
+
+const DECORATION_CATEGORIES_GRID = "minmax(200px,1.6fr) 110px 110px 20px";
+const DECORATION_CATEGORIES_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Category" },
+  { key: "materials", label: "Materials", align: "right" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -135,13 +167,14 @@ function MaterialsTab() {
     filterTypes: [] as string[],
     filterStock: "all" as StockFilter,
     showArchived: false,
+    collapsedGroups: [] as string[],
   });
   const filterTypesSet = useMemo(() => new Set(f.filterTypes), [f.filterTypes]);
 
   const materials = useDecorationMaterials(f.showArchived);
   const categories = useDecorationCategories();
   const usageCounts = useDecorationMaterialUsageCounts();
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const collapsedGroups = useMemo(() => new Set(f.collapsedGroups), [f.collapsedGroups]);
 
   // Build category options from DB
   const categoryOptions = useMemo(() =>
@@ -201,11 +234,9 @@ function MaterialsTab() {
   }, [filtered, categories, categoryLabelMap]);
 
   function toggleGroup(type: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type); else next.add(type);
-      return next;
-    });
+    const next = new Set(collapsedGroups);
+    if (next.has(type)) next.delete(type); else next.add(type);
+    setF("collapsedGroups", Array.from(next));
   }
 
   function clearFilters() {
@@ -310,68 +341,65 @@ function MaterialsTab() {
       )}
 
       {filtered.length > 0 && (
-        <div className="space-y-4">
+        <div role="table" aria-label="Decoration materials" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+          <PantryTableHeader columns={MATERIALS_COLUMNS} gridTemplateColumns={MATERIALS_GRID} hasAction />
           {grouped.map(({ type, label, items }) => {
             const isCollapsed = !f.search && activeFilterCount === 0 && collapsedGroups.has(type);
             return (
               <div key={type}>
-                <GroupHeader
-                  label={label}
-                  count={items.length}
-                  isCollapsed={isCollapsed}
-                  onToggle={() => toggleGroup(type)}
-                  outCount={items.filter((m) => m.outOfStock).length}
-                  lowCount={items.filter((m) => m.lowStock && !m.outOfStock).length}
-                />
-                {!isCollapsed && (
-                  <ul className="space-y-2 ml-6">
-                    {items.map((m) => {
-                      const usage = usageCounts.get(m.id!) ?? 0;
-                      return (
-                        <ListItemCard
-                          key={m.id}
-                          href={`/pantry/decoration/${encodeURIComponent(m.id!)}`}
-                          outOfStock={m.outOfStock}
-                          lowStock={m.lowStock}
-                          archived={m.archived}
-                          action={
-                            <LowStockFlagButton
-                              flagged={m.lowStock}
-                              itemName={m.name}
-                              onFlag={() => setDecorationMaterialLowStock(m.id!, true)}
-                              onUnflag={() => setDecorationMaterialLowStock(m.id!, false)}
-                            />
-                          }
-                        >
-                          <span
-                            aria-hidden="true"
-                            className="w-9 h-9 rounded-md border border-black/10 shadow-inner shrink-0"
-                            style={{ backgroundColor: m.color ?? "#9ca3af" }}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-medium text-sm truncate">{m.name}</span>
-                              {m.archived && (
-                                <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
-                              )}
-                              {!m.archived && m.outOfStock && <StockBadge status="out-of-stock" />}
-                              {!m.archived && !m.outOfStock && m.lowStock && (
-                                <StockBadge status={m.lowStockOrdered ? "ordered" : "low-stock"} />
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              {m.manufacturer && <span className="truncate">{m.manufacturer}</span>}
-                              {m.manufacturer && <span aria-hidden="true">·</span>}
-                              <span className="shrink-0">
-                                {usage === 0 ? "Not used yet" : `Used in ${usage} product${usage === 1 ? "" : "s"}`}
-                              </span>
-                            </div>
-                          </div>
-                        </ListItemCard>
-                      );
-                    })}
-                  </ul>
-                )}
+                <PantryTableGroupHeader>
+                  <GroupHeader
+                    label={label}
+                    count={items.length}
+                    isCollapsed={isCollapsed}
+                    onToggle={() => toggleGroup(type)}
+                    outCount={items.filter((m) => m.outOfStock).length}
+                    lowCount={items.filter((m) => m.lowStock && !m.outOfStock).length}
+                  />
+                </PantryTableGroupHeader>
+                {!isCollapsed && items.map((m) => {
+                  const usage = usageCounts.get(m.id!) ?? 0;
+                  return (
+                    <PantryTableRow
+                      key={m.id}
+                      href={`/pantry/decoration/${encodeURIComponent(m.id!)}`}
+                      outOfStock={m.outOfStock}
+                      lowStock={m.lowStock}
+                      archived={m.archived}
+                      gridTemplateColumns={MATERIALS_GRID}
+                      action={
+                        <LowStockFlagButton
+                          flagged={m.lowStock}
+                          itemName={m.name}
+                          onFlag={() => setDecorationMaterialLowStock(m.id!, true)}
+                          onUnflag={() => setDecorationMaterialLowStock(m.id!, false)}
+                        />
+                      }
+                    >
+                      <h3 className="font-medium text-sm truncate">
+                        {m.name}
+                        {m.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+                      </h3>
+                      <div>
+                        {m.outOfStock ? (
+                          <StockBadge status="out-of-stock" />
+                        ) : m.lowStock ? (
+                          <StockBadge status={m.lowStockOrdered ? "ordered" : "low-stock"} />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">In stock</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground truncate">{m.manufacturer || "—"}</span>
+                      <span className="text-xs tabular-nums text-muted-foreground text-right">{usage}</span>
+                      <span
+                        aria-label={`Colour ${m.color ?? "unset"}`}
+                        className="w-5 h-5 rounded-md border border-black/10 shadow-inner"
+                        style={{ backgroundColor: m.color ?? "#9ca3af" }}
+                      />
+                      <span className="text-xs tabular-nums text-muted-foreground text-right">{m.updatedAt ? formatDate(m.updatedAt) : "—"}</span>
+                    </PantryTableRow>
+                  );
+                })}
               </div>
             );
           })}
@@ -482,30 +510,27 @@ function CategoriesTab() {
       )}
 
       {filtered.length > 0 && (
-        <ul className="space-y-2">
+        <div role="table" aria-label="Decoration categories" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+          <PantryTableHeader columns={DECORATION_CATEGORIES_COLUMNS} gridTemplateColumns={DECORATION_CATEGORIES_GRID} />
           {filtered.map((c) => {
             const usage = usageCounts.get(c.slug) ?? 0;
             return (
-              <ListItemCard
+              <PantryTableRow
                 key={c.id}
                 href={`/pantry/decoration/categories/${encodeURIComponent(c.id!)}`}
                 archived={c.archived}
+                gridTemplateColumns={DECORATION_CATEGORIES_GRID}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm truncate">{c.name}</span>
-                    {c.archived && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {usage === 0 ? "No materials" : `${usage} material${usage === 1 ? "" : "s"}`}
-                  </div>
-                </div>
-              </ListItemCard>
+                <h3 className="font-medium text-sm truncate">
+                  {c.name}
+                  {c.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+                </h3>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{usage}</span>
+                <span className="text-xs tabular-nums text-muted-foreground text-right">{c.updatedAt ? formatDate(c.updatedAt) : "—"}</span>
+              </PantryTableRow>
             );
           })}
-        </ul>
+        </div>
       )}
     </div>
   );
@@ -523,6 +548,7 @@ function DesignsTab() {
   });
 
   const designs = useShellDesigns(f.showArchived);
+  const usageCounts = useShellDesignUsageCounts();
 
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
@@ -621,27 +647,27 @@ function DesignsTab() {
       )}
 
       {filtered.length > 0 && (
-        <ul className="space-y-2">
+        <div role="table" aria-label="Shell designs" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+          <PantryTableHeader columns={DESIGNS_COLUMNS} gridTemplateColumns={DESIGNS_GRID} />
           {filtered.map((d) => (
-            <ListItemCard
+            <PantryTableRow
               key={d.id}
               href={`/pantry/decoration/designs/${encodeURIComponent(d.id!)}`}
               archived={d.archived}
+              gridTemplateColumns={DESIGNS_GRID}
             >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-sm truncate">{d.name}</span>
-                  {d.archived && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Archived</span>
-                  )}
-                  <span className="text-[11px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 shrink-0">
-                    {APPLY_AT_LABELS.get(normalizeApplyAt(d.defaultApplyAt)) ?? "Colour"}
-                  </span>
-                </div>
-              </div>
-            </ListItemCard>
+              <h3 className="font-medium text-sm truncate">
+                {d.name}
+                {d.archived && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground align-middle">archived</span>}
+              </h3>
+              <span className="text-xs text-muted-foreground truncate">
+                {APPLY_AT_LABELS.get(normalizeApplyAt(d.defaultApplyAt)) ?? "Colour"}
+              </span>
+              <span className="text-xs tabular-nums text-muted-foreground text-right">{usageCounts.get(d.name) ?? 0}</span>
+              <span className="text-xs tabular-nums text-muted-foreground text-right">{d.updatedAt ? formatDate(d.updatedAt) : "—"}</span>
+            </PantryTableRow>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );

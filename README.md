@@ -76,6 +76,12 @@ Choc-collab keeps everything a chocolatier needs in one place: products built fr
 - **Filling stock** — track leftover filling quantities from production; adjust, discard, or consume in future batches (FIFO deduction)
 - **Freezer management** — freeze products or fillings with a preserved shelf-life value; frozen items are excluded from available stock and low-stock alerts; defrost restores them with an adjusted sell-by date
 
+### The Log
+
+- **A daily journal that mostly writes itself** — one page per day. The top half is derived live from everything else in the app: moulds coloured, shells cast, fillings made, pieces unmoulded, batches finished, boxes prepared and sold (with revenue), give-aways, orders captured and events happening, new customers, experiments, new recipes and products, purchases, price updates, packaging orders, shopping-list activity, stock counts and freezer moves — each line linking back to its source. Nothing is stored for this half, so it back-fills your whole history and follows edits
+- **Your own notes and conditions** — as many notes as you like per day (autosaving, timestamped, deleted only after confirmation) plus workshop temperature and humidity, the two numbers that explain most tempering and bloom surprises
+- **List or calendar** — days as a table grouped by month (activity headline, notes, conditions) with search and period filters, or a month grid with a coloured marker per area and a pencil for notes; a "Today's log" panel on the dashboard takes quick notes without leaving the page
+
 ### The Lab — product development
   > COMING SOON
 - **Product Lab** — ganache formulation scratchpad with live balance bars checking water, sugar, fat, and solids against validated target ranges for 6 configurations (dark/milk/white x moulded/coated)
@@ -190,7 +196,7 @@ src/
     (public)/               — public, unauthenticated
       layout.tsx            — simple header + footer
       page.tsx              — landing page at /  (welcome + two tiles)
-      getting-started/      — end-user guide (20-section walkthrough including a label-design walkthrough, linear + hub variants)
+      getting-started/      — end-user guide (22-section walkthrough including a label-design walkthrough, linear + hub variants)
     (app)/                  — auth-gated product
       layout.tsx            — AuthGate + SideNav + SectionAccent + demo-mode overlay + iOS install banner
       app/                  — /app home: greeting + section cards (Workshop / Pantry / Lab / Observatory / Shop)

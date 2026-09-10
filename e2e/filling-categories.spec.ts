@@ -31,10 +31,11 @@ test.describe("Fillings — Tabs", () => {
   test("seeded shelf-stable categories are flagged", async ({ page }) => {
     await page.goto("/fillings");
     await page.getByRole("button", { name: /^Categories$/ }).click();
-    const badges = page.getByText("Shelf-stable", { exact: true });
+    const table = page.getByRole("table", { name: "Filling categories" });
+    const shelfStableCells = table.getByText("Yes", { exact: true });
     // Auto-retry: seed loader inserts categories async — Pralines may arrive
     // before Fruit-Based. `toHaveCount` polls until the DOM settles.
-    await expect(badges).toHaveCount(2);
+    await expect(shelfStableCells).toHaveCount(2);
   });
 });
 
@@ -82,6 +83,20 @@ test.describe("Fillings — Categories CRUD", () => {
     // Persist across a hard reload
     await page.reload();
     await expect(page.getByText("Shelf-stable", { exact: true })).toBeVisible();
+  });
+
+  test("list renders as a table with column headers", async ({ page }) => {
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    const table = page.getByRole("table", { name: "Filling categories" });
+    await expect(table).toBeVisible();
+    for (const header of ["Category", "Shelf-stable", "Colour", "Fillings", "Updated"]) {
+      await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
+    }
+    await expect(page.getByText("Ganaches (Emulsions)")).toBeVisible();
+
+    await page.getByText("Ganaches (Emulsions)").click();
+    await expect(page).toHaveURL(/\/fillings\/categories\/.+/);
   });
 
   test("cancel add form hides without creating", async ({ page }) => {

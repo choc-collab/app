@@ -12,6 +12,9 @@ import {
 } from "@/lib/hooks";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
+import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
+import { SidebarCard } from "@/components/detail-sidebar";
+import { db } from "@/lib/db";
 import { ArrowLeft, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
@@ -74,11 +77,28 @@ export default function IngredientCategoryDetailPage() {
 
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  if (!categoryId || !category) {
+  // Loading vs. not-found — the live query returns `undefined` for both, so a
+  // one-shot direct read resolves which one it actually is.
+  const [loadState, setLoadState] = useState<"loading" | "found" | "not-found">("loading");
+  useEffect(() => {
+    if (!categoryId) return;
+    let cancelled = false;
+    db.ingredientCategories.get(categoryId).then((c) => {
+      if (!cancelled) setLoadState(c ? "found" : "not-found");
+    });
+    return () => { cancelled = true; };
+  }, [categoryId]);
+
+  if (!categoryId || loadState === "loading" || (loadState === "found" && !category)) {
+    return <DetailSkeleton cards={1} sidebar={1} label="Loading ingredient category" />;
+  }
+  if (loadState === "not-found" || !category) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading…</p>
-      </div>
+      <DetailNotFound
+        entity="ingredient category"
+        backHref="/ingredients?tab=categories"
+        backLabel="Ingredient categories"
+      />
     );
   }
 
@@ -92,11 +112,11 @@ export default function IngredientCategoryDetailPage() {
           href="/ingredients?tab=categories"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
-          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Back
+          <ArrowLeft aria-hidden="true" className="w-4 h-4" /> Ingredient categories
         </Link>
       </div>
 
-      <div className="px-4 pb-6 space-y-6 max-w-lg">
+      <div className="px-4 pb-5">
 
         {/* Name row */}
         <div className="flex items-start justify-between gap-2">
@@ -119,21 +139,11 @@ export default function IngredientCategoryDetailPage() {
             )}
           </div>
         </div>
+      </div>
 
-        {/* Used in panel */}
-        <UsedInPanel
-          singular="ingredient"
-          plural="ingredients"
-          items={usedInIngredients.map((ing) => ({
-            id: ing.id ?? "",
-            name: ing.name,
-            href: `/ingredients/${encodeURIComponent(ing.id ?? "")}`,
-          }))}
-          emptyMessage="No ingredients are using this category yet."
-        />
-
-        {/* Archive / Delete */}
-        <section className="pt-4 border-t border-border">
+      <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+        {/* ── Main column ── */}
+        <section className="min-w-0">
           {deleteError && (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 mb-3">
               <p className="text-xs text-destructive">{deleteError}</p>
@@ -210,6 +220,23 @@ export default function IngredientCategoryDetailPage() {
             )
           )}
         </section>
+
+        {/* ── Sidebar ── */}
+        <div className="space-y-4 lg:sticky lg:top-4">
+          <SidebarCard title="Used in" meta={inUseCount > 0 ? inUseCount : undefined}>
+            <UsedInPanel
+              singular="ingredient"
+              plural="ingredients"
+              items={usedInIngredients.map((ing) => ({
+                id: ing.id ?? "",
+                name: ing.name,
+                href: `/ingredients/${encodeURIComponent(ing.id ?? "")}`,
+              }))}
+              emptyMessage="No ingredients are using this category yet."
+              hideHeading
+            />
+          </SidebarCard>
+        </div>
       </div>
     </div>
   );

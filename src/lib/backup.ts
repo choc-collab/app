@@ -45,6 +45,12 @@ export interface BackupData {
   labelTemplates?: unknown[];
   sales?: unknown[];
   giveaways?: unknown[];
+  orders?: unknown[];
+  customers?: unknown[];
+  orderProductionLinks?: unknown[];
+  orderLineItems?: unknown[];
+  logEntries?: unknown[];
+  logDays?: unknown[];
 
   // --- Legacy key compat (older backups written before the Product/Filling rename) ---
   // These are accepted on import and remapped to the new tables above.
@@ -100,6 +106,12 @@ async function buildBackupData(): Promise<BackupData> {
     labelTemplates,
     sales,
     giveaways,
+    orders,
+    customers,
+    orderProductionLinks,
+    orderLineItems,
+    logEntries,
+    logDays,
   ] = await Promise.all([
     db.ingredients.toArray(),
     db.products.toArray(),
@@ -136,6 +148,12 @@ async function buildBackupData(): Promise<BackupData> {
     db.labelTemplates.toArray(),
     db.sales.toArray(),
     db.giveaways.toArray(),
+    db.orders.toArray(),
+    db.customers.toArray(),
+    db.orderProductionLinks.toArray(),
+    db.orderLineItems.toArray(),
+    db.logEntries.toArray(),
+    db.logDays.toArray(),
   ]);
 
   return {
@@ -177,6 +195,12 @@ async function buildBackupData(): Promise<BackupData> {
     labelTemplates,
     sales,
     giveaways,
+    orders,
+    customers,
+    orderProductionLinks,
+    orderLineItems,
+    logEntries,
+    logDays,
   };
 }
 
@@ -198,6 +222,8 @@ function hasAnyData(data: BackupData): boolean {
     data.fillingCategories ?? [], data.ingredientCategories ?? [],
     data.labelTemplates ?? [],
     data.sales ?? [], data.giveaways ?? [],
+    data.orders ?? [], data.customers ?? [], data.orderProductionLinks ?? [],
+    data.orderLineItems ?? [], data.logEntries ?? [], data.logDays ?? [],
   ];
   return arrays.some((a) => Array.isArray(a) && a.length > 0);
 }
@@ -273,6 +299,8 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
       db.fillingCategories, db.ingredientCategories,
       db.labelTemplates,
       db.sales, db.giveaways,
+      db.orders, db.customers, db.orderProductionLinks, db.orderLineItems,
+      db.logEntries, db.logDays,
     ],
     async () => {
       await Promise.all([
@@ -290,6 +318,8 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
         db.fillingStock.clear(), db.fillingCategories.clear(), db.ingredientCategories.clear(),
         db.labelTemplates.clear(),
         db.sales.clear(), db.giveaways.clear(),
+        db.orders.clear(), db.customers.clear(), db.orderProductionLinks.clear(), db.orderLineItems.clear(),
+        db.logEntries.clear(), db.logDays.clear(),
       ]);
     },
   );
@@ -467,6 +497,12 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const rawLabelTemplates          = data.labelTemplates          ?? [];
   const rawSales                   = data.sales                   ?? [];
   const rawGiveaways               = data.giveaways               ?? [];
+  const rawOrders                  = data.orders                  ?? [];
+  const rawCustomers               = data.customers               ?? [];
+  const rawOrderProductionLinks    = data.orderProductionLinks    ?? [];
+  const rawOrderLineItems          = data.orderLineItems          ?? [];
+  const rawLogEntries              = data.logEntries              ?? [];
+  const rawLogDays                 = data.logDays                 ?? [];
 
   // Apply field-level migrations for backups written pre-rename.
   const ingredients              = rawIngredients as never[];
@@ -503,6 +539,12 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const labelTemplates           = rawLabelTemplates as never[];
   const sales                    = rawSales as never[];
   const giveaways                = rawGiveaways as never[];
+  const orders                   = rawOrders as never[];
+  const customers                = rawCustomers as never[];
+  const orderProductionLinks     = rawOrderProductionLinks as never[];
+  const orderLineItems           = rawOrderLineItems as never[];
+  const logEntries               = rawLogEntries as never[];
+  const logDays                  = rawLogDays as never[];
 
   // Validate filling-component refs against the fillings list. A backup that
   // names a fillingId/childFillingId without including the corresponding row
@@ -566,6 +608,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
       db.fillingCategories, db.ingredientCategories,
       db.labelTemplates,
       db.sales, db.giveaways,
+      db.orders, db.customers, db.orderProductionLinks, db.orderLineItems,
+      db.logEntries, db.logDays,
     ],
     async () => {
       await Promise.all([
@@ -583,6 +627,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         db.fillingStock.clear(), db.fillingCategories.clear(), db.ingredientCategories.clear(),
         db.labelTemplates.clear(),
         db.sales.clear(), db.giveaways.clear(),
+        db.orders.clear(), db.customers.clear(), db.orderProductionLinks.clear(), db.orderLineItems.clear(),
+        db.logEntries.clear(), db.logDays.clear(),
       ]);
       await Promise.all([
         ingredients.length              && db.ingredients.bulkAdd(ingredients),
@@ -620,6 +666,12 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         labelTemplates.length           && db.labelTemplates.bulkAdd(labelTemplates),
         sales.length                    && db.sales.bulkAdd(sales),
         giveaways.length                && db.giveaways.bulkAdd(giveaways),
+        orders.length                   && db.orders.bulkAdd(orders),
+        customers.length                && db.customers.bulkAdd(customers),
+        orderProductionLinks.length     && db.orderProductionLinks.bulkAdd(orderProductionLinks),
+        orderLineItems.length           && db.orderLineItems.bulkAdd(orderLineItems),
+        logEntries.length               && db.logEntries.bulkAdd(logEntries),
+        logDays.length                  && db.logDays.bulkAdd(logDays),
       ]);
     },
   );

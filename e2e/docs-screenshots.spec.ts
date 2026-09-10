@@ -62,14 +62,18 @@ test("capture all getting-started screenshots", async ({ page }) => {
 
   // ── 02 · Ingredient edit form ──────────────────────────────────────────
   await openFirstCardUnder(page, "/ingredients", /\/ingredients\/[^/]+$/);
+  // Let the sidebar's derived figures and Used-in list resolve before capturing.
+  await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(OUT, "ingredient-edit.png") });
 
   // ── 03 · Filling editor ────────────────────────────────────────────────
   await openFirstCardUnder(page, "/fillings", /\/fillings\/[^/]+$/);
+  await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(OUT, "filling-editor.png") });
 
   // ── 04 · Product detail — composition tab ──────────────────────────────
   await openFirstCardUnder(page, "/products", /\/products\/[^/]+$/);
+  await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(OUT, "product-composition.png") });
 
   // ── 05 · Production list (entry to the wizard) ─────────────────────────
@@ -84,8 +88,12 @@ test("capture all getting-started screenshots", async ({ page }) => {
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(OUT, "stock-products.png") });
 
-  // ── 07 · Collection detail ─────────────────────────────────────────────
+  // ── 07 · Collection detail — Pricing & margins tab ─────────────────────
+  // The detail page opens on the Collection tab now, so step across to the
+  // pricing tab the shot is named for.
   await openFirstCardUnder(page, "/collections", /\/collections\/[^/]+$/);
+  await page.getByRole("button", { name: "Pricing & margins" }).click();
+  await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(OUT, "collection-pricing.png") });
 
   // ── 08 · Today dashboard — landing surface for daily ops ───────────────
@@ -99,6 +107,18 @@ test("capture all getting-started screenshots", async ({ page }) => {
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(600);
   await page.screenshot({ path: path.join(OUT, "shop-landing.png") });
+
+  // ── 09b · Orders list — open orders grouped by month (demo customers) ──
+  await page.goto("/orders?tab=orders");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(OUT, "orders-list.png") });
+
+  // ── 09c · Log — today's row from the demo batches/sales/orders + demo notes ──
+  await page.goto("/log");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(OUT, "log-list.png") });
 
   // ── 10 · Label editor — Box of 9 full label, populated from demo data ──
   // Opens the demo "Box of 9 — full label" template, picks a box-of-9 source

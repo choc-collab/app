@@ -1,4 +1,4 @@
-const CACHE_NAME = "choc-collab-v2";
+const CACHE_NAME = "choc-collab-v4";
 const PRECACHE_URLS = ["/", "/products", "/fillings", "/ingredients", "/moulds", "/calculator"];
 
 self.addEventListener("install", (event) => {

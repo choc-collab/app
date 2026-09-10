@@ -12,7 +12,7 @@ import {
   useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
   useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
 } from "@/lib/hooks";
-import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, FILL_FACTOR } from "@/lib/production";
+import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, resolveCoating, FILL_FACTOR } from "@/lib/production";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
 import { normalizeApplyAt } from "@/types";
 import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
@@ -141,6 +141,11 @@ function PlanContent({
   const allIngredients = useIngredients();
   const allMaterials = useDecorationMaterials();
   const currentCoatingMappings = useCurrentCoatingMappings();
+  const coatingNameByIngredientId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const mapping of currentCoatingMappings.values()) map.set(mapping.ingredientId, mapping.coatingName);
+    return map;
+  }, [currentCoatingMappings]);
   const productCategoryMap = useProductCategoryMap();
   const collections = useCollections();
   const packagings = usePackagingList(true);
@@ -317,8 +322,8 @@ function PlanContent({
   }, [fillingAmountsWithNested, allFillingComponentsByFilling]);
 
   const steps = useMemo(() =>
-    generateSteps(planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling),
-    [planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling]
+    generateSteps(planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling, coatingNameByIngredientId),
+    [planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling, coatingNameByIngredientId]
   );
 
   /** Mode is derived from plan contents — no stored enum. */
@@ -1308,7 +1313,7 @@ function PlanContent({
                         // + additionalMoulds) so alt-setup plan products are included too.
                         const mouldsMissingWeight: string[] = [];
                         const totalCavityG = planProducts.reduce((sum, pb) => {
-                          if ((productsMap.get(pb.productId)?.coating ?? "chocolate") !== coating) return sum;
+                          if ((resolveCoating(productsMap.get(pb.productId), coatingNameByIngredientId) || "chocolate") !== coating) return sum;
                           let pbTotal = 0;
                           for (const slot of getMouldSlots(pb, mouldsMap)) {
                             if (slot.mould.cavityWeightG == null) {

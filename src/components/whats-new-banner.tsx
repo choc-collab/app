@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { X } from "lucide-react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
 import { setLastSeenVersion, useLastSeenVersion, recalculateAllProductCosts } from "@/lib/hooks";
-import { APP_VERSION, CHANGELOG_URL, COST_CORRECTION_VERSION, crossesVersion, decideBanner } from "@/lib/version";
+import { APP_VERSION, CHANGELOG_URL, COST_CORRECTION_VERSION, ORDERS_RELEASE_VERSION, PANTRY_AUTOSAVE_VERSION, LOG_RELEASE_VERSION, crossesVersion, decideBanner } from "@/lib/version";
 
 /**
  * Detect "has the user authored any real content yet" as a proxy for
@@ -59,6 +60,9 @@ export function WhatsNewBanner() {
   // crosses the release that shipped the filling/shell weight correction.
   // Unrelated future upgrades fall back to the generic changelog message.
   const showCorrection = crossesVersion(decision.from, decision.to, COST_CORRECTION_VERSION);
+  const showOrders = crossesVersion(decision.from, decision.to, ORDERS_RELEASE_VERSION);
+  const showPantryAutosave = crossesVersion(decision.from, decision.to, PANTRY_AUTOSAVE_VERSION);
+  const showLog = crossesVersion(decision.from, decision.to, LOG_RELEASE_VERSION);
 
   async function dismiss() {
     setDismissed(true);
@@ -107,6 +111,28 @@ export function WhatsNewBanner() {
                 .{" "}
               </>
             )}
+          </>
+        )}
+        {showOrders && (
+          <>
+            meet <Link href="/orders" className="font-semibold underline underline-offset-2 decoration-primary-foreground/50 hover:decoration-primary-foreground">Orders</Link>{" "}
+            — capture corporate orders and events on a calendar, keep customers with their
+            order history, and link orders to the production batches that fulfil them.{" "}
+          </>
+        )}
+        {showPantryAutosave && (
+          <>
+            the Pantry saves as you type — the Edit pencil and Save button are gone from every
+            detail page, so you change a value and it&rsquo;s stored. Costs, weights, allergens
+            and what-uses-what moved to a panel on the right.{" "}
+          </>
+        )}
+        {showLog && (
+          <>
+            meet the <Link href="/log" className="font-semibold underline underline-offset-2 decoration-primary-foreground/50 hover:decoration-primary-foreground">Log</Link>{" "}
+            — a daily journal that already knows what you made, sold and captured each day
+            (moulds coloured, boxes sold, orders added) and takes your own notes and workshop
+            conditions alongside, as a list or a calendar.{" "}
           </>
         )}
         {changelogLink} for everything that&rsquo;s changed since{" "}

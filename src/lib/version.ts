@@ -78,6 +78,20 @@ export const CHANGELOG_URL = "https://github.com/choc-collab/app/blob/main/CHANG
  *  stored cost snapshots from earlier versions hold outdated gram figures. */
 export const COST_CORRECTION_VERSION = "0.6.1";
 
+/** Release that introduced the Orders & customers area — the banner points
+ *  upgraders at it once, then falls back to the generic changelog message. */
+export const ORDERS_RELEASE_VERSION = "0.7.0";
+
+/** Release that moved every Pantry detail page to autosave. Worth a one-time
+ *  callout because it removes a control users had learned to look for: the
+ *  Edit pencil and the Save button are simply gone, and nothing replaces them. */
+export const PANTRY_AUTOSAVE_VERSION = "0.8.0";
+
+/** Release that introduced the Log — the daily journal that summarises what
+ *  was made, sold and captured each day and takes free-text notes. Pointed at
+ *  once from the banner; the page itself is self-explanatory after that. */
+export const LOG_RELEASE_VERSION = "0.9.0";
+
 /**
  * Did an upgrade from `from` to `to` cross (reach or pass) `target`? True when
  * `from` is below `target` and `to` is at or above it. A null `from` (pre-banner

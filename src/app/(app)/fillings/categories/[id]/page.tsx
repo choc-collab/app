@@ -13,6 +13,7 @@ import {
   useFillings,
 } from "@/lib/hooks";
 import { UsedInPanel } from "@/components/pantry";
+import { SidebarCard } from "@/components/detail-sidebar";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { ArrowLeft, Trash2, Archive, ArchiveRestore, Check } from "lucide-react";
 import Link from "next/link";
@@ -118,7 +119,8 @@ export default function FillingCategoryDetailPage() {
         </Link>
       </div>
 
-      <div className="px-4 pb-6 space-y-6 max-w-lg">
+      {/* Header */}
+      <div className="px-4 pb-5">
         {/* Name row */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1 flex items-center gap-2">
@@ -146,6 +148,11 @@ export default function FillingCategoryDetailPage() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+        {/* ── Main column: what you edit ── */}
+        <div className="space-y-6 min-w-0">
 
         {/* Shelf-stable toggle */}
         <section className="rounded-lg border border-border bg-card p-4">
@@ -259,25 +266,6 @@ export default function FillingCategoryDetailPage() {
           </div>
         </section>
 
-        {/* Read-only info */}
-        <div className="rounded-lg border border-border bg-card divide-y divide-border">
-          <div className="flex justify-between items-center px-3 py-2 text-sm">
-            <span className="text-muted-foreground">Fillings in this category</span>
-            <span>{inUseCount}</span>
-          </div>
-        </div>
-
-        <UsedInPanel
-          singular="filling"
-          plural="fillings"
-          items={fillingsUsingCategory.map((f) => ({
-            id: f.id ?? "",
-            name: f.name,
-            href: `/fillings/${encodeURIComponent(f.id ?? "")}`,
-          }))}
-          emptyMessage="No fillings are using this category yet."
-        />
-
         {/* Archive / Delete */}
         <section className="pt-4 border-t border-border">
           {category.archived ? (
@@ -341,6 +329,24 @@ export default function FillingCategoryDetailPage() {
             </button>
           )}
         </section>
+        </div>
+
+        {/* ── Sidebar: what the app tells you ── */}
+        <div className="space-y-4 lg:sticky lg:top-4">
+          <SidebarCard title="Used in" meta={inUseCount > 0 ? inUseCount : undefined}>
+            <UsedInPanel
+              singular="filling"
+              plural="fillings"
+              items={fillingsUsingCategory.map((f) => ({
+                id: f.id ?? "",
+                name: f.name,
+                href: `/fillings/${encodeURIComponent(f.id ?? "")}`,
+              }))}
+              emptyMessage="No fillings are using this category yet."
+              hideHeading
+            />
+          </SidebarCard>
+        </div>
       </div>
     </div>
   );

@@ -33,6 +33,8 @@ const ROUTE_ACCENTS: Record<string, string> = {
   "/shop": "cocoa",
   "/shop/giveaways": "lilac",
   "/today": "cocoa",
+  "/orders": "sage",
+  "/log": "butter",
   "/lab": "butter",
   "/calculator": "butter",
   // Observatory, Pricing, Stats, Settings, Shopping → no accent (falls

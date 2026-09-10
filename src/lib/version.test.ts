@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareVersions, crossesVersion, decideBanner, parseVersion } from "./version";
+import { compareVersions, crossesVersion, decideBanner, parseVersion, LOG_RELEASE_VERSION } from "./version";
 
 describe("parseVersion", () => {
   it("parses three-segment semver", () => {
@@ -97,6 +97,8 @@ describe("crossesVersion", () => {
   it("is false when the target is not reached or was already seen", () => {
     expect(crossesVersion("0.5.0", "0.6.0", "0.6.1")).toBe(false); // to below target
     expect(crossesVersion("0.6.1", "0.8.0", "0.6.1")).toBe(false); // from already at target
+    expect(crossesVersion("0.8.0", "0.9.0", LOG_RELEASE_VERSION)).toBe(true); // the Log release
+    expect(crossesVersion("0.9.0", "0.9.1", LOG_RELEASE_VERSION)).toBe(false);
     expect(crossesVersion("0.6.2", "0.9.0", "0.6.1")).toBe(false); // from past target
   });
 

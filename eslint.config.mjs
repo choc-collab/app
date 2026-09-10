@@ -1,7 +1,15 @@
 import next from "eslint-config-next";
 
 const config = [
-  { ignores: [".next/**", "out/**", "node_modules/**", "test-results/**", "tmp/**", "next-env.d.ts"] },
+  {
+    ignores: [
+      ".next/**", "out/**", "node_modules/**", "test-results/**", "tmp/**", "next-env.d.ts",
+      // Design handoff bundles from Claude Design: static HTML prototypes plus
+      // their own runtime. Reference material for rebuilding screens in the
+      // app, never shipped or imported — so they aren't held to app lint rules.
+      "design_handoff_*/**",
+    ],
+  },
   ...next,
   {
     rules: {

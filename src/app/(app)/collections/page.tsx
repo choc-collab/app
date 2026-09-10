@@ -3,13 +3,25 @@
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { useCollections, saveCollection } from "@/lib/hooks";
-import { ChevronRight } from "lucide-react";
-import { ListToolbar, FilterPanel, FilterChipGroup } from "@/components/pantry";
-import Link from "next/link";
+import { useCollections, saveCollection, useCollectionProductCounts } from "@/lib/hooks";
+import { ListToolbar, FilterPanel, FilterChipGroup, PantryTableHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import type { Collection } from "@/types";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
+
+function formatUpdatedDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
+}
+
+const COLLECTIONS_GRID = "minmax(180px,1.4fr) 90px minmax(150px,1fr) 80px minmax(140px,1.2fr) 90px 20px";
+const COLLECTIONS_COLUMNS: PantryTableColumn[] = [
+  { key: "name", label: "Collection" },
+  { key: "status", label: "Status" },
+  { key: "dates", label: "Date range" },
+  { key: "products", label: "Products", align: "right" },
+  { key: "description", label: "Description" },
+  { key: "updated", label: "Updated", align: "right" },
+];
 
 type CollectionStatus = "active" | "upcoming" | "past" | "permanent";
 
@@ -50,6 +62,7 @@ function formatDate(iso: string): string {
 export default function CollectionsPage() {
   const router = useRouter();
   const collections = useCollections();
+  const productCounts = useCollectionProductCounts();
   const [f, setF] = usePersistedFilters("collections", {
     search: "",
     showFilters: false,
@@ -168,46 +181,42 @@ export default function CollectionsPage() {
               : "No collections match your search."}
           </p>
         ) : (
-          <ul className="space-y-2">
+          <div role="table" aria-label="Collections" className="rounded-lg border border-border bg-card overflow-hidden overflow-x-auto">
+            <PantryTableHeader columns={COLLECTIONS_COLUMNS} gridTemplateColumns={COLLECTIONS_GRID} />
             {filtered.map((c) => {
               const status = getStatus(c);
+              const productCount = c.id ? productCounts.get(c.id) ?? 0 : 0;
               return (
-                <li key={c.id} className="rounded-lg border border-border bg-card">
-                  <Link
-                    href={`/collections/${encodeURIComponent(c.id ?? "")}`}
-                    className="flex items-center gap-3 p-3 min-w-0"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-medium text-sm truncate">{c.name}</h3>
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${STATUS_CLASS[status]}`}>
-                          {STATUS_LABEL[status]}
-                        </span>
-                      </div>
-                      {c.description && (
-                        <p className="text-xs text-muted-foreground truncate mt-0.5">{c.description}</p>
-                      )}
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-xs text-muted-foreground">
-                          From {formatDate(c.startDate)}
-                        </span>
-                        {c.endDate && (
-                          <>
-                            <span className="text-muted-foreground/40 text-xs">→</span>
-                            <span className="text-xs text-muted-foreground">{formatDate(c.endDate)}</span>
-                          </>
-                        )}
-                        {!c.endDate && status !== "upcoming" && (
-                          <span className="text-xs text-muted-foreground/60">· ongoing</span>
-                        )}
-                      </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                  </Link>
-                </li>
+                <PantryTableRow
+                  key={c.id}
+                  href={`/collections/${encodeURIComponent(c.id ?? "")}`}
+                  gridTemplateColumns={COLLECTIONS_GRID}
+                >
+                  <h3 className="font-medium text-sm truncate">{c.name}</h3>
+                  <div>
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${STATUS_CLASS[status]}`}>
+                      {STATUS_LABEL[status]}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-xs text-muted-foreground truncate">From {formatDate(c.startDate)}</span>
+                    {c.endDate && (
+                      <>
+                        <span className="text-muted-foreground/40 text-xs">→</span>
+                        <span className="text-xs text-muted-foreground truncate">{formatDate(c.endDate)}</span>
+                      </>
+                    )}
+                    {!c.endDate && status !== "upcoming" && (
+                      <span className="text-xs text-muted-foreground/60">· ongoing</span>
+                    )}
+                  </div>
+                  <span className="text-xs tabular-nums text-muted-foreground text-right">{productCount}</span>
+                  <span className="text-xs text-muted-foreground truncate">{c.description || "—"}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground text-right">{c.updatedAt ? formatUpdatedDate(c.updatedAt) : "—"}</span>
+                </PantryTableRow>
               );
             })}
-          </ul>
+          </div>
         )}
       </div>
     </div>
