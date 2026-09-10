@@ -16,6 +16,7 @@ import {
 } from "@/lib/saleStock";
 import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib/shopColor";
 import { ancestorFillingIds, buildChildMap, buildParentMap, reachableIngredientIds, wouldCreateCycle } from "@/lib/fillingComponents";
+import { countFillingsPerIngredient } from "@/lib/ingredientUsage";
 import { normaliseFillSplit } from "@/lib/fillSplit";
 import { guardedWrite } from "@/lib/writeErrors";
 import { venueSuggestions, PICKUP_VENUE } from "@/lib/orders";
@@ -1933,6 +1934,17 @@ export function useIngredientCategoryUsageCounts(): Map<string, number> {
       counts.set(cat, (counts.get(cat) ?? 0) + 1);
     }
     return counts;
+  }) ?? new Map();
+}
+
+/** Reactive map of ingredient id → number of fillings using it. Absent = unused. */
+export function useIngredientFillingUsageCounts(): Map<string, number> {
+  return useLiveQuery(async () => {
+    const [fillingIngredients, fillings] = await Promise.all([
+      db.fillingIngredients.toArray(),
+      db.fillings.toArray(),
+    ]);
+    return countFillingsPerIngredient(fillingIngredients, fillings);
   }) ?? new Map();
 }
 

@@ -37,7 +37,7 @@ test.describe("Ingredients", () => {
     await page.goto("/ingredients");
     const table = page.getByRole("table", { name: "Ingredients" });
     await expect(table).toBeVisible();
-    for (const header of ["Ingredient", "Stock", "Manufacturer", "Composition", "Cost/g", "Updated"]) {
+    for (const header of ["Ingredient", "Stock", "Manufacturer", "Composition", "Fillings", "Cost/g", "Updated"]) {
       await expect(table.getByRole("columnheader", { name: header })).toBeVisible();
     }
     await expect(page.getByText("Cocoa Butter")).toBeVisible();
@@ -46,6 +46,43 @@ test.describe("Ingredients", () => {
 
     await page.getByText("Cocoa Butter").click();
     await expect(page).toHaveURL(/\/ingredients\/.+/);
+  });
+
+  test("Fillings column counts the fillings using an ingredient, and Unused filters to the rest", async ({ page }) => {
+    test.setTimeout(90000);
+
+    // Two ingredients: one that ends up in a filling, one that never does.
+    for (const name of ["Used Cream", "Orphan Powder"]) {
+      await page.goto("/ingredients");
+      await page.getByRole("button", { name: "Add ingredient" }).click();
+      await page.getByRole("textbox", { name: "Ingredient name" }).fill(name);
+      await page.getByRole("button", { name: "Create Ingredient" }).click();
+      await expect(page).toHaveURL(/\/ingredients\/.+/);
+    }
+
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: "Add filling" }).click();
+    await page.getByRole("textbox", { name: "Filling name" }).fill("Counting Ganache");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/fillings\/.+/);
+    await page.getByRole("button", { name: "Add ingredient" }).click();
+    await page.getByPlaceholder("Search ingredient…").fill("Used Cream");
+    await page.getByRole("button", { name: "Used Cream" }).click();
+    await page.locator("form").getByRole("spinbutton").fill("100");
+    await page.locator("form").getByRole("button", { name: "Add" }).click();
+
+    await page.goto("/ingredients");
+    const table = page.getByRole("table", { name: "Ingredients" });
+    const usedRow = table.getByRole("row").filter({ hasText: "Used Cream" });
+    const orphanRow = table.getByRole("row").filter({ hasText: "Orphan Powder" });
+    await expect(usedRow).toContainText("1");
+    await expect(orphanRow).toContainText("unused");
+
+    // The Unused filter isolates exactly the ingredients safe to clear out.
+    await page.getByRole("button", { name: /Filters/i }).click();
+    await page.getByRole("button", { name: "Unused", exact: true }).click();
+    await expect(table.getByRole("row").filter({ hasText: "Orphan Powder" })).toBeVisible();
+    await expect(table.getByRole("row").filter({ hasText: "Used Cream" })).toHaveCount(0);
   });
 
   test("detail page autosaves purchase pricing with no Save button", async ({ page }) => {

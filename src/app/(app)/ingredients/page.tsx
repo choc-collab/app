@@ -3,19 +3,20 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { useIngredients, saveIngredient, setIngredientLowStock, useIngredientCategories, useIngredientCategoryUsageCounts, saveIngredientCategory, useIngredientCategoryNames, useCurrencySymbol } from "@/lib/hooks";
+import { useIngredients, saveIngredient, setIngredientLowStock, useIngredientCategories, useIngredientCategoryUsageCounts, useIngredientFillingUsageCounts, saveIngredientCategory, useIngredientCategoryNames, useCurrencySymbol } from "@/lib/hooks";
 import { costPerGram, allergenLabel, type Ingredient } from "@/types";
 import { Plus, Search, SlidersHorizontal, X } from "lucide-react";
 import { ListToolbar, FilterPanel, ArchiveFilterChip, QuickAddForm, EmptyState, MultiSelectDropdown, LowStockFlagButton, StockBadge, GroupHeader, PantryTableHeader, PantryTableGroupHeader, PantryTableRow, type PantryTableColumn } from "@/components/pantry";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 
-const INGREDIENTS_GRID = "minmax(200px,1.6fr) 100px minmax(120px,1fr) 120px 90px 90px 20px";
+const INGREDIENTS_GRID = "minmax(200px,1.6fr) 100px minmax(120px,1fr) 120px 80px 90px 90px 20px";
 const INGREDIENTS_COLUMNS: PantryTableColumn[] = [
   { key: "name", label: "Ingredient" },
   { key: "stock", label: "Stock" },
   { key: "manufacturer", label: "Manufacturer" },
   { key: "composition", label: "Composition" },
+  { key: "fillings", label: "Fillings", align: "right" },
   { key: "cost", label: "Cost/g", align: "right" },
   { key: "updated", label: "Updated", align: "right" },
 ];
@@ -42,6 +43,7 @@ function formatDate(date: Date): string {
 type StockFilter = "all" | "in-stock" | "low-stock" | "ordered" | "out-of-stock";
 type CompositionFilter = "all" | "has" | "missing";
 type PricingFilter = "all" | "has" | "missing";
+type UsageFilter = "all" | "used" | "unused";
 
 function getStockStatus(ing: { lowStock?: boolean; lowStockOrdered?: boolean; outOfStock?: boolean }): "in-stock" | "low-stock" | "ordered" | "out-of-stock" {
   if (ing.outOfStock) return "out-of-stock";
@@ -116,6 +118,7 @@ function IngredientsTab() {
     filterManufacturers: [] as string[],
     filterComposition: "all" as CompositionFilter,
     filterPricing: "all" as PricingFilter,
+    filterUsage: "all" as UsageFilter,
     filterAllergens: [] as string[],
     filterExcludeAllergens: [] as string[],
     filterAllergenData: "all" as "all" | "none",
@@ -123,6 +126,7 @@ function IngredientsTab() {
     collapsedCategories: [] as string[],
   });
   const ingredients = useIngredients(f.showArchived);
+  const fillingUsageCounts = useIngredientFillingUsageCounts();
   const categoryNames = useIngredientCategoryNames();
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
@@ -158,6 +162,7 @@ function IngredientsTab() {
     (filterManufacturersSet.size > 0 ? 1 : 0) +
     (f.filterComposition !== "all" ? 1 : 0) +
     (f.filterPricing !== "all" ? 1 : 0) +
+    (f.filterUsage !== "all" ? 1 : 0) +
     (filterAllergensSet.size > 0 ? 1 : 0) +
     (filterExcludeAllergensSet.size > 0 ? 1 : 0) +
     (f.filterAllergenData !== "all" ? 1 : 0) +
@@ -174,12 +179,17 @@ function IngredientsTab() {
       if (f.filterComposition === "missing" && hasComposition(i)) return false;
       if (f.filterPricing === "has" && !hasPricing(i)) return false;
       if (f.filterPricing === "missing" && hasPricing(i)) return false;
+      if (f.filterUsage !== "all") {
+        const used = (fillingUsageCounts.get(i.id ?? "") ?? 0) > 0;
+        if (f.filterUsage === "used" && !used) return false;
+        if (f.filterUsage === "unused" && used) return false;
+      }
       if (filterAllergensSet.size > 0 && !i.allergens.some((a) => filterAllergensSet.has(a))) return false;
       if (filterExcludeAllergensSet.size > 0 && i.allergens.some((a) => filterExcludeAllergensSet.has(a))) return false;
       if (f.filterAllergenData === "none" && i.allergens.length > 0) return false;
       return true;
     });
-  }, [ingredients, f.search, f.filterStock, filterCategoriesSet, filterManufacturersSet, f.filterComposition, f.filterPricing, filterAllergensSet, filterExcludeAllergensSet, f.filterAllergenData]);
+  }, [ingredients, f.search, f.filterStock, filterCategoriesSet, filterManufacturersSet, f.filterComposition, f.filterPricing, f.filterUsage, fillingUsageCounts, filterAllergensSet, filterExcludeAllergensSet, f.filterAllergenData]);
 
   const grouped = useMemo(() => {
     // Single pass: bucket by category name.
@@ -233,6 +243,7 @@ function IngredientsTab() {
     setF("filterManufacturers", []);
     setF("filterComposition", "all");
     setF("filterPricing", "all");
+    setF("filterUsage", "all");
     setF("filterAllergens", []);
     setF("filterExcludeAllergens", []);
     setF("filterAllergenData", "all");
@@ -381,6 +392,22 @@ function IngredientsTab() {
             </div>
           </div>
 
+          {/* Used in fillings */}
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Used in fillings</p>
+            <div className="flex gap-1">
+              {(["all", "used", "unused"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setF("filterUsage", f.filterUsage === v ? "all" : v)}
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${f.filterUsage === v ? "bg-accent text-accent-foreground" : "border border-border"}`}
+                >
+                  {v === "all" ? "Any" : v === "used" ? "Used" : "Unused"}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Contains allergen */}
           {presentAllergenIds.length > 0 && (
             <div>
@@ -509,6 +536,7 @@ function IngredientsTab() {
                   {!isCollapsed && items.map((ing) => {
                     const stockStatus = getStockStatus(ing);
                     const cost = costPerGram(ing);
+                    const fillingCount = fillingUsageCounts.get(ing.id ?? "") ?? 0;
                     return (
                       <PantryTableRow
                         key={ing.id}
@@ -550,6 +578,13 @@ function IngredientsTab() {
                             <span className="text-[10px] text-muted-foreground/60">no composition</span>
                           )}
                         </div>
+                        <span className="text-xs tabular-nums text-right">
+                          {fillingCount > 0 ? (
+                            <span className="text-muted-foreground">{fillingCount}</span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground/60">unused</span>
+                          )}
+                        </span>
                         <span className="text-xs tabular-nums text-right">
                           {cost !== null ? (
                             <span className="text-muted-foreground">{currencySymbol}{cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}/g</span>
