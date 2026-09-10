@@ -55,8 +55,13 @@ test("sweep: ingredient detail renders every tab clean", async ({ page }) => {
   await page.getByLabel("Category").selectOption("Chocolate");
   for (const tab of ["Details", "Shell", "Composition", "Allergens", "Pricing", "Nutrition"]) {
     await page.getByRole("button", { name: new RegExp(`^${tab}$`) }).click();
-    await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
+    // "Derived" is a static sidebar card, unconditionally present regardless of
+    // which main-column tab is active — a stable canary that the page rendered.
+    await expect(page.getByRole("heading", { name: "Derived" })).toBeVisible();
   }
+  // Properties now lives in the main column, above Notes, on the Details tab only.
+  await page.getByRole("button", { name: /^Details$/ }).click();
+  await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
   expect(real(errors)).toEqual([]);
 });
 

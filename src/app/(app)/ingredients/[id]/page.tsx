@@ -182,7 +182,20 @@ export default function IngredientDetailPage() {
       <div className="px-4 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
         {/* ── Main column ── */}
         <div className="space-y-4 min-w-0">
-          {visibleTab === "details" && <NotesCard key={`notes-${ingredient.id}`} ingredientId={ingredientId} ingredient={ingredient} />}
+          {visibleTab === "details" && (
+            <>
+              <PropertiesCard
+                key={`props-${ingredient.id}`}
+                ingredientId={ingredientId}
+                ingredient={ingredient}
+                manufacturers={manufacturers}
+                brands={brands}
+                vendors={vendors}
+                sources={sources}
+              />
+              <NotesCard key={`notes-${ingredient.id}`} ingredientId={ingredientId} ingredient={ingredient} />
+            </>
+          )}
 
           {visibleTab === "shell" && (
             <ShellCard key={`shell-${ingredient.id}`} ingredientId={ingredientId} ingredient={ingredient} />
@@ -286,16 +299,6 @@ export default function IngredientDetailPage() {
             />
           </SidebarCard>
 
-          <PropertiesCard
-            key={`props-${ingredient.id}`}
-            ingredientId={ingredientId}
-            ingredient={ingredient}
-            manufacturers={manufacturers}
-            brands={brands}
-            vendors={vendors}
-            sources={sources}
-          />
-
           <DerivedCard ingredient={ingredient} market={market} sym={sym} costPerGram={costPerGram} />
 
           <SidebarCard title="Used in" meta={usage.length > 0 ? usage.length : undefined}>
@@ -339,8 +342,11 @@ function PropertiesCard({
   const categoryNames = useIngredientCategoryNames();
 
   return (
-    <SidebarCard title="Properties">
-      <div className="space-y-1">
+    <div className="rounded-lg border border-border bg-card">
+      <div className="px-4 py-3 border-b border-border">
+        <h2 className="text-[13px] font-semibold">Properties</h2>
+      </div>
+      <div className="p-4 space-y-1">
         <PropertyRow label="Category">
           <select
             value={ingredient.category ?? ""}
@@ -393,7 +399,7 @@ function PropertiesCard({
           onCommit={(v) => updateIngredientFields(ingredientId, { source: v })}
         />
       </div>
-    </SidebarCard>
+    </div>
   );
 }
 

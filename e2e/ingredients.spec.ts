@@ -76,7 +76,7 @@ test.describe("Ingredients", () => {
     await page.getByRole("button", { name: "Create Ingredient" }).click();
     await expect(page).toHaveURL(/\/ingredients\/.+/);
 
-    // Sidebar properties autosave on blur.
+    // Properties autosave on blur.
     await page.getByLabel("Manufacturer").fill("Valrhona");
     await page.getByLabel("Manufacturer").blur();
     await page.getByLabel("Vendor").fill("Keylink");
@@ -124,6 +124,9 @@ test.describe("Ingredients", () => {
 
     await page.getByRole("button", { name: /^Shell$/ }).click();
     await expect(page.getByText("Can be used as shell chocolate")).toBeVisible();
+
+    // Category now lives in Properties, on the Details tab.
+    await page.getByRole("button", { name: /^Details$/ }).click();
 
     // Clearing the category hides the tab again and falls back to Details.
     await page.getByLabel("Category").selectOption("");
