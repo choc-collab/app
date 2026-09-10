@@ -53,8 +53,7 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Production" })).toBeVisible();
   });
 
-  // Lab feature is currently disabled — skip until re-enabled
-  test.skip("navigates to Calculator (Lab)", async ({ page }) => {
+  test("navigates to Calculator (Lab)", async ({ page }) => {
     await page.goto("/calculator");
     await expect(page.getByRole("heading", { name: /Product Lab|Experiments/i })).toBeVisible();
   });

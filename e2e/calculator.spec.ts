@@ -1,7 +1,6 @@
 import { test, expect } from "./fixtures";
 
-// Lab feature is currently disabled for users — skip until re-enabled
-test.describe.skip("Product Lab", () => {
+test.describe("Product Lab", () => {
   test("shows empty state with CTAs on fresh database", async ({ page }) => {
     await page.goto("/lab");
     await expect(page.getByRole("heading", { name: "Product Lab" })).toBeVisible();
@@ -11,7 +10,7 @@ test.describe.skip("Product Lab", () => {
 
   test("/calculator redirects to /lab", async ({ page }) => {
     await page.goto("/calculator");
-    await expect(page).toHaveURL("/lab");
+    await expect(page).toHaveURL(/\/lab\/?$/);
     await expect(page.getByRole("heading", { name: "Product Lab" })).toBeVisible();
   });
 
