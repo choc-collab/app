@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTodaySignals, useCurrencySymbol } from "@/lib/hooks";
+import { useTodaySignals, useCurrencySymbol, useStockAuditStatus } from "@/lib/hooks";
 import { StatTile } from "@/components/today/stat-tile";
 import { UniversalSearch } from "@/components/today/universal-search";
-import { AuditReminderFooter } from "@/components/today/audit-reminder-footer";
+import { StockCountReminder } from "@/components/today/stock-count-reminder";
 import { ToMakeList } from "@/components/today/to-make-list";
 import { SellQuickGrid } from "@/components/today/sell-quick-grid";
 import { InProgressTile } from "@/components/today/in-progress-tile";
@@ -27,6 +27,7 @@ function useLocalDateString() {
 export default function TodayPage() {
   const signals = useTodaySignals();
   const currency = useCurrencySymbol();
+  const stockAudit = useStockAuditStatus();
   const dateStr = useLocalDateString();
 
   const lowStockPreview = signals.lowStockProducts[0];
@@ -37,7 +38,9 @@ export default function TodayPage() {
   const totalNeedsAttention =
     signals.pendingShoppingCount +
     signals.inProgressBatches +
-    signals.lowStockProducts.length;
+    signals.lowStockProducts.length +
+    // An overdue stocktake is one thing to do, however many products it covers.
+    (stockAudit?.due ? 1 : 0);
 
   const attentionPart = totalNeedsAttention > 0
     ? `${totalNeedsAttention} thing${totalNeedsAttention !== 1 ? "s" : ""} need${totalNeedsAttention === 1 ? "s" : ""} attention`
@@ -78,16 +81,16 @@ export default function TodayPage() {
       </div>
 
       <div className="px-4 mt-3">
+        <StockCountReminder audit={stockAudit} />
+      </div>
+
+      <div className="px-4 mt-3">
         <LogTile />
       </div>
 
       <div className="px-4 mt-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
         <ToMakeList />
         <SellQuickGrid />
-      </div>
-
-      <div className="px-4 mt-6">
-        <AuditReminderFooter />
       </div>
     </div>
   );

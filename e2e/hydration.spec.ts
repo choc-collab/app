@@ -31,6 +31,7 @@ const ROUTES = [
   "/production",
   "/production/new",
   "/stock",
+  "/stock/count",
   "/shopping",
   "/collections",
   "/settings",

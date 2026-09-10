@@ -76,3 +76,27 @@ export function reconcileStockCount(
   }
   return result;
 }
+
+/**
+ * FIFO sort key used when reconciling a manual count across one product's
+ * batches: the batch's sell-by (completion date + shelf life), falling back
+ * to the completion date itself when no shelf life is recorded.
+ *
+ * Freeze/defrost adjustments are deliberately ignored — a manual count only
+ * ever reflects what is on the shelf, and fully-frozen batches are filtered
+ * out before they reach the reconciler.
+ *
+ * Both the write path (`updateProductStockCount` / `applyStocktake`) and the
+ * dry-runs that warn about batches going to zero must order batches the same
+ * way, or the warning would name a different batch than the one that is
+ * actually emptied — hence one shared helper.
+ */
+export function stockCountFifoOrder(
+  completedAtMs: number,
+  shelfLifeWeeks: string | number | undefined,
+): number {
+  if (!completedAtMs || !Number.isFinite(completedAtMs)) return 0;
+  const weeks = typeof shelfLifeWeeks === "string" ? parseFloat(shelfLifeWeeks) : shelfLifeWeeks;
+  if (weeks == null || !Number.isFinite(weeks) || weeks <= 0) return completedAtMs;
+  return completedAtMs + Math.round((weeks - 1) * 7) * 24 * 60 * 60 * 1000;
+}

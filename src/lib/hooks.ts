@@ -18,6 +18,9 @@ import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib
 import { ancestorFillingIds, buildChildMap, buildParentMap, reachableIngredientIds, wouldCreateCycle } from "@/lib/fillingComponents";
 import { countFillingsPerIngredient } from "@/lib/ingredientUsage";
 import { normaliseFillSplit } from "@/lib/fillSplit";
+import { reconcileStockCount, stockCountFifoOrder } from "@/lib/stockCount";
+import { computeStockAudit, type StockAuditStatus } from "@/lib/stockAudit";
+import type { StocktakeBatch } from "@/lib/stocktake";
 import { guardedWrite } from "@/lib/writeErrors";
 import { venueSuggestions, PICKUP_VENUE } from "@/lib/orders";
 import type { LogSources } from "@/lib/dailyLog";
@@ -1446,12 +1449,19 @@ export function useProductStockTotals(): Map<string, { currentStock: number; las
   }) ?? new Map<string, { currentStock: number; lastCountedAt?: number }>();
 }
 
-/** Reconcile a manual stock count: distribute the new total across in-stock batches
- *  FIFO (oldest first when deducting, newest when adding), stamp `stockCountedAt`
- *  on the product, and persist. */
-export async function updateProductStockCount(productId: string, newTotal: number): Promise<void> {
-  const { reconcileStockCount } = await import("./stockCount");
-  await db.transaction("rw", [db.planProducts, db.productionPlans, db.products, db.moulds], async () => {
+/** Tables every manual-count write touches. Declared once so the single-product
+ *  flow and the stocktake open identical transactions. */
+const STOCK_COUNT_TABLES = () => [db.planProducts, db.productionPlans, db.products, db.moulds];
+
+/** Reconcile one product's manual count inside an already-open `rw` transaction.
+ *
+ *  `newTotal === null` means "counted, unchanged" — the product is stamped as
+ *  counted but no batch is rewritten. That is what lets a stocktake where
+ *  nothing moved still clear the dashboard reminder.
+ *
+ *  Callers must have opened a transaction covering `STOCK_COUNT_TABLES()`. */
+async function reconcileProductCountInTx(productId: string, newTotal: number | null): Promise<void> {
+  if (newTotal !== null) {
     const donePlans = await db.productionPlans.where("status").equals("done").toArray();
     const donePlanIds = new Set(donePlans.map((p) => p.id!));
     // Exclude batches that are entirely frozen — they carry no available stock
@@ -1468,7 +1478,6 @@ export async function updateProductStockCount(productId: string, newTotal: numbe
 
     // Build FIFO order using sellBefore (plan.completedAt + shelf life) fallback completedAt
     const product = await db.products.get(productId);
-    const shelfWeeks = product?.shelfLifeWeeks ? parseFloat(product.shelfLifeWeeks) : NaN;
     const planById = new Map(donePlans.map((p) => [p.id!, p] as const));
 
     // Planned-yield fallback: when a batch has no currentStock / actualYield yet, use
@@ -1481,15 +1490,12 @@ export async function updateProductStockCount(productId: string, newTotal: numbe
     const inputs = batches.map((pb) => {
       const plan = planById.get(pb.planId);
       const completedAt = plan?.completedAt ? new Date(plan.completedAt).getTime() : 0;
-      const sellBefore = completedAt && !isNaN(shelfWeeks) && shelfWeeks > 0
-        ? completedAt + Math.round((shelfWeeks - 1) * 7) * 24 * 60 * 60 * 1000
-        : completedAt;
       const mould = mouldById.get(pb.mouldId);
       const planned = mould ? mould.numberOfCavities * pb.quantity : 0;
       return {
         id: pb.id!,
         currentStock: pb.currentStock ?? pb.actualYield ?? planned,
-        fifoOrder: sellBefore,
+        fifoOrder: stockCountFifoOrder(completedAt, product?.shelfLifeWeeks),
       };
     });
 
@@ -1503,8 +1509,167 @@ export async function updateProductStockCount(productId: string, newTotal: numbe
       else patch.stockStatus = undefined;
       await db.planProducts.update(d.id, patch);
     }
-    await db.products.update(productId, { stockCountedAt: Date.now(), updatedAt: new Date() });
+  }
+
+  await db.products.update(productId, { stockCountedAt: Date.now(), updatedAt: new Date() });
+}
+
+/** Reconcile a manual stock count: distribute the new total across in-stock batches
+ *  FIFO (oldest first when deducting, newest when adding), stamp `stockCountedAt`
+ *  on the product, and persist. */
+export async function updateProductStockCount(productId: string, newTotal: number): Promise<void> {
+  await db.transaction("rw", STOCK_COUNT_TABLES(), async () => {
+    await reconcileProductCountInTx(productId, newTotal);
   });
+}
+
+/** Commit a whole stocktake in one transaction — either every product lands or
+ *  none does, so an interrupted save can't leave half the workshop counted.
+ *
+ *  Each entry's `newTotal` is either a number to reconcile or `null` for a row
+ *  the user confirmed as unchanged (stamp only). Products absent from `entries`
+ *  are untouched, including their `stockCountedAt`. */
+export async function applyStocktake(
+  entries: readonly { productId: string; newTotal: number | null }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  await db.transaction("rw", STOCK_COUNT_TABLES(), async () => {
+    for (const entry of entries) {
+      await reconcileProductCountInTx(entry.productId, entry.newTotal);
+    }
+  });
+}
+
+/** One product's row on the stocktake screen: the recorded total plus the
+ *  batch breakdown the reconciler will act on. */
+export interface StocktakeProductRow {
+  productId: string;
+  productName: string;
+  /** Pieces currently recorded across countable (shelf) batches. */
+  currentTotal: number;
+  /** Pieces in the freezer — shown as context, never part of the count. */
+  frozenTotal: number;
+  lowStockThreshold?: number;
+  stockCountedAt?: number;
+  /** Earliest completion date (ms) among countable batches; null when unknown. */
+  oldestMadeAt: number | null;
+  batches: StocktakeBatch[];
+}
+
+export interface StocktakeData {
+  rows: StocktakeProductRow[];
+  /** Products whose every batch is in the freezer. They can't be counted from
+   *  the shelf, so they're listed separately rather than silently dropped. */
+  frozenOnly: { productId: string; productName: string; frozenTotal: number }[];
+}
+
+/** Live per-product rows for the stocktake screen.
+ *
+ *  The batch set here must match `reconcileProductCountInTx` exactly — the
+ *  screen dry-runs the same reconciliation to warn about batches that will be
+ *  emptied, and a mismatch would name the wrong batch. Returns `undefined`
+ *  while the query is in flight so the page can tell "loading" from "empty". */
+export function useStocktakeRows(): StocktakeData | undefined {
+  return useLiveQuery(async () => {
+    const donePlans = await db.productionPlans.where("status").equals("done").toArray();
+    const empty: StocktakeData = { rows: [], frozenOnly: [] };
+    if (donePlans.length === 0) return empty;
+    const planById = new Map(donePlans.map((p) => [p.id!, p] as const));
+
+    const allBatches = await db.planProducts.where("planId").anyOf(donePlans.map((p) => p.id!)).toArray();
+    const live = allBatches.filter((pb) => pb.stockStatus !== "gone");
+    if (live.length === 0) return empty;
+
+    const [products, moulds] = await Promise.all([
+      db.products.where("id").anyOf(Array.from(new Set(live.map((pb) => pb.productId)))).toArray(),
+      db.moulds.where("id").anyOf(Array.from(new Set(live.map((pb) => pb.mouldId).filter(Boolean)))).toArray(),
+    ]);
+    const productById = new Map(products.map((p) => [p.id!, p] as const));
+    const mouldById = new Map(moulds.map((m) => [m.id!, m] as const));
+
+    const byProduct = new Map<string, StocktakeProductRow>();
+    const frozenByProduct = new Map<string, number>();
+
+    for (const pb of live) {
+      const product = productById.get(pb.productId);
+      if (!product || product.archived) continue;
+
+      const frozen = pb.frozenQty ?? 0;
+      if (frozen > 0) frozenByProduct.set(pb.productId, (frozenByProduct.get(pb.productId) ?? 0) + frozen);
+
+      // Same exclusion the write path applies: a batch with nothing on the
+      // shelf but pieces in the freezer isn't part of a manual count.
+      const available = pb.currentStock ?? pb.actualYield ?? 0;
+      if (available <= 0 && frozen > 0) continue;
+
+      const plan = planById.get(pb.planId)!;
+      const completedAt = plan.completedAt ? new Date(plan.completedAt).getTime() : 0;
+      const mould = mouldById.get(pb.mouldId);
+      const planned = mould ? mould.numberOfCavities * pb.quantity : 0;
+      const pieces = pb.currentStock ?? pb.actualYield ?? planned;
+
+      let row = byProduct.get(pb.productId);
+      if (!row) {
+        row = {
+          productId: pb.productId,
+          productName: product.name,
+          currentTotal: 0,
+          frozenTotal: 0,
+          lowStockThreshold: product.lowStockThreshold,
+          stockCountedAt: product.stockCountedAt,
+          oldestMadeAt: null,
+          batches: [],
+        };
+        byProduct.set(pb.productId, row);
+      }
+      row.currentTotal += pieces;
+      row.batches.push({
+        id: pb.id!,
+        currentStock: pieces,
+        fifoOrder: stockCountFifoOrder(completedAt, product.shelfLifeWeeks),
+        batchNumber: plan.batchNumber || plan.name,
+      });
+      if (completedAt && (row.oldestMadeAt === null || completedAt < row.oldestMadeAt)) {
+        row.oldestMadeAt = completedAt;
+      }
+    }
+
+    const frozenOnly: StocktakeData["frozenOnly"] = [];
+    for (const [productId, frozenTotal] of frozenByProduct) {
+      const row = byProduct.get(productId);
+      if (row) {
+        row.frozenTotal = frozenTotal;
+      } else {
+        const product = productById.get(productId);
+        if (product && !product.archived) frozenOnly.push({ productId, productName: product.name, frozenTotal });
+      }
+    }
+
+    const byName = (a: { productName: string }, b: { productName: string }) =>
+      a.productName.localeCompare(b.productName, undefined, { sensitivity: "base" });
+
+    return { rows: Array.from(byProduct.values()).sort(byName), frozenOnly: frozenOnly.sort(byName) };
+  }, []);
+}
+
+/** Live "is a stocktake overdue?" signal for the dashboard reminder. Derived
+ *  from the same countable-batch set as the stocktake screen, so the reminder
+ *  and the screen it links to never disagree about what's in stock. */
+export function useStockAuditStatus(): StockAuditStatus | undefined {
+  const data = useStocktakeRows();
+  return useMemo(() => {
+    if (!data) return undefined;
+    const withStock = data.rows.filter((r) => r.currentTotal > 0);
+    const madeDates = withStock
+      .map((r) => r.oldestMadeAt)
+      .filter((t): t is number => typeof t === "number" && t > 0);
+    return computeStockAudit({
+      // eslint-disable-next-line react-hooks/purity -- "N days ago" is a render-time snapshot
+      now: Date.now(),
+      products: withStock.map((r) => ({ productId: r.productId, stockCountedAt: r.stockCountedAt })),
+      oldestStockAt: madeDates.length > 0 ? Math.min(...madeDates) : undefined,
+    });
+  }, [data]);
 }
 
 export function useAllPlanProducts() {

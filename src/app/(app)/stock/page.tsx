@@ -9,6 +9,7 @@ import {
   freezeFillingStock, defrostFillingStock,
   useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
 } from "@/lib/hooks";
+import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { Search, SlidersHorizontal, X, Plus, ClipboardList, Snowflake, StickyNote, ArrowUpDown, Printer } from "lucide-react";
 import { labelTemplateKind } from "@/types";
@@ -110,8 +111,10 @@ export default function StockPage() {
     <div>
       <PageHeader title="Stock" description="Track what's still in stock" />
 
-      {/* Tab strip */}
-      <div className="px-4 pb-3 flex gap-1">
+      {/* Tab strip. The Stocktake shortcut lives here rather than in the
+          header because it only applies to the products side — filling stock
+          is tracked in grams per leftover row, not as a per-product count. */}
+      <div className="px-4 pb-3 flex items-center gap-1">
         {(["products", "fillings"] as const).map((tab) => (
           <button
             key={tab}
@@ -125,6 +128,11 @@ export default function StockPage() {
             {tab === "products" ? "Products" : "Fillings"}
           </button>
         ))}
+        {activeTab === "products" && (
+          <Link href="/stock/count" className="btn-secondary !px-3 !py-1.5 text-xs ml-auto">
+            <ClipboardList aria-hidden className="w-3.5 h-3.5" /> Stocktake
+          </Link>
+        )}
       </div>
 
       {activeTab === "products" ? <ProductStockTab /> : <FillingStockTab />}
