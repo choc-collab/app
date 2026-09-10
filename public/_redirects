@@ -98,6 +98,10 @@
 /moulds/:id/*             /moulds/_spa/:splat             200
 /moulds/*/                /moulds/_spa/                   200
 /moulds/:id               /moulds/_spa/                   200
+# Log day pages — the dynamic segment is an ISO date (/log/2026-09-09)
+/log/:date/*              /log/_spa/:splat                200
+/log/*/                   /log/_spa/                      200
+/log/:date                /log/_spa/                      200
 /orders/:id/*             /orders/_spa/:splat             200
 /orders/*/                /orders/_spa/                   200
 /orders/:id               /orders/_spa/                   200

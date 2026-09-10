@@ -5,12 +5,12 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   useCustomer, saveCustomer, deleteCustomer, archiveCustomer, unarchiveCustomer,
-  useOrdersByCustomer,
+  useOrdersByCustomer, useAllOrderLineItems, useAllOrderProductionLinks, useProductionPlans,
 } from "@/lib/hooks";
 import { useSpaId } from "@/lib/use-spa-id";
 import { useNavigationGuard } from "@/lib/useNavigationGuard";
-import { groupOrdersForList, toISODate } from "@/lib/orders";
-import { OrderCard } from "@/components/orders/order-card";
+import { groupOrdersForList, toISODate, orderProgressByOrder } from "@/lib/orders";
+import { OrdersTable, type OrdersTableGroup } from "@/components/orders/orders-table";
 import { ArrowLeft, Pencil, Trash2, Archive, ArchiveRestore, Mail, Phone, AtSign, MapPin } from "lucide-react";
 
 export default function CustomerDetailPage() {
@@ -87,6 +87,24 @@ function CustomerDetailPageInner() {
   const { upcoming, past } = useMemo(
     () => groupOrdersForList(customerOrders, todayISO),
     [customerOrders, todayISO],
+  );
+  const orderGroups = useMemo<OrdersTableGroup[]>(() => [
+    ...(upcoming.length > 0 ? [{ key: "upcoming", label: "Upcoming", orders: upcoming }] : []),
+    ...(past.length > 0 ? [{ key: "past", label: "Past & closed", orders: past, dimmed: true }] : []),
+  ], [upcoming, past]);
+
+  // Pieces needed / made per order — the same two columns as the Orders list.
+  const allLineItems = useAllOrderLineItems();
+  const allLinks = useAllOrderProductionLinks();
+  const plans = useProductionPlans();
+  const planStatusById = useMemo(() => {
+    const m = new Map<string, "draft" | "active" | "done">();
+    for (const p of plans) if (p.id) m.set(p.id, p.status);
+    return m;
+  }, [plans]);
+  const progressByOrder = useMemo(
+    () => orderProgressByOrder(customerOrders, allLineItems, allLinks, planStatusById),
+    [customerOrders, allLineItems, allLinks, planStatusById],
   );
 
   if (!customerId || !customer) {
@@ -283,25 +301,12 @@ function CustomerDetailPageInner() {
               {orderCount === 0 ? (
                 <p className="text-xs text-muted-foreground">No orders yet for this customer.</p>
               ) : (
-                <div className="space-y-3">
-                  {upcoming.length > 0 && (
-                    <div className="space-y-2">
-                      {upcoming.map((o) => (
-                        <OrderCard key={o.id} order={o} todayISO={todayISO} />
-                      ))}
-                    </div>
-                  )}
-                  {past.length > 0 && (
-                    <div className="space-y-2 opacity-70">
-                      {upcoming.length > 0 && (
-                        <div className="mono-label text-muted-foreground pt-1">Past</div>
-                      )}
-                      {past.map((o) => (
-                        <OrderCard key={o.id} order={o} todayISO={todayISO} />
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <OrdersTable
+                  groups={orderGroups}
+                  todayISO={todayISO}
+                  progressByOrder={progressByOrder}
+                  ariaLabel={`Orders for ${customer.name}`}
+                />
               )}
             </div>
 

@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, isCloudConfigured } from "@/lib/db";
 import { sanitizeBrand } from "@/lib/brand-sanitize";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -17,6 +18,8 @@ import { resolveShopColor, type ShopProductInfo, DEFAULT_SHOP_KIND } from "@/lib
 import { ancestorFillingIds, buildChildMap, buildParentMap, reachableIngredientIds, wouldCreateCycle } from "@/lib/fillingComponents";
 import { normaliseFillSplit } from "@/lib/fillSplit";
 import { guardedWrite } from "@/lib/writeErrors";
+import { venueSuggestions, PICKUP_VENUE } from "@/lib/orders";
+import type { LogSources } from "@/lib/dailyLog";
 
 // --- Ingredients ---
 
@@ -3173,6 +3176,25 @@ export async function saveOrder(obj: Omit<Order, "id" | "createdAt" | "updatedAt
   return db.orders.add({ ...obj, createdAt: now, updatedAt: now } as Order) as Promise<string>;
 }
 
+/** Distinct venues already used on orders (Pick-up first) — datalist
+ *  suggestions for the venue field. Derived live, nothing stored. */
+export function useOrderVenues(): string[] {
+  return useLiveQuery(() => db.orders.toArray().then(venueSuggestions)) ?? [PICKUP_VENUE];
+}
+
+/** Partial update for the autosaving order detail page — one field at a time,
+ *  so two fields committing from stale snapshots can't clobber each other.
+ *  `description` names the field in the failure toast ("Venue wasn't saved."). */
+export async function updateOrderFields(
+  id: string,
+  changes: Partial<Omit<Order, "id" | "createdAt">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.orders.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
 export async function deleteOrder(id: string): Promise<void> {
   await db.transaction("rw", [db.orders, db.orderProductionLinks, db.orderLineItems], async () => {
     await db.orderProductionLinks.where("orderId").equals(id).delete();
@@ -3200,6 +3222,24 @@ export async function saveOrderLineItem(obj: Omit<OrderLineItem, "id"> & { id?: 
     return obj.id;
   }
   return db.orderLineItems.add(obj as OrderLineItem) as Promise<string>;
+}
+
+/** Per-row partial update for the line-items table (quantity, product, note
+ *  each commit on their own). Reports failures through the write-error toast. */
+export async function updateOrderLineItemFields(
+  id: string,
+  changes: Partial<Omit<OrderLineItem, "id" | "orderId">>,
+  description = "this change",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.orderLineItems.update(id, changes);
+  });
+}
+
+/** Every line item across all orders — for the list page's pieces/progress
+ *  columns, bucketed per order by `orderProgressByOrder`. */
+export function useAllOrderLineItems() {
+  return useLiveQuery(() => db.orderLineItems.toArray()) ?? [];
 }
 
 export async function deleteOrderLineItem(id: string): Promise<void> {
@@ -3269,6 +3309,12 @@ export function useOrderProductionLinks(orderId: string | undefined) {
       : Promise.resolve([] as OrderProductionLink[]),
     [orderId]
   ) ?? [];
+}
+
+/** Every order↔batch link across all orders — for the list page's progress
+ *  column (allocations from done batches = made). */
+export function useAllOrderProductionLinks() {
+  return useLiveQuery(() => db.orderProductionLinks.toArray()) ?? [];
 }
 
 /** Associate a batch with an order via one "bare" link row. No-op when any
@@ -4246,4 +4292,119 @@ export async function saveLabelTemplate(obj: Omit<LabelTemplate, "id"> & { id?: 
 
 export async function deleteLabelTemplate(id: string): Promise<void> {
   await db.labelTemplates.delete(id);
+}
+
+// --- Log (daily journal) ---
+//
+// Notes and day-level facts are stored; the day's activity summary is derived
+// live by `computeDigestIndex()` (lib/dailyLog) from the tables `useLogSources`
+// reads. Nothing here writes a digest.
+
+export function useLogEntries(): LogEntry[] {
+  return useLiveQuery(() => db.logEntries.orderBy("date").toArray()) ?? [];
+}
+
+/** Notes for one day, oldest first. */
+export function useLogEntriesForDay(date: string | undefined): LogEntry[] {
+  return useLiveQuery(
+    () => date
+      ? db.logEntries.where("date").equals(date).toArray().then((rows) =>
+          rows.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()))
+      : Promise.resolve([] as LogEntry[]),
+    [date],
+  ) ?? [];
+}
+
+export async function addLogEntry(date: string, body: string): Promise<string> {
+  const now = new Date();
+  return db.logEntries.add({ date, body: body.trim(), createdAt: now, updatedAt: now } as LogEntry) as Promise<string>;
+}
+
+/** Autosave path for an existing note (debounced textarea). Reports failures
+ *  through the write-error toast like the other per-field writes. */
+export async function updateLogEntryFields(
+  id: string,
+  changes: Partial<Omit<LogEntry, "id" | "createdAt">>,
+  description = "Note",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    await db.logEntries.update(id, { ...changes, updatedAt: new Date() });
+  });
+}
+
+export async function deleteLogEntry(id: string): Promise<void> {
+  await db.logEntries.delete(id);
+}
+
+export function useLogDays(): LogDay[] {
+  return useLiveQuery(() => db.logDays.toArray()) ?? [];
+}
+
+export function useLogDay(date: string | undefined): LogDay | undefined {
+  return useLiveQuery(
+    (): Promise<LogDay | undefined> => date
+      ? db.logDays.where("date").equals(date).toArray().then((rows): LogDay | undefined =>
+          rows.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0])
+      : Promise.resolve(undefined),
+    [date],
+  );
+}
+
+/** Upsert the workshop conditions for a day. `undefined` in the patch clears
+ *  that field (so emptying the input removes the value). */
+export async function saveLogDayConditions(
+  date: string,
+  patch: Pick<LogDay, "ambientTempC" | "humidityPct">,
+  description = "Workshop conditions",
+): Promise<void> {
+  await guardedWrite(description, async () => {
+    const now = new Date();
+    const existing = (await db.logDays.where("date").equals(date).toArray())
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+    if (existing?.id) {
+      await db.logDays.update(existing.id, { ...patch, updatedAt: now });
+    } else {
+      await db.logDays.add({ date, ...patch, updatedAt: now } as LogDay);
+    }
+  });
+}
+
+/** Every table the daily digest reads, in one live subscription. Returns
+ *  `undefined` until the first read resolves so pages can show a skeleton
+ *  instead of a flash of "nothing happened". Product photos are stripped —
+ *  the digest only needs names and dates. */
+export function useLogSources(): LogSources | undefined {
+  const currencySymbol = useCurrencySymbol();
+  const data = useLiveQuery(async () => {
+    const [
+      plans, planProducts, planFillings, stepStatuses, moulds, products, fillings, fillingStock,
+      sales, giveaways, orders, customers, experiments, ingredients, priceHistory,
+      packaging, packagingOrders, shoppingItems,
+    ] = await Promise.all([
+      db.productionPlans.toArray(),
+      db.planProducts.toArray(),
+      db.planFillings.toArray(),
+      db.planStepStatus.toArray(),
+      db.moulds.toArray(),
+      db.products.toArray().then((all) => all.map(({ photo: _photo, ...rest }) => rest)),
+      db.fillings.toArray(),
+      db.fillingStock.toArray(),
+      db.sales.toArray(),
+      db.giveaways.toArray(),
+      db.orders.toArray(),
+      db.customers.toArray(),
+      db.experiments.toArray(),
+      db.ingredients.toArray(),
+      db.ingredientPriceHistory.toArray(),
+      db.packaging.toArray(),
+      db.packagingOrders.toArray(),
+      db.shoppingItems.toArray(),
+    ]);
+    return {
+      plans, planProducts, planFillings, stepStatuses, moulds, products, fillings, fillingStock,
+      sales, giveaways, orders, customers, experiments, ingredients, priceHistory,
+      packaging, packagingOrders, shoppingItems,
+    } satisfies Omit<LogSources, "currencySymbol">;
+  }, []);
+  return useMemo(() => (data ? { ...data, currencySymbol } : undefined), [data, currencySymbol]);
 }

@@ -15,16 +15,15 @@ function isoFromToday(days: number): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** Create an order via quick-add, land on detail, save. */
+/** Create an order via quick-add and land on its (autosaving) detail page. */
 async function createOrder(page: Page, title: string) {
   await page.goto("/orders?tab=orders");
   await page.getByRole("button", { name: "Add order" }).click();
   await page.getByLabel("Order title").fill(title);
   await page.getByLabel("Event date").fill(isoFromToday(30));
   await page.getByRole("button", { name: "Create Order" }).click();
-  await expect(page).toHaveURL(/\/orders\/[^/]+\/?\?new=1/);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Edit order" })).toBeVisible();
+  await expect(page).toHaveURL(/\/orders\/[^/?]+\/?$/);
+  await expect(page.getByText(title, { exact: true })).toBeVisible();
 }
 
 // Data-setup helpers — mirror production-leftover.spec.ts by convention.
@@ -94,7 +93,7 @@ async function createBareProduct(page: Page, productName: string) {
 }
 
 test.describe("Order line items", () => {
-  test("add, inline-edit quantity, and two-step remove a typed line item", async ({ page }) => {
+  test("add, inline-edit quantity (into the thousands), and two-step remove a typed line item", async ({ page }) => {
     test.setTimeout(90_000);
     await createBareProduct(page, "Line Product");
     await createOrder(page, "Line item order");
@@ -102,33 +101,46 @@ test.describe("Order line items", () => {
     // Add: 40 × Line Product
     await page.getByLabel("Line item quantity").fill("40");
     await page.getByLabel("Line item product").selectOption({ label: "Line Product" });
-    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: "Add line item" }).click();
     await expect(page.getByLabel("Quantity for Line Product")).toHaveValue("40");
-    // Typed line items show fulfillment from the start — zero until batches allocate
-    await expect(page.getByText("0/40 allocated")).toBeVisible();
+    // Typed line items show allocation from the start — zero until batches allocate
+    await expect(page.getByText("0/40", { exact: true })).toBeVisible();
 
-    // Inline quantity edit, clamps/saves on blur
-    await page.getByLabel("Quantity for Line Product").fill("55");
+    // Inline quantity edit saves on blur — and a four-digit count fits the cell
+    await page.getByLabel("Quantity for Line Product").fill("2500");
     await page.getByLabel("Quantity for Line Product").blur();
-    await expect(page.getByLabel("Quantity for Line Product")).toHaveValue("55");
+    await expect(page.getByLabel("Quantity for Line Product")).toHaveValue("2500");
+    await expect(page.getByText("2,500 pieces · 1 line")).toBeVisible();
+    await expect(page.getByText("0/2,500", { exact: true })).toBeVisible();
+    const qtyCell = page.getByLabel("Quantity for Line Product");
+    const clipped = await qtyCell.evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(clipped).toBe(false);
 
     // Two-step remove: cancel keeps, confirm deletes
     await page.getByRole("button", { name: "Remove line item Line Product" }).click();
-    await expect(page.getByText("Remove?")).toBeVisible();
+    await expect(page.getByText(/Remove 2,500 × Line Product/)).toBeVisible();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.getByLabel("Quantity for Line Product")).toBeVisible();
     await page.getByRole("button", { name: "Remove line item Line Product" }).click();
-    await page.getByRole("button", { name: "Yes", exact: true }).click();
+    await page.getByRole("button", { name: "Yes, remove" }).click();
     await expect(page.getByText("Nothing itemised yet", { exact: false })).toBeVisible();
   });
 
-  test("untyped line item shows its note and no fulfillment chip", async ({ page }) => {
+  test("an untyped line firms up into a product in place", async ({ page }) => {
+    test.setTimeout(90_000);
+    await createBareProduct(page, "Line Product");
     await createOrder(page, "Vague order");
     await page.getByLabel("Line item quantity").fill("40");
     await page.getByLabel("Line item note").fill("mix TBD, nut-free option");
-    await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.getByText("mix TBD, nut-free option")).toBeVisible();
-    await expect(page.getByText(/allocated/)).not.toBeVisible();
+    await page.getByRole("button", { name: "Add line item" }).click();
+    // Untyped: the note is the row's name, nothing to allocate against yet
+    await expect(page.getByLabel("Note for mix TBD, nut-free option")).toHaveValue("mix TBD, nut-free option");
+    await expect(page.getByText("0/40", { exact: true })).toHaveCount(0);
+    // Pick a product on the existing row — the line keeps its quantity and note
+    await page.getByLabel("Product for mix TBD, nut-free option").selectOption({ label: "Line Product" });
+    await expect(page.getByLabel("Quantity for Line Product")).toHaveValue("40");
+    await expect(page.getByLabel("Note for Line Product")).toHaveValue("mix TBD, nut-free option");
+    await expect(page.getByText("0/40", { exact: true })).toBeVisible();
   });
 });
 
@@ -145,7 +157,8 @@ test.describe("Per-product batch allocations", () => {
     // Line item: 10 × Alloc Product
     await page.getByLabel("Line item quantity").fill("10");
     await page.getByLabel("Line item product").selectOption({ label: "Alloc Product" });
-    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: "Add line item" }).click();
+    await expect(page.getByText("0 of 10 made")).toBeVisible();
 
     // Link the batch — bare association
     await page.getByLabel("Link a batch").selectOption({ index: 1 });
@@ -158,10 +171,13 @@ test.describe("Per-product batch allocations", () => {
     await page.locator("form").filter({ has: page.getByLabel(/Allocation quantity for/) })
       .getByRole("button", { name: "Add", exact: true }).click();
 
-    // Allocation row with the batch denominator, fulfillment chip complete
+    // Allocation row with the batch denominator, allocated column complete
     await expect(page.getByText("of ~15")).toBeVisible();
-    await expect(page.getByText("10/10 allocated")).toBeVisible();
+    await expect(page.getByText("10/10", { exact: true })).toBeVisible();
     await expect(page.getByText("over batch yield")).not.toBeVisible();
+    // The batch hasn't been made yet, so the sidebar counts it as in production
+    await expect(page.getByText("+10 in production")).toBeVisible();
+    await expect(page.getByText("0 of 10 made")).toBeVisible();
 
     // Re-allocating the same product updates the quantity (upsert) — over-allocate
     await page.getByLabel(/Allocate a product from/).selectOption({ index: 1 });
@@ -169,7 +185,16 @@ test.describe("Per-product batch allocations", () => {
     await page.locator("form").filter({ has: page.getByLabel(/Allocation quantity for/) })
       .getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByText("over batch yield")).toBeVisible();
-    await expect(page.getByText("20/10 allocated")).toBeVisible();
+    await expect(page.getByText("20/10", { exact: true })).toBeVisible();
+
+    // The list's progress column reflects the same numbers: nothing made yet,
+    // 10 needed, with the planned pieces filling the bar behind
+    await page.goto("/orders?tab=orders");
+    const row = page.getByRole("link", { name: /Allocation order/ });
+    await expect(row.getByText("10", { exact: true })).toBeVisible();
+    const bar = row.getByRole("progressbar");
+    await expect(bar).toHaveAttribute("aria-valuenow", "0");
+    await expect(bar).toHaveAttribute("aria-valuetext", /20 in production/);
   });
 
   test("removing the last allocation keeps the batch linked; unlink removes the group", async ({ page }) => {

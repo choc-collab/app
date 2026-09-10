@@ -1044,11 +1044,21 @@ const SECTIONS: Section[] = [
 
         <h3>List and calendar views</h3>
         <p>
-          The list shows open orders grouped by month, soonest first. Past and closed orders
-          are tucked away by default — the filter panel (funnel icon) brings them back, bounds
-          the view to a time window, or narrows to one customer. The toggle at the top right
-          switches to a month calendar where every order sits on its day; clicking an empty
-          day starts a new order on that date.
+          The list is a table of open orders grouped by month, soonest first: status, event
+          date, type, the <strong>order size</strong> (how many pieces it calls for), and a{" "}
+          <strong>Made</strong> bar showing how many of those already exist — green for pieces
+          from finished batches, amber for pieces spoken for by batches still in progress.
+          Past and closed orders are tucked away by default — the filter panel (funnel icon)
+          brings them back as a dimmed group at the bottom, bounds the view to a time window,
+          or narrows to one customer. The toggle at the top right switches to a month calendar
+          where every order sits on its day; clicking an empty day starts a new order on that
+          date.
+        </p>
+        <p>
+          A two-day market is one order: tick <strong>Multi-day event</strong> when you add it
+          (or set <strong>Ends</strong> on the order later) and it shows as a range —
+          &ldquo;19–20 Dec&rdquo; — with a chip on each of its days in the calendar. It stays in
+          your upcoming list until the last day is done.
         </p>
 
         <h3>Customers</h3>
@@ -1062,13 +1072,18 @@ const SECTIONS: Section[] = [
 
         <h3>Line items and linked batches</h3>
         <p>
-          As the order firms up, itemise it: line items start as a quantity and a note
-          (&ldquo;40 × mix TBD, one nut-free&rdquo;) and later point at real products. Then
-          link the production batches you&apos;re making it from — and claim just the pieces
-          this order needs: <em>20 × Salted Caramel from Tuesday&apos;s batch</em>, even when
-          that batch makes hundreds of pieces across several products. Each line item shows
-          how much of it is covered (&ldquo;20/40 allocated&rdquo;), and the app warns —
-          softly — when you promise more than a batch produces.
+          The order page is directly editable — click a value and change it; there is no Edit
+          button and nothing to save. The venue field suggests places you&apos;ve used before,
+          and a <strong>Pick-up</strong> chip covers the customer-collects-a-box case. As the order firms up, itemise it in the{" "}
+          <strong>Line items</strong> table: a line starts as a quantity and a note
+          (&ldquo;40 × mix TBD, one nut-free&rdquo;) and later gets a real product picked on
+          the same row. Then link the production batches you&apos;re making it from — and
+          claim just the pieces this order needs: <em>20 × Salted Caramel from Tuesday&apos;s
+          batch</em>, even when that batch makes hundreds of pieces across several products.
+          Each line shows how much of it is covered in its <em>Allocated</em> column
+          (&ldquo;20/40&rdquo;), the sidebar&apos;s <strong>Production</strong> card totals it
+          up for the whole order, and the app warns — softly — when you promise more than a
+          batch produces.
         </p>
         <Callout kind="tip" title="The Today tile keeps you honest">
           The dashboard&apos;s <em>Upcoming orders</em> tile lists the next few open orders
@@ -1076,13 +1091,72 @@ const SECTIONS: Section[] = [
           the confirmation; &ldquo;Confirmed&rdquo; with nothing allocated means it&apos;s
           time to plan a batch.
         </Callout>
-        <Shot label="Orders list — open orders grouped by month, with statuses and customers" src="/docs/screenshots/orders-list.png" />
+        <Shot label="Orders list — open orders grouped by month, with status, pieces needed and how many are made" src="/docs/screenshots/orders-list.png" />
+      </>
+    ),
+  },
+  {
+    id: "log",
+    num: "16",
+    title: "The Log — a daily journal that mostly writes itself",
+    teaser: "One page per day: what the app knows you made, sold and captured, plus your own notes and the workshop conditions.",
+    render: () => (
+      <>
+        <p className="sub">
+          Growing a chocolate business is a long run of small experiments. The Log is where
+          they accumulate: one page per day, half written by the app, half by you.
+        </p>
+
+        <h3>What happened — filled in for you</h3>
+        <p>
+          Open <strong>Log</strong> in the nav. Every day you worked already has a line for
+          each thing the app saw: moulds coloured, shells cast, fillings made, pieces
+          unmoulded, batches started and finished, boxes prepared and sold (with the
+          takings), give-aways, orders captured and events on the day they happen, new
+          customers, experiments, new recipes, products and moulds, ingredients bought,
+          prices updated, packaging ordered, shopping-list items, stock counts and freezer
+          moves. Each line links back to the batch, order or recipe it came from.
+        </p>
+        <p>
+          Nothing is stored for this half — it is worked out live from the rest of your
+          data. That is why the Log already covers every day since your first batch the
+          moment you open it, and why it stays right when you correct a batch or void a
+          sale later.
+        </p>
+
+        <h3>Your notes and the workshop conditions</h3>
+        <p>
+          Click a day to open it. Notes come first: write as many as you like — a morning
+          observation and an evening remark keep their own times — and they save as you
+          type. Deleting one asks first. In the sidebar, record the workshop{" "}
+          <strong>temperature</strong> and <strong>humidity</strong>; both save when you
+          leave the field. Months later, when a batch blooms or a temper won&apos;t hold,
+          those two numbers are usually the explanation.
+        </p>
+
+        <h3>List and calendar</h3>
+        <p>
+          The list is a table of days grouped by month — the same shape as Orders — with
+          the day, a &ldquo;what happened&rdquo; headline, the note count and first line,
+          and the conditions. Search covers both your notes and the activity lines
+          (&ldquo;caramel&rdquo; finds the day you made it and the day you wrote about it);
+          the filter panel bounds the period or shows only days with notes. The toggle at
+          the top right switches to a month calendar with a coloured dot per area and a
+          pencil where you wrote something. The Log stops at today — future days appear once
+          they arrive.
+        </p>
+        <Callout kind="tip" title="Write from the dashboard">
+          The <em>Today&apos;s log</em> panel on the Today page shows what has been recorded
+          so far and takes a quick note without leaving the page. Press <code>n</code> on
+          the Log page to jump straight to today.
+        </Callout>
+        <Shot label="The Log — days grouped by month, with the activity headline, notes and workshop conditions" src="/docs/screenshots/log-list.png" />
       </>
     ),
   },
   {
     id: "observatory",
-    num: "16",
+    num: "17",
     title: "The Observatory — your numbers in one place",
     teaser: "Pricing health, production trends, product-cost breakdowns, and shop sales.",
     render: () => (
@@ -1142,7 +1216,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "allergens",
-    num: "17",
+    num: "18",
     title: "Allergens and nutrition",
     teaser: "Enter once at the ingredient level. The app does the rest.",
     render: () => (
@@ -1170,7 +1244,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "backup",
-    num: "18",
+    num: "19",
     title: "Backup, restore, and cloud sync",
     teaser: "Your data is yours. Treat it that way.",
     render: () => (
@@ -1229,7 +1303,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: "dexie-cloud",
-    num: "19",
+    num: "20",
     title: "Setting up Dexie Cloud sync (step by step)",
     teaser: "The bit that lets your iPad and laptop see the same data. Twenty minutes, no code.",
     render: () => (
@@ -1567,7 +1641,7 @@ jobs:
   },
   {
     id: "shortcuts",
-    num: "20",
+    num: "21",
     title: "Keyboard shortcuts",
     teaser: "Small, but they add up.",
     render: () => (
@@ -1596,7 +1670,7 @@ jobs:
   },
   {
     id: "faq",
-    num: "21",
+    num: "22",
     title: "Troubleshooting and FAQ",
     teaser: "The things I've been asked most.",
     render: () => (
@@ -1880,7 +1954,7 @@ jobs:
 
 const HUB_GROUPS = [
   { title: "Get set up", ids: ["welcome", "hosted-or-local", "install", "demo", "preferences"] },
-  { title: "Day to day", ids: ["dashboard"] },
+  { title: "Day to day", ids: ["dashboard", "log"] },
   { title: "Build your pantry", ids: ["ingredient", "filling", "product"] },
   { title: "Run the workshop", ids: ["production", "stock", "collections", "shop", "labels", "orders", "observatory"] },
   { title: "Allergens, backup, reference", ids: ["allergens", "backup", "dexie-cloud", "shortcuts", "faq"] },

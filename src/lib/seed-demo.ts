@@ -29,6 +29,7 @@ import type {
   Sale,
   LabelTemplate, LabelField,
   Customer, Order, OrderLineItem, OrderProductionLink,
+  LogEntry, LogDay,
 } from "@/types";
 import { toISODate } from "@/lib/orders";
 
@@ -2409,6 +2410,7 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
   await db.orders.add({
     title: "Winter market Dwingeloo",
     eventDate: isoDaysFromNow(70),
+    endDate: isoDaysFromNow(71), // two-day market, tracked as one order
     status: "lead",
     source: "market",
     venue: "Brink, Dwingeloo",
@@ -2449,6 +2451,24 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
     createdAt: demoOrderNow, updatedAt: demoOrderNow,
   } as Order) as string;
 
+  // ── Log: a first day with notes and workshop conditions ──
+  // The automatic half of today's log already fills itself from the batches,
+  // sales and orders seeded above (they're all stamped "now"); these give the
+  // written half something to show too.
+  const logToday = toISODate(demoOrderNow);
+  const noteAt = (hoursAgo: number) => new Date(demoOrderNow.getTime() - hoursAgo * 3_600_000);
+  await db.logEntries.add({
+    date: logToday,
+    body: "Sprayed the heart moulds with the new bronze — two thin coats hold better than one thick one. Room was on the warm side; the first tray took longer to set.",
+    createdAt: noteAt(6), updatedAt: noteAt(6),
+  } as LogEntry);
+  await db.logEntries.add({
+    date: logToday,
+    body: "Café order confirmed for 60 pieces. Try the praline with a pinch more salt before the next batch — the last tasting panel found it flat.",
+    createdAt: noteAt(1), updatedAt: noteAt(1),
+  } as LogEntry);
+  await db.logDays.add({ date: logToday, ambientTempC: 21, humidityPct: 55, updatedAt: demoOrderNow } as LogDay);
+
   // Seed demo brand info so the labels look complete on a fresh install.
   // Only fills fields the user hasn't already set — never overwrites their
   // own brand. Facility "may contain" likewise stays untouched if populated.
@@ -2485,5 +2505,5 @@ export async function loadDemoData(): Promise<{ success: boolean; message: strin
     });
   }
 
-  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen), 3 label templates (bonbon tray, filling tub, full box) preset as defaults for each kind, 2 customers + 3 orders (a market lead, a confirmed corporate order with line items and a batch allocation, and a fulfilled wedding). Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
+  return { success: true, message: `Demo data loaded: 12 products (4 moulded + 2 enrobed + 2 snack bars + 3 bars — 2 pure bean-to-bar + 1 filled + 1 standalone gianduja), 13 ingredients (incl. house bean-to-bar Madagascar 72%), 2 lab experiments, 6 production batches (incl. a partially-frozen praline batch and a counter restock that puts every flavour back in stock), 4 packaging (incl. snack-bar 3-pack) + 3 collections with full pricing history, 4 decoration materials, 4 moulds (incl. a 100g bar mould and an 8-cavity snack-stick mould), 4 filling stock entries (2 available + 2 frozen), 3 label templates (bonbon tray, filling tub, full box) preset as defaults for each kind, 2 customers + 3 orders (a market lead, a confirmed corporate order with line items and a batch allocation, and a fulfilled wedding), and a first Log day with 2 notes and workshop conditions. Exercises all four shop kinds, all five filling categories, 100%-shell bars, filled bars, and the freezer workflow on both fillings and finished pieces.` };
 }

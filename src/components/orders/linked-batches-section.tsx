@@ -11,8 +11,8 @@ import { PLAN_STATUS_LABEL, PLAN_STATUS_STYLE, getTotalCavities } from "@/lib/pr
 import type { OrderProductionLink, ProductionPlan, Mould } from "@/types";
 import { Factory, X, AlertTriangle } from "lucide-react";
 
-/** Read-view section tying the order to the production batches that fulfil
- *  it. A batch starts as a bare association ("this batch is for this order")
+/** Card tying the order to the production batches that fulfil it. A batch
+ *  starts as a bare association ("this batch is for this order")
  *  and refines into per-product allocations ("20 × Dark caramel from this
  *  batch"). Unlinking a batch or removing an allocation is a two-step inline
  *  confirm (standing rule for removal actions). */
@@ -57,9 +57,16 @@ export function LinkedBatchesSection({ orderId }: { orderId: string }) {
   }
 
   return (
-    <div>
-      <div className="mono-label text-muted-foreground mb-1.5">Linked batches</div>
-      <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-semibold">Linked batches</h2>
+        {groups.size > 0 && (
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            {groups.size} {groups.size === 1 ? "batch" : "batches"}
+          </span>
+        )}
+      </div>
+      <div className="p-4 space-y-4">
         {groups.size === 0 && (
           <p className="text-xs text-muted-foreground">
             No batches linked yet — link the production batches you&apos;re making for this order.
@@ -296,7 +303,7 @@ function BatchGroup({
             onChange={(e) => setAddQty(e.target.value)}
             placeholder="Qty"
             aria-label={`Allocation quantity for ${plan.name}`}
-            className="input !w-20 shrink-0 text-sm"
+            className="input !w-24 shrink-0 text-sm text-right tabular-nums"
           />
           <button
             type="submit"

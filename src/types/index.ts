@@ -1281,6 +1281,12 @@ export interface Order {
    *  (day-granularity, timezone-agnostic — same convention as
    *  Collection.startDate; lexicographic sort = chronological sort). */
   eventDate: string;
+  /** Last day of a multi-day event (market weekend, two-day fair), ISO date
+   *  string on or after `eventDate`. Unset = single-day. Unindexed and
+   *  optional, so adding it needed no schema migration; sorting, grouping
+   *  and the calendar's month navigation all key off `eventDate` (the first
+   *  day) — see `orderEndDate()` in lib/orders for the resolved last day. */
+  endDate?: string;
   status: OrderStatus;
   /** FK → Customer.id. Replaces the v17 free-text `customerName`, which the
    *  v18 upgrade materialises into Customer rows. */
@@ -1398,6 +1404,44 @@ export interface GiveAwayRecord {
   pieceCount: number;
   /** Sum of `costPerProduct × pieces` at log time, in the user's currency. */
   ingredientCost: number;
+}
+
+// --- Log (daily journal) ---
+
+/**
+ * A free-text note in the daily Log. Several notes can sit on one day (a
+ * morning tempering observation and an evening sale remark stay separate).
+ * The day's *automatic* summary — moulds coloured, boxes sold, orders placed —
+ * is never stored: it is derived live from the other tables by
+ * `computeDigestIndex()` in lib/dailyLog, so it back-fills history and stays
+ * correct when a batch or sale is edited.
+ */
+export interface LogEntry {
+  id?: string;
+  /** Local calendar day, ISO "YYYY-MM-DD" — same convention as
+   *  `Order.eventDate` (lexicographic sort = chronological; indexed). */
+  date: string;
+  body: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Day-level facts that don't belong to any single note — currently the
+ * workshop conditions, which chocolatiers care about for tempering and bloom.
+ * One row per day (upsert by `date`; not a unique index because Dexie Cloud
+ * could otherwise reject a sync when two offline devices create the same day —
+ * readers take the most recently updated row if duplicates ever occur).
+ */
+export interface LogDay {
+  id?: string;
+  /** Local calendar day, ISO "YYYY-MM-DD" (indexed). */
+  date: string;
+  /** Workshop air temperature, °C. */
+  ambientTempC?: number;
+  /** Workshop relative humidity, %. */
+  humidityPct?: number;
+  updatedAt: Date;
 }
 
 // ============================================================================

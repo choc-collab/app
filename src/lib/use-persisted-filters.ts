@@ -36,6 +36,13 @@ export function usePersistedFilters<T extends Record<string, unknown>>(
   const interacted = useRef(false);
 
   const [state, setState] = useState<T>(defaults);
+  // The object identity `useState` captured on mount. Nothing is persisted
+  // while `state` is still that exact object: the persist effect below runs in
+  // the same commit as the restore effect, and would otherwise overwrite the
+  // stored value with untouched defaults — harmless once, but under React
+  // Strict Mode (next dev) effects run twice on mount, so the second restore
+  // then read back those defaults and the persisted view/filters were lost.
+  const initial = useRef(state);
 
   // Restore from sessionStorage after hydration (runs once on mount)
   useEffect(() => {
@@ -53,7 +60,7 @@ export function usePersistedFilters<T extends Record<string, unknown>>(
 
   // Persist to sessionStorage on every change (skip the initial mount)
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (!hydrated.current || state === initial.current) return;
     try {
       sessionStorage.setItem(storageKey, JSON.stringify(state));
     } catch {}

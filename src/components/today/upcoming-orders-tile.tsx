@@ -6,8 +6,9 @@ import { useOrders } from "@/lib/hooks";
 import {
   upcomingOrders,
   toISODate,
-  daysUntil,
-  relativeToToday,
+  eventDayOf,
+  eventRelative,
+  formatEventDates,
   ORDER_STATUS_LABEL,
   ORDER_STATUS_STYLE,
 } from "@/lib/orders";
@@ -53,7 +54,7 @@ export function UpcomingOrdersTile() {
               <li key={o.id} className="-mx-1 py-1">
                 <Link
                   href={`/orders/${o.id}`}
-                  title={`${o.title} · ${ORDER_STATUS_LABEL[o.status]} · ${relativeToToday(o.eventDate, todayISO)}`}
+                  title={`${o.title} · ${ORDER_STATUS_LABEL[o.status]} · ${eventRelative(o, todayISO)}`}
                   className="flex items-center gap-1.5 px-1 min-w-0 rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
                 >
                   <span className="flex-1 min-w-0 text-sm font-medium truncate">{o.title}</span>
@@ -61,7 +62,7 @@ export function UpcomingOrdersTile() {
                     {ORDER_STATUS_LABEL[o.status]}
                   </span>
                   <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                    {formatShortDate(o.eventDate, todayISO)}
+                    {formatShortDate(o, todayISO)}
                   </span>
                 </Link>
               </li>
@@ -88,13 +89,10 @@ export function UpcomingOrdersTile() {
   );
 }
 
-const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "20 Dec" for far-out dates, "today"/"tomorrow" when imminent. */
-function formatShortDate(iso: string, todayISO: string): string {
-  const days = daysUntil(iso, todayISO);
-  if (days === 0) return "today";
-  if (days === 1) return "tomorrow";
-  const [, m, d] = iso.split("-").map(Number);
-  return `${d} ${MONTHS_SHORT[m - 1]}`;
+/** "20 Dec" / "19–20 Dec" for far-out dates; "today", "tomorrow" or
+ *  "day 1 of 2" when imminent or under way. */
+function formatShortDate(o: { eventDate: string; endDate?: string }, todayISO: string): string {
+  const rel = eventRelative(o, todayISO);
+  if (rel === "today" || rel === "tomorrow" || eventDayOf(o, todayISO)) return rel;
+  return formatEventDates(o, { year: false });
 }
