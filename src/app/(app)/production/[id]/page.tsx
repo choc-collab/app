@@ -11,10 +11,14 @@ import {
   packagePlanProductAsSales,
   useAllFillingComponentsByFilling, useAllFillingIngredientsByFilling,
   useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
+  usePlanPhaseDates, savePlanPhaseDate, deletePlanPhaseDate, ensurePlanPhaseDates,
+  applyPlanPhaseDateUpdates, setPlanPhaseDatesDone, type PlanPhaseSlot,
 } from "@/lib/hooks";
 import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, resolveCoating, FILL_FACTOR } from "@/lib/production";
-import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial } from "@/types";
-import { normalizeApplyAt } from "@/types";
+import { toISODate, formatISODate } from "@/lib/orders";
+import { cascadePhaseDateChange } from "@/lib/schedule";
+import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial, ProductionPhaseId } from "@/types";
+import { normalizeApplyAt, PRODUCTION_PHASES, COATING_SPLIT_PHASES } from "@/types";
 import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
@@ -32,17 +36,49 @@ import type { LabelTemplate } from "@/types";
 import { useSpaId } from "@/lib/use-spa-id";
 import Link from "next/link";
 
-const PHASES = [
-  { id: "colour",  label: "Colour"   },
-  { id: "shell",   label: "Shell"    },
-  { id: "filling", label: "Fillings" },
-  { id: "fill",    label: "Fill"     },
-  { id: "cap",     label: "Cap"      },
-  { id: "unmould", label: "Unmould"  },
-  { id: "package", label: "Package"  },
-] as const;
+const PHASES = PRODUCTION_PHASES;
 
-type PhaseId = typeof PHASES[number]["id"];
+type PhaseId = ProductionPhaseId;
+
+/** Identity of one schedulable slot — see `phaseDateBySlot`. */
+const phaseSlotKey = (slot: { phase: PhaseId; coating?: string }) => `${slot.phase}::${slot.coating ?? ""}`;
+
+const PHASE_LABEL = Object.fromEntries(PHASES.map((p) => [p.id, p.label])) as Record<PhaseId, string>;
+
+/** Inline "Scheduled for [date]" control. Sits under the phase tab bar for
+ *  most phases, and inside each chocolate-type section on Shell/Cap. */
+function PhaseDateField({
+  ariaLabel,
+  value,
+  onChange,
+  error,
+}: {
+  ariaLabel: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}) {
+  return (
+    <div className="text-xs text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <span>Scheduled for</span>
+        <input
+          type="date"
+          aria-label={ariaLabel}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="input !w-auto text-xs !py-1 !px-2"
+        />
+        {value && (
+          <button type="button" onClick={() => onChange("")} className="underline hover:text-foreground">
+            Clear
+          </button>
+        )}
+      </div>
+      {error && <p className="text-status-alert mt-1">{error}</p>}
+    </div>
+  );
+}
 
 export default function ProductionPlanPage() {
   const planId = useSpaId("production");
@@ -152,6 +188,14 @@ function PlanContent({
   const allCollectionPackagings = useAllCollectionPackagings();
   const currencySymbol = useCurrencySymbol();
   const router = useRouter();
+  const planPhaseDates = usePlanPhaseDates(planId);
+  // Keyed per schedulable slot: shell/cap carry a coating (tempering dark and
+  // milk are separate sessions, often on different days), everything else has
+  // one row for the whole phase.
+  const phaseDateBySlot = useMemo(
+    () => new Map(planPhaseDates.map((pd) => [phaseSlotKey(pd), pd])),
+    [planPhaseDates],
+  );
   const materialsMap = useMemo(() => new Map(allMaterials.map((m) => [m.id!, m])), [allMaterials]);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
@@ -160,6 +204,9 @@ function PlanContent({
   const [editingBatchNote, setEditingBatchNote] = useState(false);
   const [printState, setPrintState] = useState<"idle" | "printing" | "done" | "error">("idle");
   const [printError, setPrintError] = useState("");
+  // Set when a requested date would put a phase before one that must precede
+  // it; keyed by slot so the message shows under the field the user touched.
+  const [phaseDateError, setPhaseDateError] = useState<{ slotKey: string; message: string } | null>(null);
 
   // Yield modal state
   const [yieldModal, setYieldModal] = useState<{
@@ -350,6 +397,55 @@ function PlanContent({
       setActivePhase(visiblePhases[0].id);
     }
   }, [visiblePhases, activePhase]);
+
+  // Default every visible phase's scheduled date to today until the user
+  // moves it — so a fresh (or newly-expanded) plan shows up on the Schedule
+  // calendar without any manual data entry, and only the phases that will
+  // actually happen on a different day need adjusting.
+  //
+  // `ensurePlanPhaseDates` decides what's missing inside its own transaction:
+  // the React-side `phaseDateBySlot` can't be trusted here, because a
+  // `useLiveQuery` that hasn't resolved is indistinguishable from an empty
+  // table, which had this effect re-seeding a duplicate row on every visit.
+  const phaseSlots = useMemo<PlanPhaseSlot[]>(() => {
+    const slots: PlanPhaseSlot[] = [];
+    for (const { id } of visiblePhases) {
+      if (!COATING_SPLIT_PHASES.includes(id)) { slots.push({ phase: id }); continue; }
+      const coatings = new Set(steps.filter((s) => s.group === id).map((s) => s.coating ?? "chocolate"));
+      for (const coating of coatings) slots.push({ phase: id, coating });
+    }
+    return slots;
+  }, [visiblePhases, steps]);
+  const phaseSlotsKey = phaseSlots.map(phaseSlotKey).join(",");
+  useEffect(() => {
+    if (plan.status === "done" || !phaseSlotsKey) return;
+    ensurePlanPhaseDates(planId, phaseSlots, toISODate(new Date()));
+  }, [planId, phaseSlots, phaseSlotsKey, plan.status]);
+
+  // Whether every step of a slot is ticked off — the same calculation the
+  // phase tabs show as "3/5", cached onto the schedule rows so the calendar
+  // can grey finished work out without loading the whole production graph.
+  // Slots whose steps haven't loaded are skipped rather than reported as
+  // unfinished, so a slow query can't wipe a completed flag.
+  const phaseDoneBySlot = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const slot of phaseSlots) {
+      const slotSteps = steps.filter((s) =>
+        s.group === slot.phase && (slot.coating == null || (s.coating ?? "chocolate") === slot.coating));
+      if (slotSteps.length === 0) continue;
+      map.set(phaseSlotKey(slot), slotSteps.every((s) => statusMap.get(s.key)));
+    }
+    return map;
+  }, [phaseSlots, steps, statusMap]);
+
+  useEffect(() => {
+    const updates: Array<{ id: string; done: boolean }> = [];
+    for (const [key, done] of phaseDoneBySlot) {
+      const row = phaseDateBySlot.get(key);
+      if (row?.id && (row.done ?? false) !== done) updates.push({ id: row.id, done });
+    }
+    if (updates.length > 0) setPlanPhaseDatesDone(updates);
+  }, [phaseDoneBySlot, phaseDateBySlot]);
 
   // Decoration material IDs needed for the colour phase (on_mould steps only)
   const colouringMaterialIds = useMemo(() => {
@@ -715,6 +811,31 @@ function PlanContent({
     if (plan.status !== "draft") {
       await saveProductionPlan({ ...plan as any, id: plan.id, status: "draft" });
     }
+  }
+
+  async function handlePhaseDateChange(phaseId: PhaseId, coating: string | undefined, value: string) {
+    const slotKey = phaseSlotKey({ phase: phaseId, coating });
+    const existing = phaseDateBySlot.get(slotKey);
+    if (!value) {
+      setPhaseDateError(null);
+      if (existing?.id) await deletePlanPhaseDate(existing.id);
+      return;
+    }
+    // The phases run in sequence, so moving one carries the later ones with
+    // it — and can't be dropped behind a phase that has to happen first.
+    const cascade = cascadePhaseDateChange(planPhaseDates, { phase: phaseId, coating }, value);
+    if (!cascade.ok) {
+      const { phase, coating: blockedBy, scheduledDate } = cascade.conflict;
+      const label = blockedBy ? `${PHASE_LABEL[phase]} · ${blockedBy}` : PHASE_LABEL[phase];
+      setPhaseDateError({
+        slotKey,
+        message: `${label} is scheduled for ${formatISODate(scheduledDate)} — this can't come before it.`,
+      });
+      return;
+    }
+    setPhaseDateError(null);
+    await savePlanPhaseDate({ id: existing?.id, planId, phase: phaseId, coating, scheduledDate: value });
+    await applyPlanPhaseDateUpdates(cascade.laterUpdates);
   }
 
   async function handleTogglePhase(phaseId: PhaseId) {
@@ -1213,6 +1334,22 @@ function PlanContent({
             })}
           </div>
 
+          {/* Scheduled date for the active phase — lets a draft/future batch
+              show on the Schedule calendar before it's started. Clearing the
+              date just unsets the field, so no delete confirmation needed.
+              Shell and Cap schedule per chocolate type instead, inside each
+              coating section below. */}
+          {plan.status !== "done" && !COATING_SPLIT_PHASES.includes(activePhase) && (
+            <div className="px-4 mt-2">
+              <PhaseDateField
+                ariaLabel="Scheduled for"
+                value={phaseDateBySlot.get(phaseSlotKey({ phase: activePhase }))?.scheduledDate ?? ""}
+                onChange={(value) => handlePhaseDateChange(activePhase, undefined, value)}
+                error={phaseDateError?.slotKey === phaseSlotKey({ phase: activePhase }) ? phaseDateError.message : undefined}
+              />
+            </div>
+          )}
+
           {/* Active phase content */}
           <div className="px-4 mt-3 pb-8 space-y-3">
             {/* Materials needed — Colour tab: on-mould steps only; Cap tab: transfer sheets + after-cap steps */}
@@ -1359,6 +1496,18 @@ function PlanContent({
                           {coating}
                           <span className="font-normal normal-case tracking-normal">· {coatingMoulds} mould{coatingMoulds !== 1 ? "s" : ""}</span>
                         </h3>
+                        {/* Each chocolate type is its own tempering session, so
+                            it carries its own date. */}
+                        {plan.status !== "done" && (
+                          <div className="mb-2">
+                            <PhaseDateField
+                              ariaLabel={`Scheduled for ${coating}`}
+                              value={phaseDateBySlot.get(phaseSlotKey({ phase: activePhase, coating }))?.scheduledDate ?? ""}
+                              onChange={(value) => handlePhaseDateChange(activePhase, coating, value)}
+                              error={phaseDateError?.slotKey === phaseSlotKey({ phase: activePhase, coating }) ? phaseDateError.message : undefined}
+                            />
+                          </div>
+                        )}
                         {temperingPanel}
                         <ul className="space-y-1.5">
                           {regularCapSteps.map((step) => (

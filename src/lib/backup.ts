@@ -51,6 +51,8 @@ export interface BackupData {
   orderLineItems?: unknown[];
   logEntries?: unknown[];
   logDays?: unknown[];
+  planPhaseDates?: unknown[];
+  prepTasks?: unknown[];
 
   // --- Legacy key compat (older backups written before the Product/Filling rename) ---
   // These are accepted on import and remapped to the new tables above.
@@ -112,6 +114,8 @@ async function buildBackupData(): Promise<BackupData> {
     orderLineItems,
     logEntries,
     logDays,
+    planPhaseDates,
+    prepTasks,
   ] = await Promise.all([
     db.ingredients.toArray(),
     db.products.toArray(),
@@ -154,6 +158,8 @@ async function buildBackupData(): Promise<BackupData> {
     db.orderLineItems.toArray(),
     db.logEntries.toArray(),
     db.logDays.toArray(),
+    db.planPhaseDates.toArray(),
+    db.prepTasks.toArray(),
   ]);
 
   return {
@@ -201,6 +207,8 @@ async function buildBackupData(): Promise<BackupData> {
     orderLineItems,
     logEntries,
     logDays,
+    planPhaseDates,
+    prepTasks,
   };
 }
 
@@ -224,6 +232,7 @@ function hasAnyData(data: BackupData): boolean {
     data.sales ?? [], data.giveaways ?? [],
     data.orders ?? [], data.customers ?? [], data.orderProductionLinks ?? [],
     data.orderLineItems ?? [], data.logEntries ?? [], data.logDays ?? [],
+    data.planPhaseDates ?? [], data.prepTasks ?? [],
   ];
   return arrays.some((a) => Array.isArray(a) && a.length > 0);
 }
@@ -301,6 +310,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
       db.sales, db.giveaways,
       db.orders, db.customers, db.orderProductionLinks, db.orderLineItems,
       db.logEntries, db.logDays,
+      db.planPhaseDates, db.prepTasks,
     ],
     async () => {
       await Promise.all([
@@ -320,6 +330,7 @@ export async function clearAllData(options?: DestructiveOpOptions): Promise<void
         db.sales.clear(), db.giveaways.clear(),
         db.orders.clear(), db.customers.clear(), db.orderProductionLinks.clear(), db.orderLineItems.clear(),
         db.logEntries.clear(), db.logDays.clear(),
+        db.planPhaseDates.clear(), db.prepTasks.clear(),
       ]);
     },
   );
@@ -503,6 +514,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const rawOrderLineItems          = data.orderLineItems          ?? [];
   const rawLogEntries              = data.logEntries              ?? [];
   const rawLogDays                 = data.logDays                 ?? [];
+  const rawPlanPhaseDates          = data.planPhaseDates          ?? [];
+  const rawPrepTasks               = data.prepTasks               ?? [];
 
   // Apply field-level migrations for backups written pre-rename.
   const ingredients              = rawIngredients as never[];
@@ -545,6 +558,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
   const orderLineItems           = rawOrderLineItems as never[];
   const logEntries               = rawLogEntries as never[];
   const logDays                  = rawLogDays as never[];
+  const planPhaseDates           = rawPlanPhaseDates as never[];
+  const prepTasks                = rawPrepTasks as never[];
 
   // Validate filling-component refs against the fillings list. A backup that
   // names a fillingId/childFillingId without including the corresponding row
@@ -610,6 +625,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
       db.sales, db.giveaways,
       db.orders, db.customers, db.orderProductionLinks, db.orderLineItems,
       db.logEntries, db.logDays,
+      db.planPhaseDates, db.prepTasks,
     ],
     async () => {
       await Promise.all([
@@ -629,6 +645,7 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         db.sales.clear(), db.giveaways.clear(),
         db.orders.clear(), db.customers.clear(), db.orderProductionLinks.clear(), db.orderLineItems.clear(),
         db.logEntries.clear(), db.logDays.clear(),
+        db.planPhaseDates.clear(), db.prepTasks.clear(),
       ]);
       await Promise.all([
         ingredients.length              && db.ingredients.bulkAdd(ingredients),
@@ -672,6 +689,8 @@ export async function importBackup(file: File, options?: DestructiveOpOptions): 
         orderLineItems.length           && db.orderLineItems.bulkAdd(orderLineItems),
         logEntries.length               && db.logEntries.bulkAdd(logEntries),
         logDays.length                  && db.logDays.bulkAdd(logDays),
+        planPhaseDates.length           && db.planPhaseDates.bulkAdd(planPhaseDates),
+        prepTasks.length                && db.prepTasks.bulkAdd(prepTasks),
       ]);
     },
   );

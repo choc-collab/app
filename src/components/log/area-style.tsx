@@ -11,6 +11,7 @@ export const AREA_INK: Record<LogArea, string> = {
   orders: "var(--accent-sage-ink)",
   lab: "var(--accent-lilac-ink)",
   pantry: "var(--accent-blue-ink)",
+  schedule: "var(--accent-peach-ink)",
 };
 
 export function AreaDot({ area, className = "" }: { area: LogArea; className?: string }) {

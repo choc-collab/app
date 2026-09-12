@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarNavHeader } from "@/components/calendar-nav-header";
 import { monthGridDays, MONTH_NAMES } from "@/lib/orders";
 
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -40,22 +40,14 @@ export function MonthGridShell({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">
-          {MONTH_NAMES[month]} {year}
-        </h2>
-        <div className="flex items-center gap-1">
-          <button onClick={onPrev} aria-label="Previous month" className="p-1.5 rounded-full hover:bg-muted transition-colors">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button onClick={onToday} className="btn-secondary px-3 py-1 text-xs">
-            Today
-          </button>
-          <button onClick={onNext} aria-label="Next month" className="p-1.5 rounded-full hover:bg-muted transition-colors">
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+      <CalendarNavHeader
+        label={`${MONTH_NAMES[month]} ${year}`}
+        onPrev={onPrev}
+        onNext={onNext}
+        onToday={onToday}
+        prevLabel="Previous month"
+        nextLabel="Next month"
+      />
 
       <div className="grid grid-cols-7 text-center">
         {WEEKDAY_NAMES.map((d) => (

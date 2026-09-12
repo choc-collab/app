@@ -31,16 +31,20 @@ import type {
   Packaging,
   PackagingOrder,
   PlanFilling,
+  PlanPhaseDate,
   PlanProduct,
   PlanStepStatus,
+  PrepTask,
   Product,
+  ProductionPhaseId,
   ProductionPlan,
   Sale,
   ShoppingItem,
 } from "@/types";
-import { GIVE_AWAY_REASONS } from "@/types";
+import { GIVE_AWAY_REASONS, PRODUCTION_PHASES } from "@/types";
 import { toISODate, monthLabel, MONTH_NAMES, ORDER_STATUS_LABEL, eventLengthDays } from "@/lib/orders";
 import { getTotalCavities } from "@/lib/production";
+import { isSchedulablePhaseRow } from "@/lib/schedule";
 
 // ─── Dates ───────────────────────────────────────────────────────────────────
 
@@ -90,9 +94,9 @@ export function relativeDayLabel(iso: string, todayISO: string): string | null {
 
 // ─── Digest model ────────────────────────────────────────────────────────────
 
-export type LogArea = "workshop" | "shop" | "orders" | "lab" | "pantry";
+export type LogArea = "workshop" | "shop" | "orders" | "lab" | "pantry" | "schedule";
 
-export const LOG_AREAS: ReadonlyArray<LogArea> = ["workshop", "shop", "orders", "lab", "pantry"];
+export const LOG_AREAS: ReadonlyArray<LogArea> = ["workshop", "shop", "orders", "lab", "pantry", "schedule"];
 
 export const LOG_AREA_LABEL: Record<LogArea, string> = {
   workshop: "Workshop",
@@ -100,6 +104,7 @@ export const LOG_AREA_LABEL: Record<LogArea, string> = {
   orders: "Orders",
   lab: "Lab",
   pantry: "Pantry",
+  schedule: "Schedule",
 };
 
 export interface DigestLine {
@@ -124,7 +129,7 @@ export interface DayDigest {
 }
 
 export function emptyDigest(date: string): DayDigest {
-  return { date, lines: [], counts: { workshop: 0, shop: 0, orders: 0, lab: 0, pantry: 0 } };
+  return { date, lines: [], counts: { workshop: 0, shop: 0, orders: 0, lab: 0, pantry: 0, schedule: 0 } };
 }
 
 /** Every table the digest reads. All optional so callers (and tests) only
@@ -149,6 +154,8 @@ export interface LogSources {
   packaging?: readonly Packaging[];
   packagingOrders?: readonly PackagingOrder[];
   shoppingItems?: readonly ShoppingItem[];
+  planPhaseDates?: readonly PlanPhaseDate[];
+  prepTasks?: readonly PrepTask[];
   /** Symbol prefixed to revenue figures, e.g. "€". */
   currencySymbol?: string;
 }
@@ -156,6 +163,10 @@ export interface LogSources {
 // ─── Aggregation ─────────────────────────────────────────────────────────────
 
 type Phase = "color" | "shell" | "fill" | "cap" | "unmould" | "package";
+
+const SCHEDULE_PHASE_LABEL = Object.fromEntries(
+  PRODUCTION_PHASES.map((p) => [p.id, p.label]),
+) as Record<ProductionPhaseId, string>;
 
 const PHASE_RANK: Record<Phase | "filling", number> = {
   filling: 10,
@@ -244,6 +255,8 @@ export function computeDigestIndex(src: LogSources): Map<string, DayDigest> {
   for (const m of src.moulds ?? []) if (m.id) mouldById.set(m.id, m);
   const planById = new Map<string, ProductionPlan>();
   for (const p of src.plans ?? []) if (p.id) planById.set(p.id, p);
+  const orderById = new Map<string, Order>();
+  for (const o of src.orders ?? []) if (o.id) orderById.set(o.id, o);
   const planProductsByPlan = new Map<string, PlanProduct[]>();
   for (const pb of src.planProducts ?? []) bucket(planProductsByPlan, pb.planId, pb);
   const planProductById = new Map<string, PlanProduct>();
@@ -423,6 +436,39 @@ export function computeDigestIndex(src: LogSources): Map<string, DayDigest> {
     add(isoDayOf(c.createdAt), {
       key: `customer-${c.id}`, area: "orders", rank: 20, href: `/orders/customers/${encodeURIComponent(c.id)}`,
       text: `New customer: ${c.name}`,
+    });
+  }
+
+  // ── Schedule: production phase dates + prep tasks ──
+  for (const pd of src.planPhaseDates ?? []) {
+    if (!pd.id || !isSchedulablePhaseRow(pd)) continue;
+    const plan = planById.get(pd.planId);
+    const phaseLabel = pd.coating
+      ? `${SCHEDULE_PHASE_LABEL[pd.phase]} · ${pd.coating}`
+      : SCHEDULE_PHASE_LABEL[pd.phase];
+    add(pd.scheduledDate, {
+      key: `phase-date-${pd.id}`, area: "schedule", rank: 10,
+      href: `/production/${encodeURIComponent(pd.planId)}?tab=${pd.phase}`,
+      text: `Scheduled: ${phaseLabel}`,
+      detail: plan ? planLabel(plan) : undefined,
+    });
+  }
+  for (const t of src.prepTasks ?? []) {
+    if (!t.id) continue;
+    let href: string | undefined;
+    let linkedTo: string | undefined;
+    if (t.orderId) {
+      href = `/orders/${encodeURIComponent(t.orderId)}`;
+      linkedTo = orderById.get(t.orderId)?.title;
+    } else if (t.planId) {
+      const plan = planById.get(t.planId);
+      href = `/production/${encodeURIComponent(t.planId)}`;
+      linkedTo = plan ? planLabel(plan) : undefined;
+    }
+    add(t.scheduledDate, {
+      key: `task-${t.id}`, area: "schedule", rank: 20, href,
+      text: t.done ? `Done: ${t.title}` : `Task: ${t.title}`,
+      detail: [linkedTo, t.notes].filter(Boolean).join(" · ") || undefined,
     });
   }
 

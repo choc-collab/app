@@ -1,7 +1,8 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay, PlanPhaseDate, PrepTask } from "@/types";
 import { normalizeCustomerKey } from "@/lib/orders";
+import { stalePhaseDateIds } from "@/lib/schedule";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
 
 const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
@@ -47,6 +48,8 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   orderLineItems: EntityTable<OrderLineItem, "id">;
   logEntries: EntityTable<LogEntry, "id">;
   logDays: EntityTable<LogDay, "id">;
+  planPhaseDates: EntityTable<PlanPhaseDate, "id">;
+  prepTasks: EntityTable<PrepTask, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -657,6 +660,41 @@ db.version(20).stores({
   logDays: "id, date",
 });
 
+// v21 — Schedule feature: `planPhaseDates` gives an optional target date to
+// a production plan's phase (colour/shell/filling/fill/cap/unmould/package),
+// so a draft/future batch can show on the calendar before it's started.
+// `prepTasks` is a free-form dated task (box prep, label printing, etc.),
+// optionally linked to an Order and/or a ProductionPlan for context but
+// usable standalone. Both purely additive — no existing rows touched, no
+// upgrade hook required.
+//
+// `planPhaseDates` indexed on `planId` (plan detail page lookup) and
+// `scheduledDate` (calendar range queries, same ISO-date lexicographic sort
+// trick as `orders.eventDate`). `prepTasks` indexed on `orderId`/`planId`
+// (linked-context lookups) and `scheduledDate` (calendar range queries).
+db.version(21).stores({
+  planPhaseDates: "id, planId, scheduledDate",
+  prepTasks: "id, orderId, planId, scheduledDate",
+});
+
+// v22 — dedupe `planPhaseDates` down to the (planId, phase) uniqueness the
+// table always meant to have. The v21 seeding effect on the plan detail page
+// decided "this phase has no date yet" from a `useLiveQuery` result that
+// hadn't resolved, so every visit to a plan added another row for the same
+// phase; the Schedule week view surfaced them as repeated identical chips.
+//
+// The writes are idempotent now (`ensurePlanPhaseDates` / `savePlanPhaseDate`
+// resolve existing rows inside their own transaction), so this only has to
+// clean up what the buggy build already wrote. Keeps the LAST row per
+// (planId, phase) in primary-key order — that's the one the plan detail page
+// was showing and writing to (`new Map(rows.map(...))` keeps the last entry),
+// so any date the user actually edited is the one that survives.
+db.version(22).stores({}).upgrade(async (tx) => {
+  const table = tx.table("planPhaseDates");
+  const stale = stalePhaseDateIds(await table.toArray());
+  if (stale.length > 0) await table.bulkDelete(stale);
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -706,6 +744,8 @@ const AUTO_ID_TABLES = [
   db.orderLineItems,
   db.logEntries,
   db.logDays,
+  db.planPhaseDates,
+  db.prepTasks,
 ];
 for (const table of AUTO_ID_TABLES) {
    

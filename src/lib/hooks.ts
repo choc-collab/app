@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, isCloudConfigured } from "@/lib/db";
 import { sanitizeBrand } from "@/lib/brand-sanitize";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay, PlanPhaseDate, PrepTask, ProductionPhaseId } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -1306,13 +1306,15 @@ export async function saveProductionPlan(plan: Omit<ProductionPlan, "id"> & { id
 }
 
 export async function deleteProductionPlan(id: string) {
-  await db.transaction("rw", [db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.orderProductionLinks], async () => {
+  await db.transaction("rw", [db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.orderProductionLinks, db.planPhaseDates, db.prepTasks], async () => {
     await db.planProducts.where("planId").equals(id).delete();
     // planFillings was previously missed here, orphaning standalone-filling
     // rows whenever a fillings-only/hybrid plan was deleted.
     await db.planFillings.where("planId").equals(id).delete();
     await db.planStepStatus.where("planId").equals(id).delete();
     await db.orderProductionLinks.where("planId").equals(id).delete();
+    await db.planPhaseDates.where("planId").equals(id).delete();
+    await db.prepTasks.where("planId").equals(id).delete();
     await db.productionPlans.delete(id);
   });
 }
@@ -1756,6 +1758,134 @@ export async function deletePlanFilling(id: string): Promise<void> {
 /** Bulk fetch — used by list/stats pages that aggregate across plans. */
 export function useAllPlanFillings(): PlanFilling[] {
   return useLiveQuery(() => db.planFillings.toArray()) ?? [];
+}
+
+// --- PlanPhaseDate (scheduled dates for a plan's phases — Schedule feature) ---
+
+/** Live list of scheduled phase dates for a plan (at most one row per phase). */
+export function usePlanPhaseDates(planId: string | undefined) {
+  return useLiveQuery(
+    () => (planId ? db.planPhaseDates.where("planId").equals(planId).toArray() : []),
+    [planId],
+  ) ?? [];
+}
+
+/** Live list of phase dates falling within an inclusive ISO date range — used by
+ *  the Schedule calendar and the Today "scheduled" tile. */
+export function usePlanPhaseDatesInRange(startISO: string | undefined, endISO: string | undefined) {
+  return useLiveQuery(
+    () => (startISO && endISO ? db.planPhaseDates.where("scheduledDate").between(startISO, endISO, true, true).toArray() : []),
+    [startISO, endISO],
+  ) ?? [];
+}
+
+/** One phase of a plan's work, as scheduled: shell/cap are per chocolate
+ *  type, every other phase leaves `coating` unset. */
+export interface PlanPhaseSlot {
+  phase: ProductionPhaseId;
+  coating?: string;
+}
+
+const phaseSlotKey = (slot: PlanPhaseSlot) => `${slot.phase}::${slot.coating ?? ""}`;
+
+/** Upsert by (planId, phase, coating) — at most one scheduled date per slot.
+ *
+ *  The no-id path resolves the existing row inside the write transaction
+ *  rather than trusting a caller-supplied snapshot: a React caller's view of
+ *  the table can be an empty `useLiveQuery` result that simply hasn't
+ *  resolved yet, and blindly adding on that basis is what duplicated rows
+ *  on every plan-page visit (fixed alongside the v22 dedupe migration). */
+export async function savePlanPhaseDate(pd: Omit<PlanPhaseDate, "id"> & { id?: string }): Promise<string> {
+  if (pd.id) {
+    await db.planPhaseDates.update(pd.id, pd);
+    return pd.id;
+  }
+  return db.transaction("rw", db.planPhaseDates, async () => {
+    const key = phaseSlotKey(pd);
+    const existing = (await db.planPhaseDates.where("planId").equals(pd.planId).toArray())
+      .find((row) => phaseSlotKey(row) === key);
+    if (existing?.id) {
+      await db.planPhaseDates.update(existing.id, pd);
+      return existing.id;
+    }
+    return db.planPhaseDates.add(pd as PlanPhaseDate) as Promise<string>;
+  });
+}
+
+/** Give every slot in `slots` a scheduled date of `scheduledDate`, skipping
+ *  any that already have a row. Idempotent and race-free: the "which slots
+ *  are missing" read happens inside the same rw transaction as the inserts,
+ *  so calling it on every mount (or twice under Strict Mode) can't duplicate
+ *  rows the way a React-state-driven check could. */
+export async function ensurePlanPhaseDates(
+  planId: string,
+  slots: readonly PlanPhaseSlot[],
+  scheduledDate: string,
+): Promise<void> {
+  if (slots.length === 0) return;
+  await db.transaction("rw", db.planPhaseDates, async () => {
+    const existing = await db.planPhaseDates.where("planId").equals(planId).toArray();
+    const wanted = new Set(slots.map(phaseSlotKey));
+
+    // Phases whose coating breakdown this call positively knows. Only these
+    // are reconciled — a phase missing from `slots` might just be mid-load,
+    // and deleting its rows on that basis is how data gets lost.
+    const coatingPhases = new Set(slots.filter((s) => s.coating != null).map((s) => s.phase));
+
+    // Rows for a now-per-coating phase whose coating isn't part of the plan:
+    // the coating-less rows written before shell/cap were split, or a
+    // fallback captured while the coating mappings were still loading. They
+    // are unreachable from the UI (which renders a field per current coating)
+    // but still drew chips on the calendar at stale dates.
+    const stale = existing.filter((row) => coatingPhases.has(row.phase) && !wanted.has(phaseSlotKey(row)));
+
+    // The replacement inherits the date it replaces, so a schedule set before
+    // the split isn't silently reset to today.
+    const inherited = new Map<ProductionPhaseId, string>();
+    for (const row of stale) {
+      const held = inherited.get(row.phase);
+      if (!held || row.scheduledDate < held) inherited.set(row.phase, row.scheduledDate);
+    }
+
+    const scheduled = new Set(existing.map(phaseSlotKey));
+    for (const slot of slots) {
+      if (scheduled.has(phaseSlotKey(slot))) continue;
+      const date = (slot.coating != null ? inherited.get(slot.phase) : undefined) ?? scheduledDate;
+      await db.planPhaseDates.add({ planId, phase: slot.phase, coating: slot.coating, scheduledDate: date } as PlanPhaseDate);
+    }
+    for (const row of stale) if (row.id) await db.planPhaseDates.delete(row.id);
+  });
+}
+
+export async function deletePlanPhaseDate(id: string): Promise<void> {
+  await db.planPhaseDates.delete(id);
+}
+
+/** Record which slots have had all their steps ticked off. Called by the plan
+ *  detail page only, with values it has already computed for its tab
+ *  counters — see the note on `PlanPhaseDate.done`. */
+export async function setPlanPhaseDatesDone(
+  updates: ReadonlyArray<{ id: string; done: boolean }>,
+): Promise<void> {
+  if (updates.length === 0) return;
+  await db.transaction("rw", db.planPhaseDates, async () => {
+    for (const { id, done } of updates) {
+      await db.planPhaseDates.update(id, { done });
+    }
+  });
+}
+
+/** Apply a batch of date moves in one transaction — used when rescheduling a
+ *  phase drags the phases after it along (see `cascadePhaseDateChange`). */
+export async function applyPlanPhaseDateUpdates(
+  updates: ReadonlyArray<{ id: string; scheduledDate: string }>,
+): Promise<void> {
+  if (updates.length === 0) return;
+  await db.transaction("rw", db.planPhaseDates, async () => {
+    for (const { id, scheduledDate } of updates) {
+      await db.planPhaseDates.update(id, { scheduledDate });
+    }
+  });
 }
 
 export function usePlanStepStatuses(planId: string | undefined) {
@@ -3393,9 +3523,10 @@ export async function updateOrderFields(
 }
 
 export async function deleteOrder(id: string): Promise<void> {
-  await db.transaction("rw", [db.orders, db.orderProductionLinks, db.orderLineItems], async () => {
+  await db.transaction("rw", [db.orders, db.orderProductionLinks, db.orderLineItems, db.prepTasks], async () => {
     await db.orderProductionLinks.where("orderId").equals(id).delete();
     await db.orderLineItems.where("orderId").equals(id).delete();
+    await db.prepTasks.where("orderId").equals(id).delete();
     await db.orders.delete(id);
   });
 }
@@ -3441,6 +3572,47 @@ export function useAllOrderLineItems() {
 
 export async function deleteOrderLineItem(id: string): Promise<void> {
   await db.orderLineItems.delete(id);
+}
+
+// --- PrepTask (free-form dated tasks — box prep, label printing, etc.) ---
+
+export function usePrepTasksForOrder(orderId: string | undefined) {
+  return useLiveQuery(
+    () => (orderId ? db.prepTasks.where("orderId").equals(orderId).toArray() : []),
+    [orderId],
+  ) ?? [];
+}
+
+export function usePrepTasksForPlan(planId: string | undefined) {
+  return useLiveQuery(
+    () => (planId ? db.prepTasks.where("planId").equals(planId).toArray() : []),
+    [planId],
+  ) ?? [];
+}
+
+/** Live list of tasks due within an inclusive ISO date range — used by the
+ *  Schedule calendar and the Today "scheduled" tile. */
+export function usePrepTasksInRange(startISO: string | undefined, endISO: string | undefined) {
+  return useLiveQuery(
+    () => (startISO && endISO ? db.prepTasks.where("scheduledDate").between(startISO, endISO, true, true).toArray() : []),
+    [startISO, endISO],
+  ) ?? [];
+}
+
+export async function savePrepTask(t: Omit<PrepTask, "id" | "done"> & { id?: string; done?: boolean }): Promise<string> {
+  if (t.id) {
+    await db.prepTasks.update(t.id, t);
+    return t.id;
+  }
+  return db.prepTasks.add({ ...t, done: t.done ?? false } as PrepTask) as Promise<string>;
+}
+
+export async function togglePrepTaskDone(id: string, done: boolean): Promise<void> {
+  await db.prepTasks.update(id, { done });
+}
+
+export async function deletePrepTask(id: string): Promise<void> {
+  await db.prepTasks.delete(id);
 }
 
 // --- Customers ---
@@ -4576,7 +4748,7 @@ export function useLogSources(): LogSources | undefined {
     const [
       plans, planProducts, planFillings, stepStatuses, moulds, products, fillings, fillingStock,
       sales, giveaways, orders, customers, experiments, ingredients, priceHistory,
-      packaging, packagingOrders, shoppingItems,
+      packaging, packagingOrders, shoppingItems, planPhaseDates, prepTasks,
     ] = await Promise.all([
       db.productionPlans.toArray(),
       db.planProducts.toArray(),
@@ -4596,11 +4768,13 @@ export function useLogSources(): LogSources | undefined {
       db.packaging.toArray(),
       db.packagingOrders.toArray(),
       db.shoppingItems.toArray(),
+      db.planPhaseDates.toArray(),
+      db.prepTasks.toArray(),
     ]);
     return {
       plans, planProducts, planFillings, stepStatuses, moulds, products, fillings, fillingStock,
       sales, giveaways, orders, customers, experiments, ingredients, priceHistory,
-      packaging, packagingOrders, shoppingItems,
+      packaging, packagingOrders, shoppingItems, planPhaseDates, prepTasks,
     } satisfies Omit<LogSources, "currencySymbol">;
   }, []);
   return useMemo(() => (data ? { ...data, currencySymbol } : undefined), [data, currencySymbol]);

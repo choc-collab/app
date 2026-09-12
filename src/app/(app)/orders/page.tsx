@@ -15,9 +15,7 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
-import { ListCalendarToggle, type ListCalendarView } from "@/components/list-calendar-toggle";
 import { ListToolbar, QuickAddForm, EmptyState, ListItemCard, FilterPanel, FilterChipGroup } from "@/components/pantry";
-import { MonthGrid } from "@/components/orders/month-grid";
 import { OrdersTable, type OrdersTableGroup } from "@/components/orders/orders-table";
 import {
   useOrders, saveOrder, useCustomers, saveCustomer,
@@ -26,7 +24,6 @@ import {
 import {
   groupOrdersForList,
   toISODate,
-  shiftMonth,
   monthLabel,
   orderProgressByOrder,
   ORDER_STATUS_LABEL,
@@ -43,8 +40,6 @@ const TABS: { id: OrdersPageTab; label: string }[] = [
   { id: "orders", label: "Orders" },
   { id: "customers", label: "Customers" },
 ];
-
-type OrdersView = ListCalendarView;
 
 /** Statuses offered at creation time — an order that's already fulfilled or
  *  cancelled isn't worth capturing, and "in production" starts on the detail
@@ -129,7 +124,6 @@ function OrdersPageInner() {
 function OrdersTab() {
   const router = useRouter();
   const [f, setF] = usePersistedFilters("orders", {
-    view: "list" as OrdersView,
     search: "",
     showFilters: false,
     includePast: false,
@@ -152,10 +146,6 @@ function OrdersTab() {
   const [newMultiDay, setNewMultiDay] = useState(false);
   const [newEndDate, setNewEndDate] = useState("");
   const [newStatus, setNewStatus] = useState<OrderStatus>("lead");
-  const [cal, setCal] = useState(() => {
-    const now = new Date();
-    return { year: now.getFullYear(), month: now.getMonth() };
-  });
 
   useNShortcut(() => setShowAdd(true), showAdd);
 
@@ -257,23 +247,8 @@ function OrdersTab() {
     setNewStatus("lead");
   }
 
-  function openAddForDay(iso: string) {
-    setNewDate(iso);
-    setShowAdd(true);
-  }
-
   return (
     <div className="px-4 space-y-3 pb-6">
-      <div className="flex justify-end">
-        <ListCalendarToggle
-          value={f.view}
-          onChange={(v) => setF("view", v)}
-          ariaLabel="Orders view"
-          listTitle="List view — upcoming orders grouped by month"
-          calendarTitle="Calendar view — orders on a month grid"
-        />
-      </div>
-
       <ListToolbar
         search={f.search}
         onSearchChange={(v) => setF("search", v)}
@@ -411,46 +386,28 @@ function OrdersTab() {
         </QuickAddForm>
       )}
 
-      {f.view === "calendar" ? (
-        <MonthGrid
-          year={cal.year}
-          month={cal.month}
-          orders={baseFiltered}
-          todayISO={todayISO}
-          onPrev={() => setCal((c) => shiftMonth(c.year, c.month, -1))}
-          onNext={() => setCal((c) => shiftMonth(c.year, c.month, 1))}
-          onToday={() => {
-            const now = new Date();
-            setCal({ year: now.getFullYear(), month: now.getMonth() });
-          }}
-          onDayClick={openAddForDay}
+      {upcoming.length === 0 && (!f.includePast || past.length === 0) && (
+        <EmptyState
+          hasData={orders.length > 0}
+          emptyMessage="No orders yet. Tap + to capture your first order or event."
+          filteredMessage="No orders match your search or filters."
         />
-      ) : (
-        <>
-          {upcoming.length === 0 && (!f.includePast || past.length === 0) && (
-            <EmptyState
-              hasData={orders.length > 0}
-              emptyMessage="No orders yet. Tap + to capture your first order or event."
-              filteredMessage="No orders match your search or filters."
-            />
-          )}
+      )}
 
-          {tableGroups.length > 0 && (
-            <>
-              <div className="flex justify-end gap-3">
-                <button onClick={() => setF("collapsedGroups", tableGroups.map((g) => g.key))} className="text-xs text-muted-foreground">Collapse all</button>
-                <button onClick={() => setF("collapsedGroups", [])} className="text-xs text-muted-foreground">Expand all</button>
-              </div>
-              <OrdersTable
-                groups={tableGroups}
-                todayISO={todayISO}
-                progressByOrder={progressByOrder}
-                customerNameById={customerNameById}
-                collapsed={collapsedGroups}
-                onToggleGroup={toggleGroup}
-              />
-            </>
-          )}
+      {tableGroups.length > 0 && (
+        <>
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setF("collapsedGroups", tableGroups.map((g) => g.key))} className="text-xs text-muted-foreground">Collapse all</button>
+            <button onClick={() => setF("collapsedGroups", [])} className="text-xs text-muted-foreground">Expand all</button>
+          </div>
+          <OrdersTable
+            groups={tableGroups}
+            todayISO={todayISO}
+            progressByOrder={progressByOrder}
+            customerNameById={customerNameById}
+            collapsed={collapsedGroups}
+            onToggleGroup={toggleGroup}
+          />
         </>
       )}
     </div>

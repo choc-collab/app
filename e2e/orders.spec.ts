@@ -3,7 +3,8 @@ import type { Page } from "@playwright/test";
 
 // ─── Orders & Events — capture layer ─────────────────────────────────────────
 // Covers: quick-add → autosaving detail page → lifecycle pills → grouped
-// table with pieces/progress → calendar view → two-step delete → Today tile.
+// table with pieces/progress → two-step delete → Today tile.
+// (The calendar view moved to /schedule — see e2e/schedule.spec.ts.)
 
 /** Create an order through the UI quick-add and land on its detail page. The
  *  page has no edit mode — the record exists as soon as it lands. */
@@ -108,9 +109,9 @@ test.describe("Orders — list & quick-add", () => {
 });
 
 test.describe("Orders — multi-day events", () => {
-  test("a two-day market is one order: range in the header, table and calendar; Ends is editable", async ({ page }) => {
-    // Pin the event to the 10th–11th of the current month so both days sit
-    // inside the visible calendar grid whatever today's date is.
+  test("a two-day market is one order: range in the header and table; Ends is editable", async ({ page }) => {
+    // Pin the event to the 10th–11th of the current month — arbitrary, just
+    // keeps the dates predictable across a month boundary.
     const now = new Date();
     const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const start = `${ym}-10`;
@@ -144,15 +145,8 @@ test.describe("Orders — multi-day events", () => {
     await expect(row).toBeVisible();
     await expect(row.getByText(/10–11 [A-Z][a-z]{2} \d{4}/)).toBeVisible();
 
-    // Calendar: a chip on each day, marked 1/2 and 2/2
-    await page.getByRole("button", { name: "Calendar" }).click();
-    const chips = page.getByRole("link", { name: /Weekend market/ });
-    await expect(chips).toHaveCount(2);
-    await expect(chips.nth(0)).toHaveAttribute("title", /day 1 of 2/);
-    await expect(chips.nth(1)).toHaveAttribute("title", /day 2 of 2/);
-
     // Clearing Ends on the detail page collapses it back to a single day
-    await chips.nth(0).click();
+    await row.click();
     await expect(page).toHaveURL(/\/orders\/[^/?]+\/?$/);
     await page.getByLabel("End date").fill("");
     await expect(page.getByText("Event date", { exact: true })).toBeVisible();
@@ -253,35 +247,6 @@ test.describe("Orders — detail page", () => {
     await page.getByRole("button", { name: "Yes, delete order" }).click();
     await expect(page).toHaveURL(/\/orders\/?(\?tab=orders)?$/);
     await expect(page.getByText("No orders yet", { exact: false })).toBeVisible();
-  });
-});
-
-test.describe("Orders — calendar view", () => {
-  test("order chip shows on its day and month navigation works", async ({ page }) => {
-    // Put the order on the 15th of the current month so it's always inside
-    // the visible grid regardless of today's date.
-    const now = new Date();
-    const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-15`;
-    await createOrder(page, { title: "Calendar test order", date: iso });
-    await page.goto("/orders");
-    await page.getByRole("button", { name: "Calendar" }).click();
-    await expect(page.getByRole("link", { name: /Calendar test order/ })).toBeVisible();
-    // Navigate away and back
-    await page.getByRole("button", { name: "Next month" }).click();
-    await expect(page.getByRole("link", { name: /Calendar test order/ })).not.toBeVisible();
-    await page.getByRole("button", { name: "Today", exact: true }).click();
-    await expect(page.getByRole("link", { name: /Calendar test order/ })).toBeVisible();
-  });
-
-  test("clicking a day opens the quick-add prefilled with that date", async ({ page }) => {
-    await page.goto("/orders");
-    await page.getByRole("button", { name: "Calendar" }).click();
-    // Click the first day cell of the grid (its empty area)
-    const grid = page.locator(".grid.grid-cols-7").last();
-    await grid.locator("div").first().click();
-    await expect(page.getByLabel("Order title")).toBeVisible();
-    // Date input carries the clicked day, not necessarily today
-    await expect(page.getByLabel("Event date")).not.toHaveValue("");
   });
 });
 

@@ -10,6 +10,7 @@ import { SellQuickGrid } from "@/components/today/sell-quick-grid";
 import { InProgressTile } from "@/components/today/in-progress-tile";
 import { ExperimentsBrewingTile } from "@/components/today/experiments-brewing-tile";
 import { UpcomingOrdersTile } from "@/components/today/upcoming-orders-tile";
+import { ScheduledTodayTile } from "@/components/today/scheduled-today-tile";
 import { LogTile } from "@/components/today/log-tile";
 
 /** Locale-dependent date string deferred to client mount so server and
@@ -69,6 +70,7 @@ export default function TodayPage() {
         <InProgressTile />
         <ExperimentsBrewingTile />
         <UpcomingOrdersTile />
+        <ScheduledTodayTile />
         <StatTile
           label="Week sales"
           value={`${currency}${formatRevenue(signals.weekRevenue)}`}

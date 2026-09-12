@@ -117,6 +117,19 @@ test.describe("Log — day page notes", () => {
 });
 
 test.describe("Log — automatic digest", () => {
+  test("a prep task scheduled for today shows up on today's log under Schedule, linking back to it", async ({ page }) => {
+    await page.goto("/schedule");
+    await page.locator(`[data-date="${isoFromToday(0)}"]`).click();
+    await page.getByLabel("New task title").fill("Print allergen labels");
+    await page.getByRole("button", { name: "Add task" }).click();
+    await expect(page.getByText("Print allergen labels").first()).toBeVisible();
+
+    await page.goto(`/log/${isoFromToday(0)}`);
+    const digest = page.locator('[data-testid="digest-list"]');
+    await expect(digest.getByText("Task: Print allergen labels")).toBeVisible();
+    await expect(digest.getByText("Schedule", { exact: true })).toBeVisible();
+  });
+
   test("creating an order today shows up as a line on today's log, linking back to the order", async ({ page }) => {
     await page.goto("/orders?tab=orders");
     await page.getByRole("button", { name: "Add order" }).click();

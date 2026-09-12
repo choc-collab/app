@@ -22,8 +22,8 @@ import {
 } from "./dailyLog";
 import type {
   Customer, Experiment, Filling, FillingStock, GiveAwayRecord, Ingredient, IngredientPriceHistory,
-  LogDay, LogEntry, Mould, Order, Packaging, PackagingOrder, PlanFilling, PlanProduct, PlanStepStatus,
-  Product, ProductionPlan, Sale, ShoppingItem,
+  LogDay, LogEntry, Mould, Order, Packaging, PackagingOrder, PlanFilling, PlanPhaseDate, PlanProduct,
+  PlanStepStatus, PrepTask, Product, ProductionPlan, Sale, ShoppingItem,
 } from "@/types";
 
 // Fixed local timestamps — the digest keys on the *local* calendar day.
@@ -336,13 +336,67 @@ describe("computeDigestIndex — orders, lab, pantry", () => {
     const firstIdx = (a: string) => areas.indexOf(a as never);
     expect(firstIdx("workshop")).toBeLessThan(firstIdx("shop"));
     expect(firstIdx("shop")).toBeLessThan(firstIdx("orders"));
-    expect(LOG_AREAS.map((a) => LOG_AREA_LABEL[a])).toEqual(["Workshop", "Shop", "Orders", "Lab", "Pantry"]);
+    expect(LOG_AREAS.map((a) => LOG_AREA_LABEL[a])).toEqual(["Workshop", "Shop", "Orders", "Lab", "Pantry", "Schedule"]);
   });
 
   it("truncates long name lists", () => {
     const products = ["A", "B", "C", "D", "E"].map((n, i) => ({ id: `p${i}`, name: n, createdAt: at("2026-01-01"), updatedAt: at(DAY), stockCountedAt: at(DAY).getTime() } as Product));
     const line = computeDigestIndex({ products }).get(DAY)!.lines.find((l) => l.key === "stock-count")!;
     expect(line.detail).toBe("A, B, C +2 more");
+  });
+});
+
+describe("computeDigestIndex — schedule", () => {
+  const plans: ProductionPlan[] = [
+    { id: "p1", name: "Batch #41", batchNumber: "20260909-001", status: "draft", createdAt: at(DAY), updatedAt: at(DAY) },
+  ];
+  const orders: Order[] = [
+    { id: "o1", title: "Autumn Market", eventDate: DAY, status: "confirmed", createdAt: at(DAY), updatedAt: at(DAY) },
+  ];
+
+  it("logs a phase date under the plan it belongs to, linking to that phase's tab", () => {
+    const planPhaseDates: PlanPhaseDate[] = [{ id: "pd1", planId: "p1", phase: "shell", coating: "dark", scheduledDate: DAY }];
+    const day = computeDigestIndex({ plans, planPhaseDates }).get(DAY)!;
+    // `plans` also contributes its own "Started batch" workshop line on this
+    // same day — scope the assertion to the schedule line under test.
+    const line = day.lines.find((l) => l.area === "schedule")!;
+    expect(line.text).toBe("Scheduled: Shell · dark");
+    expect(line.detail).toBe("Batch #41 · 20260909-001");
+    expect(line.href).toBe("/production/p1?tab=shell");
+    expect(day.counts.schedule).toBe(1);
+  });
+
+  it("labels a phase date orphaned from its plan generically, without a detail", () => {
+    const planPhaseDates: PlanPhaseDate[] = [{ id: "pd1", planId: "missing", phase: "unmould", scheduledDate: DAY }];
+    const line = computeDigestIndex({ planPhaseDates }).get(DAY)!.lines[0];
+    expect(line.text).toBe("Scheduled: Unmould");
+    expect(line.detail).toBeUndefined();
+  });
+
+  it("logs a task linked to an order, with the order's title as context", () => {
+    const prepTasks: PrepTask[] = [{ id: "t1", title: "Print allergen labels", scheduledDate: DAY, done: false, orderId: "o1" }];
+    const day = computeDigestIndex({ orders, prepTasks }).get(DAY)!;
+    const line = day.lines.find((l) => l.key === "task-t1")!;
+    expect(line.text).toBe("Task: Print allergen labels");
+    expect(line.detail).toBe("Autumn Market");
+    expect(line.href).toBe("/orders/o1");
+  });
+
+  it("logs a done task linked to a plan, combining plan name and notes in the detail", () => {
+    const prepTasks: PrepTask[] = [
+      { id: "t2", title: "Assemble market boxes", scheduledDate: DAY, done: true, planId: "p1", notes: "24 boxes" },
+    ];
+    const line = computeDigestIndex({ plans, prepTasks }).get(DAY)!.lines.find((l) => l.area === "schedule")!;
+    expect(line.text).toBe("Done: Assemble market boxes");
+    expect(line.detail).toBe("Batch #41 · 20260909-001 · 24 boxes");
+    expect(line.href).toBe("/production/p1");
+  });
+
+  it("gives a standalone task (no order, no plan) no href", () => {
+    const prepTasks: PrepTask[] = [{ id: "t3", title: "Photograph new bonbons", scheduledDate: DAY, done: false }];
+    const line = computeDigestIndex({ prepTasks }).get(DAY)!.lines[0];
+    expect(line.href).toBeUndefined();
+    expect(line.detail).toBeUndefined();
   });
 });
 

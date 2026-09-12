@@ -515,6 +515,55 @@ export interface ProductionPlan {
   batchSummary?: string;
 }
 
+/** The fixed phase taxonomy a production plan's work is organised into
+ *  (rendered as tabs on the plan detail page). Exported here — rather than
+ *  kept as a page-local const — so `PlanPhaseDate` and the Schedule feature
+ *  can share the same id/label list. */
+export const PRODUCTION_PHASES = [
+  { id: "colour",  label: "Colour"   },
+  { id: "shell",   label: "Shell"    },
+  { id: "filling", label: "Fillings" },
+  { id: "fill",    label: "Fill"     },
+  { id: "cap",     label: "Cap"      },
+  { id: "unmould", label: "Unmould"  },
+  { id: "package", label: "Package"  },
+] as const;
+
+export type ProductionPhaseId = typeof PRODUCTION_PHASES[number]["id"];
+
+/** An optional target date for one phase of a plan's work (e.g. "Shell on
+ *  Tuesday"), so a draft/future batch can show on the Schedule calendar
+ *  before it's started. Absence of a row = phase not yet scheduled.
+ *
+ *  Shelling and capping are split by chocolate type — tempering dark and
+ *  milk are separate sessions that often happen on different days — so those
+ *  phases carry a `coating` and get one row per chocolate type. Every other
+ *  phase leaves it unset. At most one row per (planId, phase, coating) triple.
+ *  `coating` is unindexed, so adding it needed no schema migration. */
+export interface PlanPhaseDate {
+  id?: string;
+  planId: string;
+  phase: ProductionPhaseId;
+  scheduledDate: string; // ISO date, day granularity — same convention as Order.eventDate
+  /** Chocolate/coating name for shell + cap rows ("dark", "milk"…); unset on
+   *  every other phase. Matches the `coating` on generated production steps. */
+  coating?: string;
+  /** True once every generated step in this slot is ticked off, so the
+   *  calendar can show the work as finished.
+   *
+   *  Derived state, deliberately cached here: deciding it from scratch needs
+   *  `generateSteps` (products, moulds, fillings, coating mappings…), which
+   *  the Schedule page has no business loading for every plan on screen. The
+   *  plan detail page — which computes it anyway for its tab counters —
+   *  writes it, and rewrites it whenever it's reopened, so a stale value
+   *  corrects itself on the next visit. Unindexed; no migration needed. */
+  done?: boolean;
+}
+
+/** Phases whose work is split per chocolate type, both in the plan detail
+ *  page's step lists and in scheduling. */
+export const COATING_SPLIT_PHASES: ReadonlyArray<ProductionPhaseId> = ["shell", "cap"];
+
 /** @deprecated Shelf-stability is now a per-category flag stored on `fillingCategories.shelfStable`.
  *  Kept as a legacy fallback (used only when the FillingCategory record is missing). */
 export const SHELF_STABLE_CATEGORIES = ["Fruit-Based (Pectins & Acids)", "Pralines & Giandujas (Nut-Based)"] as const;
@@ -1342,6 +1391,20 @@ export interface OrderLineItem {
   quantity: number;
   notes?: string;
   sortOrder: number;
+}
+
+/** A free-form dated task that isn't a chocolate-production phase — box
+ *  assembly, label printing, anything else worth scheduling. Optionally
+ *  linked to an Order and/or a ProductionPlan for context, but works
+ *  standalone (e.g. "print thank-you cards for Saturday" needs neither). */
+export interface PrepTask {
+  id?: string;
+  title: string;
+  scheduledDate: string; // ISO date, day granularity
+  done: boolean;
+  notes?: string;
+  orderId?: string; // optional FK → Order.id
+  planId?: string;  // optional FK → ProductionPlan.id
 }
 
 // --- Give-aways ---
