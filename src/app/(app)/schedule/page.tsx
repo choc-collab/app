@@ -141,10 +141,20 @@ export default function SchedulePage() {
   // agenda keeps every batch's phase as its own row so each stays clickable.
   const calendarItems = useMemo(() => collapsePhasesForCalendar(visibleItems), [visibleItems]);
 
+  // Ordered by what the work *is*, never by what's ticked off — see
+  // `compareScheduleItems`. Ticking a row here leaves it exactly where it was,
+  // so the header count is what tells you how far through the day you are.
   const selectedItems = useMemo(
     () => visibleItems.filter((i) => i.date === selectedDate).sort(compareScheduleItems),
     [visibleItems, selectedDate],
   );
+  const selectedDoneCount = useMemo(
+    () => selectedItems.filter((i) => i.done).length,
+    [selectedItems],
+  );
+  const agendaSummary =
+    `${selectedItems.length} item${selectedItems.length === 1 ? "" : "s"} scheduled` +
+    (selectedDoneCount > 0 ? ` · ${selectedDoneCount} done` : "");
 
   // Locale-free formatters (see lib/dailyLog) — `toLocaleDateString` resolves
   // differently in Node and the browser, which trips a hydration mismatch on
@@ -173,16 +183,14 @@ export default function SchedulePage() {
 
   const agendaPanel = (
     <div className="rounded-lg border border-border bg-card p-3 space-y-3 md:sticky md:top-4">
-      {f.view === "day" ? (
-        <CalendarNavHeader label={selectedDateLabel} onPrev={goPrev} onNext={goNext} onToday={goToday} prevLabel="Previous day" nextLabel="Next day" />
-      ) : (
-        <div>
+      <div>
+        {f.view === "day" ? (
+          <CalendarNavHeader label={selectedDateLabel} onPrev={goPrev} onNext={goNext} onToday={goToday} prevLabel="Previous day" nextLabel="Next day" />
+        ) : (
           <h2 className="font-display text-base">{selectedDateLabel}</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {selectedItems.length} item{selectedItems.length === 1 ? "" : "s"} scheduled
-          </p>
-        </div>
-      )}
+        )}
+        <p className="text-xs text-muted-foreground mt-0.5">{agendaSummary}</p>
+      </div>
 
       {selectedItems.length > 0 && (
         <ul className="space-y-2">

@@ -36,20 +36,32 @@ export interface ScheduleItem {
 
 const PHASE_INDEX = new Map(PRODUCTION_PHASES.map((p, i) => [p.id, i] as const));
 
-/** Orders first (they're the reason a day matters), then production work in
- *  the order it actually happens (colour → shell → … → package), then tasks.
- *  Shared by the month grid, the week grid and the day agenda so all three
- *  order a day the same way. */
+/**
+ * Orders first (they're the reason a day matters), then production work in the
+ * order it actually happens (colour → shell → … → package), then tasks.
+ *
+ * Deliberately ignores `done`: this orders the day agenda, which is the list
+ * you tick things off in, and a row that jumps out from under the cursor the
+ * moment you check it is disorienting. A finished item greys out where it
+ * stands instead. (The capped calendar grids want the opposite — see
+ * `compareCalendarItems`.)
+ */
 export function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
-  // Finished work sinks to the bottom of the day, whatever it is — what's
-  // left to do should be what you read first.
-  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
   const order: Record<ScheduleItemType, number> = { order: 0, phase: 1, task: 2 };
   if (a.type !== b.type) return order[a.type] - order[b.type];
   if (a.type === "phase" && a.phase && b.phase && a.phase !== b.phase) {
     return (PHASE_INDEX.get(a.phase) ?? 0) - (PHASE_INDEX.get(b.phase) ?? 0);
   }
   return a.title.localeCompare(b.title);
+}
+
+/** Ordering for the month/week grids: as above, but finished work sinks to the
+ *  bottom of the day. Those cells are capped (`MAX_CHIPS_PER_DAY`) and nothing
+ *  is tickable there, so the trade the agenda refuses is worth making — the
+ *  chips that survive the cap should be the work still outstanding. */
+export function compareCalendarItems(a: ScheduleItem, b: ScheduleItem): number {
+  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+  return compareScheduleItems(a, b);
 }
 
 /**

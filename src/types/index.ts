@@ -76,6 +76,11 @@ export interface Ingredient {
   lowStockSince?: number;     // Date.now() when flagged
   lowStockOrdered?: boolean;  // true = order placed, awaiting delivery
   outOfStock?: boolean;       // true = completely out, higher urgency than lowStock
+  /** Why/how much, carried onto the shopping list — e.g. "need 300 g — Batch #41",
+   *  written when an ingredient is flagged from a plan's ingredient checklist so the
+   *  amount survives the trip to the shop. Cleared whenever the flag is cleared.
+   *  Unindexed and optional, so adding it needed no schema migration. */
+  lowStockNote?: string;
   // Nutrition data (all values per 100g of ingredient)
   nutrition?: import("@/lib/nutrition").NutritionData;
 }
@@ -627,6 +632,22 @@ export interface PlanStepStatus {
   stepKey: string;
   done: boolean;
   doneAt?: Date;
+}
+
+/** One ticked-off line of a plan's ingredient checklist — "I have this much
+ *  butter already". Persisted (rather than kept in component state) because
+ *  checking a plan's ingredients means walking to the pantry and back, and the
+ *  answers shouldn't evaporate when the modal closes.
+ *
+ *  Only *checked* ingredients get a row; an ingredient with no row is simply
+ *  unchecked, so the table stays sparse and needs no reconciliation when a
+ *  plan's recipes change. */
+export interface PlanIngredientCheck {
+  id?: string;
+  planId: string;
+  ingredientId: string;
+  have: boolean;
+  checkedAt?: Date;
 }
 
 /** A standalone filling batch scheduled in a production plan.

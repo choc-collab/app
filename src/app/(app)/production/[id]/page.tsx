@@ -13,13 +13,16 @@ import {
   useLabelTemplates, useDefaultLabelTemplateId, useBrand, useMarketRegion,
   usePlanPhaseDates, savePlanPhaseDate, deletePlanPhaseDate, ensurePlanPhaseDates,
   applyPlanPhaseDateUpdates, setPlanPhaseDatesDone, type PlanPhaseSlot,
+  usePlanIngredientChecks, setPlanIngredientCheck, setIngredientLowStock,
 } from "@/lib/hooks";
+import { IngredientChecklistModal } from "@/components/ingredient-checklist-modal";
+import { buildIngredientChecklist, formatChecklistAmount, type ChecklistRow } from "@/lib/ingredientChecklist";
 import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, resolveCoating, FILL_FACTOR } from "@/lib/production";
 import { toISODate, formatISODate } from "@/lib/orders";
 import { cascadePhaseDateChange } from "@/lib/schedule";
 import type { Filling, Mould, PlanFilling, PlanProduct, Product, DecorationMaterial, ProductionPhaseId } from "@/types";
 import { normalizeApplyAt, PRODUCTION_PHASES, COATING_SPLIT_PHASES } from "@/types";
-import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer } from "lucide-react";
+import { ArrowLeft, RotateCcw, Pencil, Check, X, BookOpen, Beaker, StickyNote, Plus, Sprout, Trash2, ClipboardList, Printer, ListChecks } from "lucide-react";
 import { YieldModal } from "@/components/yield-modal";
 import type { YieldEntry } from "@/components/yield-modal";
 import { LeftoverModal } from "@/components/leftover-modal";
@@ -274,6 +277,7 @@ function PlanContent({
   // `null` = picker closed; "products" / "fillings" = which entity kind the
   // user clicked. Lets one picker UI serve both flows on mixed batches.
   const [printerPickerMode, setPrinterPickerMode] = useState<"products" | "fillings" | null>(null);
+  const [showChecklist, setShowChecklist] = useState(false);
 
   // Filter templates by kind so each picker only offers compatible designs.
   // Legacy templates without a kind are treated as production-batch.
@@ -367,6 +371,37 @@ function PlanContent({
     const consolidated = consolidateSharedFillings(fillingAmountsWithNested.filter((la) => !la.isFromPreviousBatch));
     return topoSortFillingsChildrenFirst(consolidated, allFillingComponentsByFilling);
   }, [fillingAmountsWithNested, allFillingComponentsByFilling]);
+
+  // ── Ingredient checklist ──────────────────────────────────────────────────
+  // "Do I have what this batch needs?", answered from the already-scaled
+  // filling amounts above rather than from recipes — cook-loss, batch
+  // multipliers, fill modes and nested fillings are all resolved by the time
+  // they get here. Shell/coating chocolate is deliberately out of scope: the
+  // question is what to buy to make the fillings.
+  const ingredientChecks = usePlanIngredientChecks(planId);
+  const checkedIngredientIds = useMemo(
+    () => new Set(ingredientChecks.filter((c) => c.have).map((c) => c.ingredientId)),
+    [ingredientChecks],
+  );
+  const flaggedIngredientIds = useMemo(
+    () => new Set(allIngredients.filter((i) => i.lowStock && i.id).map((i) => i.id!)),
+    [allIngredients],
+  );
+  const ingredientsById = useMemo(
+    () => new Map(allIngredients.filter((i) => i.id).map((i) => [i.id!, i])),
+    [allIngredients],
+  );
+  const checklistRows = useMemo(
+    () => buildIngredientChecklist(consolidatedFillings, standaloneAmounts, ingredientsById),
+    [consolidatedFillings, standaloneAmounts, ingredientsById],
+  );
+
+  async function handleFlagChecklistIngredient(row: ChecklistRow) {
+    // The amount rides along to /shopping — otherwise the number you just
+    // worked out is lost the moment you leave this page.
+    const amount = formatChecklistAmount(row.amount, row.unit);
+    await setIngredientLowStock(row.ingredientId, true, `need ${amount} — ${plan.name}`);
+  }
 
   const steps = useMemo(() =>
     generateSteps(planProducts, productNames, productFillingsMap, fillingAmountsWithNested, fillingsMap, mouldsMap, productsMap, fillingPreviousBatches, materialsMap, standaloneAmounts, productCategoryMap, allFillingComponentsByFilling, coatingNameByIngredientId),
@@ -1208,6 +1243,19 @@ function PlanContent({
               )}
             </div>
           </div>
+
+          {/* A finished batch has nothing left to shop for, so the checklist is
+              offered on draft/active plans only — same rule as the phase dates. */}
+          {plan.status !== "done" && (
+            <button
+              type="button"
+              onClick={() => setShowChecklist(true)}
+              className="btn-secondary shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
+            >
+              <ListChecks className="w-3.5 h-3.5" />
+              Ingredient checklist
+            </button>
+          )}
         </div>
 
         {/* Progress bar */}
@@ -1688,6 +1736,19 @@ function PlanContent({
           defaultId={printerPickerMode === "products" ? defaultBatchTemplateId : defaultFillingTemplateId}
           onConfirm={handleConfirmPrint}
           onCancel={() => setPrinterPickerMode(null)}
+        />
+      )}
+
+      {showChecklist && (
+        <IngredientChecklistModal
+          batchName={plan.name}
+          rows={checklistRows}
+          checkedIds={checkedIngredientIds}
+          flaggedIds={flaggedIngredientIds}
+          onToggleCheck={(ingredientId, have) => setPlanIngredientCheck(planId, ingredientId, have)}
+          onFlag={handleFlagChecklistIngredient}
+          onUnflag={(row) => setIngredientLowStock(row.ingredientId, false)}
+          onClose={() => setShowChecklist(false)}
         />
       )}
 

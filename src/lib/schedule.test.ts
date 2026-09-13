@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildScheduleItems, weekDays, stalePhaseDateIds, collapsePhasesForCalendar, compareScheduleItems,
+  buildScheduleItems, weekDays, stalePhaseDateIds, collapsePhasesForCalendar,
+  compareScheduleItems, compareCalendarItems,
   cascadePhaseDateChange,
 } from "./schedule";
 import type { Order, OrderStatus, PlanPhaseDate, ProductionPlan, PrepTask } from "@/types";
@@ -212,15 +213,16 @@ describe("compareScheduleItems", () => {
     expect([...items].sort(compareScheduleItems).map((i) => i.type)).toEqual(["order", "phase", "task"]);
   });
 
-  it("sinks finished work below whatever is still outstanding", () => {
-    const items = buildScheduleItems(
+  it("leaves finished work exactly where it was — ticking a row must not move it", () => {
+    const build = (done: boolean) => buildScheduleItems(
       [],
-      [phaseDate({ id: "pd1", planId: "p1", phase: "filling", done: true, scheduledDate: "2026-09-16" })],
+      [phaseDate({ id: "pd1", planId: "p1", phase: "filling", scheduledDate: "2026-09-16" })],
       [plan({ id: "p1" })],
-      [task({ id: "t1", scheduledDate: "2026-09-16", done: false })],
+      [task({ id: "t1", title: "Print labels", scheduledDate: "2026-09-16", done })],
     );
-    // Phases normally sort above tasks; being done demotes this one anyway.
-    expect([...items].sort(compareScheduleItems).map((i) => i.type)).toEqual(["task", "phase"]);
+    const before = [...build(false)].sort(compareScheduleItems).map((i) => i.id);
+    const after = [...build(true)].sort(compareScheduleItems).map((i) => i.id);
+    expect(after).toEqual(before);
   });
 
   it("orders production work the way the day actually runs, not alphabetically", () => {
@@ -230,6 +232,31 @@ describe("compareScheduleItems", () => {
       phaseDate({ id: "c", planId: "p1", phase: "cap", coating: "dark", scheduledDate: "2026-09-16" }),
     ], [plan({ id: "p1" })], []);
     expect([...items].sort(compareScheduleItems).map((i) => i.phase)).toEqual(["shell", "cap", "unmould"]);
+  });
+});
+
+describe("compareCalendarItems", () => {
+  it("sinks finished work below whatever is still outstanding", () => {
+    const items = buildScheduleItems(
+      [],
+      [phaseDate({ id: "pd1", planId: "p1", phase: "filling", done: true, scheduledDate: "2026-09-16" })],
+      [plan({ id: "p1" })],
+      [task({ id: "t1", scheduledDate: "2026-09-16", done: false })],
+    );
+    // Phases normally sort above tasks; being done demotes this one anyway, so
+    // the outstanding task is what survives a capped month cell.
+    expect([...items].sort(compareCalendarItems).map((i) => i.type)).toEqual(["task", "phase"]);
+  });
+
+  it("falls back to the agenda ordering when nothing is done", () => {
+    const items = buildScheduleItems(
+      [order({ id: "o1", title: "Market", eventDate: "2026-09-16" })],
+      [phaseDate({ id: "pd1", planId: "p1", phase: "shell", coating: "dark", scheduledDate: "2026-09-16" })],
+      [plan({ id: "p1" })],
+      [task({ id: "t1", scheduledDate: "2026-09-16" })],
+    );
+    expect([...items].sort(compareCalendarItems).map((i) => i.id))
+      .toEqual([...items].sort(compareScheduleItems).map((i) => i.id));
   });
 });
 

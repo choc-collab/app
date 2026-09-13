@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { MonthGridShell } from "@/components/month-grid-shell";
 import { SCHEDULE_TYPE_INK } from "@/components/schedule/schedule-style";
-import { compareScheduleItems, type ScheduleItem } from "@/lib/schedule";
+import { compareCalendarItems, type ScheduleItem } from "@/lib/schedule";
 
 const MAX_CHIPS_PER_DAY = 3;
 
@@ -38,7 +38,7 @@ export function ScheduleMonthGrid({
     if (list) list.push(item);
     else byDate.set(item.date, [item]);
   }
-  for (const list of byDate.values()) list.sort(compareScheduleItems);
+  for (const list of byDate.values()) list.sort(compareCalendarItems);
 
   return (
     <MonthGridShell

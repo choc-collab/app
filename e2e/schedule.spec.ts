@@ -19,6 +19,23 @@ function isoToday(): string {
   return isoFromToday(0);
 }
 
+/** Adds a prep task on whichever day the agenda panel currently has selected.
+ *
+ *  `handleAddTask` resets the field only after its DB write resolves, which can
+ *  be *after* the live query has already rendered the new task — so waiting on
+ *  an empty field (rather than on the task appearing) is what guarantees the
+ *  reset has landed. Without it, a second `fill` races the reset, gets wiped,
+ *  and leaves "Add task" disabled forever. */
+async function addPrepTask(page: Page, title: string) {
+  const titleInput = page.getByLabel("New task title");
+  const addButton = page.getByRole("button", { name: "Add task" });
+  await expect(titleInput).toHaveValue("");
+  await titleInput.fill(title);
+  await expect(addButton).toBeEnabled();
+  await addButton.click();
+  await expect(page.getByText(title).first()).toBeVisible();
+}
+
 async function createOrder(page: Page, title: string, date: string) {
   await page.goto("/orders?tab=orders");
   await page.getByRole("button", { name: "Add order" }).click();
@@ -283,21 +300,39 @@ test.describe("Schedule — finished work", () => {
     expect(chips[chips.length - 1]).toMatch(/^Shell/);
   });
 
-  test("a done prep task greys out and sinks too", async ({ page }) => {
+  test("a done prep task greys out and sinks on the calendar too", async ({ page }) => {
     await page.goto("/schedule");
     await page.locator(`[data-date="${isoToday()}"]`).click();
-    await page.getByLabel("New task title").fill("Assemble market boxes");
-    await page.getByRole("button", { name: "Add task" }).click();
-    await page.getByLabel("New task title").fill("Print allergen labels");
-    await page.getByRole("button", { name: "Add task" }).click();
-    await expect(page.getByText("Print allergen labels").first()).toBeVisible();
+    await addPrepTask(page, "Assemble market boxes");
+    await addPrepTask(page, "Print allergen labels");
 
-    // "Assemble" sorts first alphabetically; ticking it should drop it last.
+    // "Assemble" sorts first alphabetically; ticking it should drop it last —
+    // on the calendar, where cells are capped and nothing is tickable.
     await page.getByLabel('Mark "Assemble market boxes" done').click();
     await expect(page.getByText("Assemble market boxes").first()).toHaveClass(/line-through/);
     const todayCell = page.locator(`[data-date="${isoToday()}"]`);
     const chips = await todayCell.getByText(/labels|boxes/).allTextContents();
     expect(chips[chips.length - 1]).toBe("Assemble market boxes");
+  });
+
+  test("ticking a task in the day agenda leaves it exactly where it was", async ({ page }) => {
+    await page.goto("/schedule");
+    await page.locator(`[data-date="${isoToday()}"]`).click();
+    await addPrepTask(page, "Assemble market boxes");
+    await addPrepTask(page, "Print allergen labels");
+
+    // Only the agenda's task rows carry checkboxes, so their aria-labels are
+    // the agenda's running order.
+    const agendaOrder = () =>
+      page.getByRole("checkbox").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+    const before = await agendaOrder();
+
+    await page.getByLabel('Mark "Assemble market boxes" done').click();
+    await expect(page.getByText("Assemble market boxes").first()).toHaveClass(/line-through/);
+    // It greys out in place — nothing jumps out from under the cursor.
+    expect(await agendaOrder()).toEqual(before);
+    // Progress is reported in the header instead of by moving rows around.
+    await expect(page.getByText("2 items scheduled · 1 done")).toBeVisible();
   });
 });
 

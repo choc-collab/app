@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import dexieCloud from "dexie-cloud-addon";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay, PlanPhaseDate, PrepTask } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, AppSetting, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, GiveAwayRecord, LabelTemplate, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay, PlanPhaseDate, PrepTask, PlanIngredientCheck } from "@/types";
 import { normalizeCustomerKey } from "@/lib/orders";
 import { stalePhaseDateIds } from "@/lib/schedule";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_DECORATION_CATEGORIES, DEFAULT_SHELL_DESIGNS, DEFAULT_FILLING_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES } from "@/types";
@@ -50,6 +50,7 @@ const db = new Dexie("ChocolatierDB", { addons: [dexieCloud] }) as Dexie & {
   logDays: EntityTable<LogDay, "id">;
   planPhaseDates: EntityTable<PlanPhaseDate, "id">;
   prepTasks: EntityTable<PrepTask, "id">;
+  planIngredientChecks: EntityTable<PlanIngredientCheck, "id">;
 };
 
 // v1 — clean schema with the open-source naming (Product/Filling).
@@ -695,6 +696,18 @@ db.version(22).stores({}).upgrade(async (tx) => {
   if (stale.length > 0) await table.bulkDelete(stale);
 });
 
+// v23 — a plan's ingredient checklist: which of the ingredients its fillings
+// need the chocolatier has already confirmed they have in the pantry. Sparse —
+// only ticked ingredients get a row — so nothing needs reconciling when a
+// plan's products or recipes change; an ingredient with no row is unchecked.
+// Purely additive, no upgrade hook required.
+//
+// Indexed on `planId` (the checklist loads one plan's rows) and `ingredientId`
+// (so clearing an ingredient everywhere stays a single query).
+db.version(23).stores({
+  planIngredientChecks: "id, planId, ingredientId",
+});
+
 const cloudUrl = process.env.NEXT_PUBLIC_DEXIE_CLOUD_URL;
 export const isCloudConfigured = Boolean(cloudUrl);
 
@@ -746,6 +759,7 @@ const AUTO_ID_TABLES = [
   db.logDays,
   db.planPhaseDates,
   db.prepTasks,
+  db.planIngredientChecks,
 ];
 for (const table of AUTO_ID_TABLES) {
    

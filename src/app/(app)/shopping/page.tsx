@@ -172,9 +172,17 @@ export default function ShoppingPage() {
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {ing.category && <span className="text-xs text-muted-foreground">{ing.category}</span>}
-                              {ing.lowStockSince && (
+                              {/* How much, and what for — written when the item is
+                                  flagged from a batch's ingredient checklist. */}
+                              {ing.lowStockNote && (
                                 <>
                                   {ing.category && <span className="text-muted-foreground/40 text-xs">·</span>}
+                                  <span className="text-xs font-medium text-foreground">{ing.lowStockNote}</span>
+                                </>
+                              )}
+                              {ing.lowStockSince && (
+                                <>
+                                  {(ing.category || ing.lowStockNote) && <span className="text-muted-foreground/40 text-xs">·</span>}
                                   <span className="text-xs text-muted-foreground">flagged {timeAgo(ing.lowStockSince)}</span>
                                 </>
                               )}

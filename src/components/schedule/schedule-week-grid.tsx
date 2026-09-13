@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { CalendarNavHeader } from "@/components/calendar-nav-header";
 import { SCHEDULE_TYPE_INK } from "@/components/schedule/schedule-style";
-import { compareScheduleItems, type ScheduleItem } from "@/lib/schedule";
+import { compareCalendarItems, type ScheduleItem } from "@/lib/schedule";
 
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -38,7 +38,7 @@ export function ScheduleWeekGrid({
     if (list) list.push(item);
     else byDate.set(item.date, [item]);
   }
-  for (const list of byDate.values()) list.sort(compareScheduleItems);
+  for (const list of byDate.values()) list.sort(compareCalendarItems);
 
   return (
     <div className="space-y-2">

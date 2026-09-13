@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, isCloudConfigured } from "@/lib/db";
 import { sanitizeBrand } from "@/lib/brand-sanitize";
-import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay, PlanPhaseDate, PrepTask, ProductionPhaseId } from "@/types";
+import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay, PlanPhaseDate, PrepTask, ProductionPhaseId, PlanIngredientCheck } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
@@ -1306,7 +1306,7 @@ export async function saveProductionPlan(plan: Omit<ProductionPlan, "id"> & { id
 }
 
 export async function deleteProductionPlan(id: string) {
-  await db.transaction("rw", [db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.orderProductionLinks, db.planPhaseDates, db.prepTasks], async () => {
+  await db.transaction("rw", [db.productionPlans, db.planProducts, db.planFillings, db.planStepStatus, db.orderProductionLinks, db.planPhaseDates, db.prepTasks, db.planIngredientChecks], async () => {
     await db.planProducts.where("planId").equals(id).delete();
     // planFillings was previously missed here, orphaning standalone-filling
     // rows whenever a fillings-only/hybrid plan was deleted.
@@ -1315,6 +1315,7 @@ export async function deleteProductionPlan(id: string) {
     await db.orderProductionLinks.where("planId").equals(id).delete();
     await db.planPhaseDates.where("planId").equals(id).delete();
     await db.prepTasks.where("planId").equals(id).delete();
+    await db.planIngredientChecks.where("planId").equals(id).delete();
     await db.productionPlans.delete(id);
   });
 }
@@ -1900,6 +1901,50 @@ export function usePlanStepStatuses(planId: string | undefined) {
  *  of N per-plan live subscriptions. Consumer builds a `Map<planId, Set<stepKey>>`. */
 export function useAllPlanStepStatuses(): PlanStepStatus[] {
   return useLiveQuery(() => db.planStepStatus.toArray()) ?? [];
+}
+
+/** Ticked-off rows of a plan's ingredient checklist. Sparse — an ingredient
+ *  with no row is simply unchecked. */
+export function usePlanIngredientChecks(planId: string | undefined): PlanIngredientCheck[] {
+  return useLiveQuery(
+    () => planId ? db.planIngredientChecks.where("planId").equals(planId).toArray() : [],
+    [planId],
+  ) ?? [];
+}
+
+/**
+ * Tick or untick one ingredient on a plan's checklist.
+ *
+ * Resolves the existing row *inside* the transaction rather than from a
+ * `useLiveQuery` snapshot: every hook here ends `?? []`, so "still loading" and
+ * "genuinely empty" look identical to a caller, and deciding "there's no row
+ * yet" from a React render is exactly how the phase-dates table ended up with
+ * duplicate rows. Unticking deletes the row rather than storing `have: false`,
+ * keeping the table sparse.
+ */
+export async function setPlanIngredientCheck(
+  planId: string,
+  ingredientId: string,
+  have: boolean,
+): Promise<void> {
+  await db.transaction("rw", db.planIngredientChecks, async () => {
+    const existing = await db.planIngredientChecks
+      .where("planId").equals(planId)
+      .filter((row) => row.ingredientId === ingredientId)
+      .toArray();
+    if (!have) {
+      for (const row of existing) if (row.id) await db.planIngredientChecks.delete(row.id);
+      return;
+    }
+    if (existing.length > 0) {
+      // Keep the first, drop any accidental duplicates so the table self-heals.
+      const [keep, ...extra] = existing;
+      if (keep.id) await db.planIngredientChecks.update(keep.id, { have: true, checkedAt: new Date() });
+      for (const row of extra) if (row.id) await db.planIngredientChecks.delete(row.id);
+      return;
+    }
+    await db.planIngredientChecks.add({ planId, ingredientId, have: true, checkedAt: new Date() } as PlanIngredientCheck);
+  });
 }
 
 export async function toggleStep(planId: string, stepKey: string, done: boolean) {
@@ -3075,11 +3120,17 @@ export async function deletePackagingOrder(id: string): Promise<void> {
 
 // --- Shopping list ---
 
-export async function setIngredientLowStock(id: string, lowStock: boolean): Promise<void> {
+/** Flag/unflag an ingredient for the shopping list.
+ *
+ *  `note` rides along to `/shopping` — the plan ingredient checklist passes the
+ *  amount it just worked out ("need 300 g — Batch #41") so the number survives
+ *  the trip to the wholesaler. Unflagging always clears it: a note about an
+ *  amount you no longer need is worse than no note. */
+export async function setIngredientLowStock(id: string, lowStock: boolean, note?: string): Promise<void> {
   if (lowStock) {
-    await db.ingredients.update(id, { lowStock: true, lowStockSince: Date.now(), lowStockOrdered: false });
+    await db.ingredients.update(id, { lowStock: true, lowStockSince: Date.now(), lowStockOrdered: false, lowStockNote: note });
   } else {
-    await db.ingredients.update(id, { lowStock: false, lowStockSince: undefined, lowStockOrdered: false, outOfStock: false });
+    await db.ingredients.update(id, { lowStock: false, lowStockSince: undefined, lowStockOrdered: false, outOfStock: false, lowStockNote: undefined });
   }
 }
 
@@ -3087,7 +3138,7 @@ export async function setIngredientOutOfStock(id: string, outOfStock: boolean): 
   if (outOfStock) {
     await db.ingredients.update(id, { outOfStock: true, lowStock: true, lowStockSince: Date.now(), lowStockOrdered: false });
   } else {
-    await db.ingredients.update(id, { outOfStock: false, lowStock: false, lowStockSince: undefined, lowStockOrdered: false });
+    await db.ingredients.update(id, { outOfStock: false, lowStock: false, lowStockSince: undefined, lowStockOrdered: false, lowStockNote: undefined });
   }
 }
 
