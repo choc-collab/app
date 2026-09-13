@@ -354,22 +354,78 @@ describe("computeDigestIndex — schedule", () => {
     { id: "o1", title: "Autumn Market", eventDate: DAY, status: "confirmed", createdAt: at(DAY), updatedAt: at(DAY) },
   ];
 
-  it("logs a phase date under the plan it belongs to, linking to that phase's tab", () => {
+  it("says the batch was scheduled, naming the batch rather than the phase", () => {
     const planPhaseDates: PlanPhaseDate[] = [{ id: "pd1", planId: "p1", phase: "shell", coating: "dark", scheduledDate: DAY }];
     const day = computeDigestIndex({ plans, planPhaseDates }).get(DAY)!;
     // `plans` also contributes its own "Started batch" workshop line on this
     // same day — scope the assertion to the schedule line under test.
     const line = day.lines.find((l) => l.area === "schedule")!;
-    expect(line.text).toBe("Scheduled: Shell · dark");
-    expect(line.detail).toBe("Batch #41 · 20260909-001");
-    expect(line.href).toBe("/production/p1?tab=shell");
+    expect(line.text).toBe("Scheduled: Batch #41 · 20260909-001");
+    expect(line.href).toBe("/production/p1");
     expect(day.counts.schedule).toBe(1);
   });
 
-  it("labels a phase date orphaned from its plan generically, without a detail", () => {
+  it("collapses a whole batch's phases into a single scheduled line", () => {
+    // A full batch puts six phases on one day; listing each one buried every
+    // other line in the digest.
+    const planPhaseDates: PlanPhaseDate[] = [
+      { id: "pd1", planId: "p1", phase: "colour", scheduledDate: DAY },
+      { id: "pd2", planId: "p1", phase: "shell", coating: "dark", scheduledDate: DAY },
+      { id: "pd3", planId: "p1", phase: "filling", scheduledDate: DAY },
+      { id: "pd4", planId: "p1", phase: "cap", coating: "dark", scheduledDate: DAY },
+    ];
+    const day = computeDigestIndex({ plans, planPhaseDates }).get(DAY)!;
+    expect(day.lines.filter((l) => l.area === "schedule")).toHaveLength(1);
+    expect(day.counts.schedule).toBe(1);
+  });
+
+  it("still names the phase once it has actually been completed", () => {
+    const planPhaseDates: PlanPhaseDate[] = [
+      { id: "pd1", planId: "p1", phase: "shell", coating: "dark", scheduledDate: DAY, done: true },
+      { id: "pd2", planId: "p1", phase: "cap", coating: "dark", scheduledDate: DAY },
+    ];
+    const schedule = computeDigestIndex({ plans, planPhaseDates }).get(DAY)!.lines
+      .filter((l) => l.area === "schedule");
+    // Finished work is named; what's merely planned stays collapsed.
+    expect(schedule.map((l) => l.text).sort()).toEqual([
+      "Done: Shell · dark",
+      "Scheduled: Batch #41 · 20260909-001",
+    ]);
+    const done = schedule.find((l) => l.text.startsWith("Done"))!;
+    expect(done.detail).toBe("Batch #41 · 20260909-001");
+    expect(done.href).toBe("/production/p1?tab=shell");
+  });
+
+  it("drops the scheduled line entirely once every phase that day is done", () => {
+    const planPhaseDates: PlanPhaseDate[] = [
+      { id: "pd1", planId: "p1", phase: "shell", coating: "dark", scheduledDate: DAY, done: true },
+    ];
+    const schedule = computeDigestIndex({ plans, planPhaseDates }).get(DAY)!.lines
+      .filter((l) => l.area === "schedule");
+    expect(schedule.map((l) => l.text)).toEqual(["Done: Shell · dark"]);
+  });
+
+  it("keeps two batches scheduled on one day as two lines", () => {
+    const twoPlans: ProductionPlan[] = [
+      ...plans,
+      { id: "p2", name: "Batch #42", status: "draft", createdAt: at(DAY), updatedAt: at(DAY) },
+    ];
+    const planPhaseDates: PlanPhaseDate[] = [
+      { id: "pd1", planId: "p1", phase: "shell", coating: "dark", scheduledDate: DAY },
+      { id: "pd2", planId: "p2", phase: "filling", scheduledDate: DAY },
+    ];
+    const schedule = computeDigestIndex({ plans: twoPlans, planPhaseDates }).get(DAY)!.lines
+      .filter((l) => l.area === "schedule");
+    expect(schedule.map((l) => l.text).sort()).toEqual([
+      "Scheduled: Batch #41 · 20260909-001",
+      "Scheduled: Batch #42",
+    ]);
+  });
+
+  it("labels a phase date orphaned from its plan generically", () => {
     const planPhaseDates: PlanPhaseDate[] = [{ id: "pd1", planId: "missing", phase: "unmould", scheduledDate: DAY }];
     const line = computeDigestIndex({ planPhaseDates }).get(DAY)!.lines[0];
-    expect(line.text).toBe("Scheduled: Unmould");
+    expect(line.text).toBe("Scheduled: production batch");
     expect(line.detail).toBeUndefined();
   });
 

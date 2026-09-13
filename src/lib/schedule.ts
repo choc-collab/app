@@ -36,6 +36,10 @@ export interface ScheduleItem {
 
 const PHASE_INDEX = new Map(PRODUCTION_PHASES.map((p, i) => [p.id, i] as const));
 
+/** Tells the plan detail page to send you back to the calendar rather than to
+ *  the production list — see `resolveBackHref`, which allowlists this value. */
+const FROM_SCHEDULE = encodeURIComponent("/schedule");
+
 /**
  * Orders first (they're the reason a day matters), then production work in the
  * order it actually happens (colour → shell → … → package), then tasks.
@@ -155,7 +159,7 @@ export function buildScheduleItems(
       id: `phase-${pd.id ?? ""}`,
       sourceId: pd.id,
       title: `${planName} — ${phaseLabel}`,
-      href: `/production/${encodeURIComponent(pd.planId)}?tab=${pd.phase}`,
+      href: `/production/${encodeURIComponent(pd.planId)}?tab=${pd.phase}&from=${FROM_SCHEDULE}`,
       done: pd.done,
       planId: pd.planId,
       planName,
@@ -174,7 +178,7 @@ export function buildScheduleItems(
       href: t.orderId
         ? `/orders/${encodeURIComponent(t.orderId)}`
         : t.planId
-          ? `/production/${encodeURIComponent(t.planId)}`
+          ? `/production/${encodeURIComponent(t.planId)}?from=${FROM_SCHEDULE}`
           : undefined,
       done: t.done,
     });

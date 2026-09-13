@@ -222,6 +222,12 @@ async function createMouldedPlan(page: Page) {
   if (hasBatchSizesStep) await continueBtn.first().click();
   await page.getByRole("button", { name: /Create plan/ }).click();
   await expect(page).toHaveURL(/\/production\/(?!new)[^/?]+/, { timeout: 30_000 });
+  // The plan page seeds every phase's scheduled date to today on mount. Wait
+  // for that write to surface before handing back: a caller that navigates away
+  // immediately can tear the transaction down mid-flight, and since nothing
+  // re-seeds until the plan is opened again, the batch then never appears on
+  // the calendar at all.
+  await expect(page.getByLabel(/^Scheduled for/).first()).toHaveValue(isoToday());
 }
 
 test.describe("Schedule — phases run in sequence", () => {
@@ -349,7 +355,12 @@ test.describe("Schedule — upgrading data written before shell/cap split by cho
 
     await stripCoatingFromPhase(page, "cap");
     await page.goto(planUrl);
-    await expect(page.getByLabel(/^Scheduled for/).first()).toBeVisible();
+    // Opening the plan is what heals the legacy row. Wait for the replacement
+    // to actually show its *inherited* date before navigating away — both
+    // because that's the behaviour under test, and because leaving too early
+    // can tear down the reconciling transaction mid-flight.
+    await page.getByRole("button", { name: /^Cap\b/ }).click();
+    await expect(page.getByLabel(/^Scheduled for .+/).first()).toHaveValue(isoFromToday(6));
 
     await page.goto("/schedule");
     // One chip, on the day the legacy row held — not stranded there *and*
@@ -382,6 +393,26 @@ test.describe("Schedule — shelling and capping per chocolate type", () => {
     await expect(movedDay.getByText(/^Shell · /)).toBeVisible();
     // Chips are one per task, counted in batches rather than repeated per batch.
     await expect(movedDay.getByText(/· 1 batch/).first()).toBeVisible();
+  });
+});
+
+test.describe("Schedule — navigation back", () => {
+  test("opening a batch from a calendar chip offers Schedule as the way back, not Production", async ({ page }) => {
+    test.setTimeout(150_000);
+    await createMouldedPlan(page);
+
+    await page.goto("/schedule");
+    await page.getByRole("group", { name: "Schedule view" }).getByRole("button", { name: "Week", exact: true }).click();
+    await page.locator(`[data-date="${isoToday()}"]`).getByText(/^Fillings/).first().click();
+
+    await expect(page).toHaveURL(/\/production\/(?!new)[^/?]+/);
+    // Scoped to the page body — the side nav has its own "Schedule" link, which
+    // would make this pass without the breadcrumb ever changing.
+    const back = page.locator("main").getByRole("link", { name: "Schedule" });
+    await expect(back).toBeVisible();
+    await expect(page.locator("main").getByRole("link", { name: "Production" })).toHaveCount(0);
+    await back.click();
+    await expect(page).toHaveURL(/\/schedule\/?$/);
   });
 });
 

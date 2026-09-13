@@ -15,6 +15,7 @@ import {
   applyPlanPhaseDateUpdates, setPlanPhaseDatesDone, type PlanPhaseSlot,
   usePlanIngredientChecks, setPlanIngredientCheck, setIngredientLowStock,
 } from "@/lib/hooks";
+import { resolveBackHref } from "@/lib/back-href";
 import { IngredientChecklistModal } from "@/components/ingredient-checklist-modal";
 import { buildIngredientChecklist, formatChecklistAmount, type ChecklistRow } from "@/lib/ingredientChecklist";
 import { generateSteps, calculateFillingAmounts, calculateStandaloneFillingAmounts, consolidateSharedFillings, expandNestedFillings, attachScaledNestedFillings, topoSortFillingsChildrenFirst, generateBatchSummary, getMouldSlots, getTotalCavities, formatMouldList, hasAlternativeMouldSetup, resolveCoating, FILL_FACTOR } from "@/lib/production";
@@ -155,22 +156,13 @@ function PlanContent({
   const [backHref, setBackHref] = useState("/production");
   const [backLabel, setBackLabel] = useState("Production");
 
-  const sanitizeBackHref = (value: string | null): string | null => {
-    if (!value) return null;
-    if (!value.startsWith("/") || value.startsWith("//")) return null;
-    try {
-      const parsed = new URL(value, window.location.origin);
-      if (parsed.origin !== window.location.origin) return null;
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    } catch {
-      return null;
-    }
-  };
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const from = sanitizeBackHref(params.get("from"));
-    if (from) { setBackHref(from); setBackLabel("Back to product"); }
+    // Allowlist rather than sanitise — `from` is attacker-controlled, and the
+    // label has to match where you actually came from (the old inline version
+    // said "Back to product" no matter what).
+    const from = resolveBackHref(params.get("from"));
+    if (from) { setBackHref(from.href); setBackLabel(from.label); }
     const tab = params.get("tab") as PhaseId | null;
     if (tab && PHASES.some((p) => p.id === tab)) setActivePhase(tab);
   }, []);

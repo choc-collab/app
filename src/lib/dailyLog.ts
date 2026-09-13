@@ -440,18 +440,41 @@ export function computeDigestIndex(src: LogSources): Map<string, DayDigest> {
   }
 
   // ── Schedule: production phase dates + prep tasks ──
+  //
+  // Scheduling collapses to one line per batch per day — "I planned this batch
+  // for today" is the fact worth logging, and a full batch drops six phases on
+  // a single day, which buried every other line in the digest. A phase that has
+  // actually been *completed* still earns its own line: that's work done, not
+  // work planned.
+  const scheduledPlanIdsByDate = new Map<string, Set<string>>();
   for (const pd of src.planPhaseDates ?? []) {
     if (!pd.id || !isSchedulablePhaseRow(pd)) continue;
-    const plan = planById.get(pd.planId);
-    const phaseLabel = pd.coating
-      ? `${SCHEDULE_PHASE_LABEL[pd.phase]} · ${pd.coating}`
-      : SCHEDULE_PHASE_LABEL[pd.phase];
-    add(pd.scheduledDate, {
-      key: `phase-date-${pd.id}`, area: "schedule", rank: 10,
-      href: `/production/${encodeURIComponent(pd.planId)}?tab=${pd.phase}`,
-      text: `Scheduled: ${phaseLabel}`,
-      detail: plan ? planLabel(plan) : undefined,
-    });
+    if (pd.done) {
+      const plan = planById.get(pd.planId);
+      const phaseLabel = pd.coating
+        ? `${SCHEDULE_PHASE_LABEL[pd.phase]} · ${pd.coating}`
+        : SCHEDULE_PHASE_LABEL[pd.phase];
+      add(pd.scheduledDate, {
+        key: `phase-done-${pd.id}`, area: "schedule", rank: 10,
+        href: `/production/${encodeURIComponent(pd.planId)}?tab=${pd.phase}`,
+        text: `Done: ${phaseLabel}`,
+        detail: plan ? planLabel(plan) : undefined,
+      });
+      continue;
+    }
+    const forDate = scheduledPlanIdsByDate.get(pd.scheduledDate);
+    if (forDate) forDate.add(pd.planId);
+    else scheduledPlanIdsByDate.set(pd.scheduledDate, new Set([pd.planId]));
+  }
+  for (const [date, planIds] of scheduledPlanIdsByDate) {
+    for (const planId of planIds) {
+      const plan = planById.get(planId);
+      add(date, {
+        key: `plan-scheduled-${planId}`, area: "schedule", rank: 15,
+        href: `/production/${encodeURIComponent(planId)}`,
+        text: `Scheduled: ${plan ? planLabel(plan) : "production batch"}`,
+      });
+    }
   }
   for (const t of src.prepTasks ?? []) {
     if (!t.id) continue;

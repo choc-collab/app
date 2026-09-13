@@ -6,6 +6,10 @@ describe("resolveBackHref", () => {
     expect(resolveBackHref("/production")).toEqual({ href: "/production", label: "Production" });
   });
 
+  it("accepts the schedule route, so a batch opened from a calendar chip goes back to it", () => {
+    expect(resolveBackHref("/schedule")).toEqual({ href: "/schedule", label: "Schedule" });
+  });
+
   it("accepts a product history route and preserves the id", () => {
     const id = "0f9c1a2b-3d4e-5f60-8a9b-1c2d3e4f5a6b";
     expect(resolveBackHref(`/products/${id}?tab=history`)).toEqual({

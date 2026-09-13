@@ -88,7 +88,7 @@ describe("buildScheduleItems", () => {
       date: "2026-09-14",
       type: "phase",
       title: "Batch #41 — Shell · dark",
-      href: "/production/p1?tab=shell",
+      href: "/production/p1?tab=shell&from=%2Fschedule",
       sourceId: "pd1",
     });
   });
@@ -105,7 +105,8 @@ describe("buildScheduleItems", () => {
 
   it("links a task to its plan when only a plan is set", () => {
     const items = buildScheduleItems([], [], [], [task({ orderId: undefined, planId: "p1" })]);
-    expect(items[0].href).toBe("/production/p1");
+    // Carries `from` so the plan page sends you back to the calendar.
+    expect(items[0].href).toBe("/production/p1?from=%2Fschedule");
   });
 
   it("ignores a coating-less shell/cap row — a leftover from before those split by chocolate type", () => {
@@ -166,7 +167,7 @@ describe("collapsePhasesForCalendar", () => {
     const items = phaseItems([phaseDate({ id: "a", planId: "p1", phase: "cap", coating: "dark" })]);
     const collapsed = collapsePhasesForCalendar(items);
     expect(collapsed[0].title).toBe("Cap · dark · 1 batch");
-    expect(collapsed[0].href).toBe("/production/p1?tab=cap");
+    expect(collapsed[0].href).toBe("/production/p1?tab=cap&from=%2Fschedule");
   });
 
   it("only counts a pooled chip as done when every batch in it is", () => {
