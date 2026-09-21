@@ -2,10 +2,16 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  // Screenshot generation is a manual script (npm run docs:screenshots),
-  // not part of the e2e test suite. Excluded from default runs; included
-  // when PLAYWRIGHT_DOCS=1 is set by the docs:screenshots npm script.
-  testIgnore: process.env.PLAYWRIGHT_DOCS ? undefined : ["**/docs-screenshots.spec.ts"],
+  // Two suites are excluded from the default dev run:
+  //  - docs-screenshots: a manual script (npm run docs:screenshots), included
+  //    only when PLAYWRIGHT_DOCS=1 is set by that npm script.
+  //  - hydration: asserts against the STATIC EXPORT in out/ (route trees, _spa
+  //    shells, _redirects rewrites). `next dev` renders on the fly and produces
+  //    none of that, so these can only run via npm run test:e2e:prod, which
+  //    uses playwright.prod.config.ts.
+  testIgnore: process.env.PLAYWRIGHT_DOCS
+    ? ["**/hydration.spec.ts"]
+    : ["**/docs-screenshots.spec.ts", "**/hydration.spec.ts"],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
