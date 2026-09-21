@@ -30,7 +30,10 @@ const navItems: NavItem[] = [
   { href: "/", label: "Home", icon: HomeIcon },
   { href: "/library", label: "Library", icon: LibraryIcon },
   { href: "/workshop", label: "Workshop", icon: ChocolateIcon },
-  { href: "/lab", label: "Lab", icon: FlaskIcon },
+  // Disabled to match side-nav: the Lab recipe-versioning feature was deferred in
+  // v0.7 (calculator/[id] lives on feature/lab-recipe-versioning), so /lab still
+  // renders but every route it pushes to — /calculator/<id> — 404s.
+  { href: "/lab", label: "Lab", icon: FlaskIcon, disabled: true },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
