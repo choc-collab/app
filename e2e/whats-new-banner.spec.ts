@@ -1,7 +1,15 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 const BANNER = '[data-testid="whats-new-banner"]';
+
+/** The release the app currently reports (next.config.ts feeds package.json's
+ *  version in as NEXT_PUBLIC_APP_VERSION). Read here rather than hard-coded so
+ *  a version bump doesn't silently invalidate the "already current" case. */
+const APP_VERSION = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
+).version;
 
 async function setLastSeenVersion(page: Page, version: string | null) {
   await page.evaluate(async (v) => {
@@ -133,7 +141,7 @@ test.describe("What's new banner", () => {
     await expect(page.getByText("Already Current").first()).toBeVisible({ timeout: 15000 });
 
     // Already on the current release — no banner at all, so no callout.
-    await setLastSeenVersion(page, "0.9.0");
+    await setLastSeenVersion(page, APP_VERSION);
     await page.reload();
     await expect(page.getByText("Already Current").first()).toBeVisible({ timeout: 15000 });
     await expect(page.locator(BANNER)).toHaveCount(0);

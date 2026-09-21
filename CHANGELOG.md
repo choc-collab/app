@@ -4,6 +4,14 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
+## [0.9.1] — 2026-09-21
+
+### Added
+- **Archive or delete a customer straight from the list** — tidying up a customer added by mistake meant opening their page first. Each row in the Customers tab now carries the same three-way action the detail page has: customers with no orders get a **Delete**, customers with orders get an **Archive** instead (a hard delete would strand their order history, so it stays blocked), and archived ones restore in a single tap. The confirmation opens below the row, so you can still see who you're about to remove while you confirm, and Escape backs out. A **Show archived** filter joins the toolbar — archived customers were previously impossible to see in the list at all, so restoring one meant finding an order that referenced it.
+
+### Fixed
+- **The Lab tab no longer leads nowhere on a phone** — Lab was switched off in the desktop sidebar when its recipe-versioning work was deferred, but the mobile bottom bar kept an active link to it. Following it and opening an experiment landed on a page that isn't part of this build. The mobile tab is now greyed out to match the sidebar.
+
 ## [0.9.0] — 2026-09-10
 
 ### Added
