@@ -8,6 +8,8 @@ import Link from "next/link";
  *  - Border colour driven by stock status (alert / warn / default)
  *  - A Next.js <Link> that fills the row, ending with a ChevronRight
  *  - An optional `action` slot on the right (e.g. a ShoppingCart toggle button)
+ *  - An optional `footer` slot rendered *below* the row, still inside the <li>
+ *    (e.g. an inline delete/archive confirmation)
  *
  * @example
  * <ListItemCard
@@ -27,6 +29,7 @@ export function ListItemCard({
   archived,
   children,
   action,
+  footer,
 }: {
   href: string;
   lowStock?: boolean;
@@ -37,6 +40,9 @@ export function ListItemCard({
   children: React.ReactNode;
   /** Optional element rendered to the right of the link, outside the link hitbox. */
   action?: React.ReactNode;
+  /** Optional block rendered below the row, inside the same <li> — used for
+   *  inline confirmations so the row above stays readable while confirming. */
+  footer?: React.ReactNode;
 }) {
   const borderClass = outOfStock
     ? "border-status-alert-edge"
@@ -49,7 +55,7 @@ export function ListItemCard({
   return (
     <li
       className={`rounded-lg border bg-card ${borderClass}`}
-      style={{ contentVisibility: "auto", containIntrinsicSize: "0 56px" }}
+      style={footer ? undefined : { contentVisibility: "auto", containIntrinsicSize: "0 56px" }}
     >
       <div className="flex items-center min-w-0">
         <Link href={href} className="flex items-center gap-3 p-3 min-w-0 flex-1">
@@ -58,6 +64,7 @@ export function ListItemCard({
         </Link>
         {action}
       </div>
+      {footer}
     </li>
   );
 }

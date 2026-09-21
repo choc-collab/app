@@ -16,11 +16,12 @@ import { useState, useMemo, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { ListCalendarToggle, type ListCalendarView } from "@/components/list-calendar-toggle";
-import { ListToolbar, QuickAddForm, EmptyState, ListItemCard, FilterPanel, FilterChipGroup } from "@/components/pantry";
+import { ListToolbar, QuickAddForm, EmptyState, ListItemCard, FilterPanel, FilterChipGroup, ArchiveFilterChip } from "@/components/pantry";
 import { MonthGrid } from "@/components/orders/month-grid";
 import { OrdersTable, type OrdersTableGroup } from "@/components/orders/orders-table";
 import {
   useOrders, saveOrder, useCustomers, saveCustomer,
+  deleteCustomer, archiveCustomer, unarchiveCustomer,
   useAllOrderLineItems, useAllOrderProductionLinks, useProductionPlans,
 } from "@/lib/hooks";
 import {
@@ -34,6 +35,7 @@ import {
   type OrderPeriod,
 } from "@/lib/orders";
 import type { OrderStatus, Customer } from "@/types";
+import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import { useNShortcut } from "@/lib/use-n-shortcut";
 import { usePersistedFilters } from "@/lib/use-persisted-filters";
 
@@ -461,14 +463,26 @@ function OrdersTab() {
 
 function CustomersTab() {
   const router = useRouter();
-  const [f, setF] = usePersistedFilters("customers", { search: "", showArchived: false });
+  const [f, setF] = usePersistedFilters("customers", { search: "", showArchived: false, showFilters: false });
   const customers = useCustomers(f.showArchived);
   const orders = useOrders();
 
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
+  // Which row is showing its archive/delete confirmation — at most one at a time.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   useNShortcut(() => setShowAdd(true), showAdd);
+
+  // Escape closes an open confirmation, matching the detail page.
+  useEffect(() => {
+    if (!confirmId) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setConfirmId(null);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [confirmId]);
 
   const orderCountByCustomer = useMemo(() => {
     const m = new Map<string, number>();
@@ -512,7 +526,20 @@ function CustomersTab() {
         onAdd={() => setShowAdd(true)}
         addAriaLabel="Add customer"
         addTitle="Add customer (n)"
+        showFilters
+        filterPanelOpen={f.showFilters}
+        onToggleFilters={() => setF("showFilters", !f.showFilters)}
+        activeFilterCount={f.showArchived ? 1 : 0}
       />
+
+      {f.showFilters && (
+        <FilterPanel
+          activeFilterCount={f.showArchived ? 1 : 0}
+          onClearAll={() => setF("showArchived", false)}
+        >
+          <ArchiveFilterChip value={f.showArchived} onChange={(v) => setF("showArchived", v)} />
+        </FilterPanel>
+      )}
 
       {showAdd && (
         <QuickAddForm
@@ -540,28 +567,148 @@ function CustomersTab() {
 
       <ul className="space-y-2">
         {filtered.map((c) => (
-          <ListItemCard
+          <CustomerRow
             key={c.id}
-            href={`/orders/customers/${encodeURIComponent(c.id!)}`}
-            archived={c.archived}
-          >
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-medium text-sm truncate">{c.name}</span>
-                {c.archived && (
-                  <span className="rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-[10px] font-medium shrink-0">
-                    Archived
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground truncate mt-0.5">
-                {customerSubtitle(c, orderCountByCustomer.get(c.id ?? "") ?? 0)}
-              </p>
-            </div>
-          </ListItemCard>
+            customer={c}
+            orderCount={orderCountByCustomer.get(c.id ?? "") ?? 0}
+            confirming={confirmId === c.id}
+            onConfirmChange={(open) => setConfirmId(open ? c.id! : null)}
+          />
         ))}
       </ul>
     </div>
+  );
+}
+
+/** One customer row, with the same three-way archive/delete logic the detail
+ *  page uses: customers with orders can only be archived (deleteCustomer
+ *  refuses them), the rest are deletable, and archived ones get a one-tap
+ *  restore. The confirmation renders below the row so the name stays visible
+ *  while you confirm. */
+function CustomerRow({
+  customer,
+  orderCount,
+  confirming,
+  onConfirmChange,
+}: {
+  customer: Customer;
+  orderCount: number;
+  confirming: boolean;
+  onConfirmChange: (open: boolean) => void;
+}) {
+  const id = customer.id!;
+  const [error, setError] = useState<string | null>(null);
+  const mode = customer.archived ? "unarchive" : orderCount > 0 ? "archive" : "delete";
+
+  function close() {
+    setError(null);
+    onConfirmChange(false);
+  }
+
+  async function run(action: () => Promise<void>) {
+    try {
+      await action();
+      close();
+    } catch (e) {
+      // Only reachable if an order was attached between render and click.
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    }
+  }
+
+  const action =
+    mode === "unarchive" ? (
+      <button
+        type="button"
+        onClick={() => void run(() => unarchiveCustomer(id))}
+        aria-label={`Unarchive ${customer.name}`}
+        title="Unarchive customer"
+        className="p-3 text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ArchiveRestore aria-hidden="true" className="w-4 h-4" />
+      </button>
+    ) : (
+      <button
+        type="button"
+        onClick={() => onConfirmChange(!confirming)}
+        aria-label={`${mode === "archive" ? "Archive" : "Delete"} ${customer.name}`}
+        aria-expanded={confirming}
+        title={mode === "archive" ? "Archive customer" : "Delete customer"}
+        className={`p-3 text-muted-foreground transition-colors ${
+          mode === "archive" ? "hover:text-foreground" : "hover:text-destructive"
+        }`}
+      >
+        {mode === "archive" ? (
+          <Archive aria-hidden="true" className="w-4 h-4" />
+        ) : (
+          <Trash2 aria-hidden="true" className="w-4 h-4" />
+        )}
+      </button>
+    );
+
+  let footer: React.ReactNode = null;
+  if (confirming && mode === "archive") {
+    footer = (
+      <div className="border-t border-border p-3 space-y-2">
+        <p className="text-sm font-medium">Archive {customer.name}?</p>
+        <p className="text-xs text-muted-foreground">
+          {orderCount === 1 ? "1 order references" : `${orderCount} orders reference`} this customer,
+          so it can&apos;t be deleted. Archiving hides it from pickers; existing orders keep it.
+        </p>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="flex gap-2">
+          <button onClick={() => void run(() => archiveCustomer(id))} className="btn-primary px-4 py-2">
+            Archive customer
+          </button>
+          <button onClick={close} className="btn-secondary px-4 py-2">
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  } else if (confirming && mode === "delete") {
+    footer = (
+      <div className="border-t border-destructive/30 bg-destructive/5 p-3 space-y-2 rounded-b-lg">
+        <p className="text-sm font-medium text-destructive">Delete {customer.name}?</p>
+        <p className="text-xs text-muted-foreground">
+          This permanently removes the customer and their contact details. This cannot be undone.
+        </p>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="flex gap-2">
+          <button
+            onClick={() => void run(() => deleteCustomer(id))}
+            className="inline-flex items-center justify-center rounded-full bg-destructive text-white px-4 py-2 text-sm font-medium transition-colors hover:bg-destructive/90"
+          >
+            Yes, delete customer
+          </button>
+          <button onClick={close} className="btn-secondary px-4 py-2">
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ListItemCard
+      href={`/orders/customers/${encodeURIComponent(id)}`}
+      archived={customer.archived}
+      action={action}
+      footer={footer}
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-medium text-sm truncate">{customer.name}</span>
+          {customer.archived && (
+            <span className="rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-[10px] font-medium shrink-0">
+              Archived
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground truncate mt-0.5">
+          {customerSubtitle(customer, orderCount)}
+        </p>
+      </div>
+    </ListItemCard>
   );
 }
 

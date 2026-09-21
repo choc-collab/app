@@ -165,6 +165,63 @@ test.describe("Customers — tab & detail", () => {
     await page.getByRole("button", { name: "Yes, delete customer" }).click();
     await expect(page).toHaveURL(/\/orders\/?\?tab=customers/);
     await expect(page.getByText("No customers yet", { exact: false })).toBeVisible();
+
+  });
+  // ── Row actions on the Customers list ──────────────────────────────────────
+  // Same three-way logic as the detail page, but without having to open the
+  // customer first. Regression guard: the detail page is the ONLY other place
+  // these live, so if it becomes unreachable the list still works.
+
+  test("list row two-step deletes an unused customer", async ({ page }) => {
+    await createCustomer(page, "Typo Customer");
+    await page.goto("/orders?tab=customers");
+
+    await page.getByRole("button", { name: "Delete Typo Customer" }).click();
+    await expect(page.getByText("Delete Typo Customer?")).toBeVisible();
+
+    // Cancel keeps it
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByText("Delete Typo Customer?")).not.toBeVisible();
+    await expect(page.getByRole("link", { name: /Typo Customer/ })).toBeVisible();
+
+    // Confirm removes it
+    await page.getByRole("button", { name: "Delete Typo Customer" }).click();
+    await page.getByRole("button", { name: "Yes, delete customer" }).click();
+    await expect(page.getByText("No customers yet", { exact: false })).toBeVisible();
+  });
+
+  test("list row offers Archive for a customer with orders", async ({ page }) => {
+    await createCustomer(page, "Cafe Ruinen");
+    await createOrder(page, { title: "Bonbon box", date: isoFromToday(14) });
+    await assignCustomer(page, "Cafe Ruinen");
+    await page.goto("/orders?tab=customers");
+
+    // No hard delete offered — the data layer would refuse it.
+    await expect(page.getByRole("button", { name: "Delete Cafe Ruinen" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Archive Cafe Ruinen" }).click();
+    await expect(page.getByText("Archive Cafe Ruinen?")).toBeVisible();
+    await expect(page.getByText(/1 order references/)).toBeVisible();
+
+    await page.getByRole("button", { name: "Archive customer", exact: true }).click();
+    await expect(page.getByRole("link", { name: /Cafe Ruinen/ })).not.toBeVisible();
+  });
+
+  test("archived customer can be restored from the list", async ({ page }) => {
+    await createCustomer(page, "Cafe Ruinen");
+    await createOrder(page, { title: "Bonbon box", date: isoFromToday(14) });
+    await assignCustomer(page, "Cafe Ruinen");
+    await page.goto("/orders?tab=customers");
+    await page.getByRole("button", { name: "Archive Cafe Ruinen" }).click();
+    await page.getByRole("button", { name: "Archive customer", exact: true }).click();
+    await expect(page.getByRole("link", { name: /Cafe Ruinen/ })).not.toBeVisible();
+
+    // Reveal archived, then restore in one tap (no confirmation — not destructive).
+    await page.getByRole("button", { name: /Filter/i }).click();
+    await page.getByRole("button", { name: "Show archived" }).click();
+    await expect(page.getByRole("link", { name: /Cafe Ruinen/ })).toBeVisible();
+
+    await page.getByRole("button", { name: "Unarchive Cafe Ruinen" }).click();
+    await expect(page.getByRole("button", { name: "Archive Cafe Ruinen" })).toBeVisible();
   });
 });
 
