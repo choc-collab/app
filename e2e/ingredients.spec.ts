@@ -275,4 +275,52 @@ test.describe("Ingredients — Categories", () => {
     await page.getByText("Emulsifiers").click();
     await expect(page).toHaveURL(/\/ingredients\/categories\/.+/);
   });
+
+  /**
+   * Issue #171. "Chocolate" is protected because shell ingredient selection
+   * needs the name to exist — but when the pre-v0.9.2 seeding race left several
+   * copies of it, that protection made every copy permanently undeletable. The
+   * name survives as long as one row holds it, so a duplicate must be removable.
+   */
+  test("a duplicate of the protected Chocolate category can be deleted", async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto("/ingredients");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    await expect(page.getByText("Chocolate", { exact: true })).toBeVisible();
+    await page.waitForLoadState("networkidle");
+
+    // Raw IDB put — the app will not create this state on its own. Skips Dexie's
+    // `creating` hook, so the row carries an explicit id.
+    await page.evaluate(() => {
+      return new Promise<void>((resolve, reject) => {
+        const req = indexedDB.open("ChocolatierDB");
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction("ingredientCategories", "readwrite");
+          tx.oncomplete = () => { db.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+          tx.objectStore("ingredientCategories").put({
+            id: "dup-choc-1",
+            name: "Chocolate",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+        };
+      });
+    });
+
+    await page.goto("/ingredients/categories/dup-choc-1");
+
+    // Without the duplicate rule this page shows the "cannot be deleted or
+    // archived" paragraph and offers nothing at all.
+    await page.getByRole("button", { name: /Delete category/i }).click();
+    await expect(page.getByText(/2 copies of this category share the name/)).toBeVisible();
+    await page.getByRole("button", { name: "Yes, delete" }).click();
+    await expect(page).toHaveURL(/\/ingredients\/?(\?tab=categories)?$/);
+
+    // The original Chocolate is still there — shell selection keeps working.
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    await expect(page.getByText("Chocolate", { exact: true })).toBeVisible();
+  });
 });
