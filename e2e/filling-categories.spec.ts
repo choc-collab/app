@@ -125,3 +125,109 @@ test.describe("Fillings — Categories CRUD", () => {
     await expect(page).toHaveURL(/\/fillings\/?(\?tab=categories)?$/);
   });
 });
+
+/**
+ * Duplicate categories — issue #171.
+ *
+ * Before v0.9.2, seeding could run before the initial cloud sync and insert a
+ * second full set of the defaults. The in-use guard counts fillings by category
+ * NAME, which every copy shares, so the duplicates were permanently undeletable.
+ *
+ * Rows go in through raw IDB (the shop-fixtures pattern) because the race that
+ * creates duplicates can't be reproduced through the UI, and because the whole
+ * point is a state the app will not produce on its own. Raw `put` skips Dexie's
+ * `creating` hook, so every row carries an explicit id.
+ */
+test.describe("Fillings — duplicate categories", () => {
+  const CATEGORY = "Ganaches (Emulsions)";
+
+  async function openCategoriesTab(page: import("@playwright/test").Page) {
+    await page.goto("/fillings");
+    await page.getByRole("button", { name: /^Categories$/ }).click();
+    // The seed loader inserts the defaults asynchronously.
+    await expect(page.getByText(CATEGORY)).toBeVisible();
+    await page.waitForLoadState("networkidle");
+  }
+
+  /** Write rows straight into IndexedDB. Returns once the transaction commits. */
+  async function putRows(
+    page: import("@playwright/test").Page,
+    rows: { store: string; row: Record<string, unknown> }[],
+  ) {
+    await page.evaluate((rows) => {
+      return new Promise<void>((resolve, reject) => {
+        const req = indexedDB.open("ChocolatierDB");
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const db = req.result;
+          const stores = [...new Set(rows.map((r) => r.store))];
+          const tx = db.transaction(stores, "readwrite");
+          tx.oncomplete = () => { db.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+          for (const { store, row } of rows) {
+            tx.objectStore(store).put({ ...row, createdAt: new Date(), updatedAt: new Date() });
+          }
+        };
+      });
+    }, rows);
+  }
+
+  /** Ids of every category row carrying this exact name. */
+  async function categoryIdsNamed(page: import("@playwright/test").Page, name: string): Promise<string[]> {
+    return page.evaluate((name) => {
+      return new Promise<string[]>((resolve, reject) => {
+        const req = indexedDB.open("ChocolatierDB");
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const db = req.result;
+          const store = db.transaction("fillingCategories", "readonly").objectStore("fillingCategories");
+          const all = store.getAll();
+          all.onerror = () => reject(all.error);
+          all.onsuccess = () => {
+            db.close();
+            resolve((all.result as { id: string; name: string }[])
+              .filter((c) => c.name === name)
+              .map((c) => c.id));
+          };
+        };
+      });
+    }, name);
+  }
+
+  test("a category that is the only holder of its name still cannot be deleted while in use", async ({ page }) => {
+    test.setTimeout(60000);
+    await openCategoriesTab(page);
+    await putRows(page, [
+      { store: "fillings", row: { id: "dup-fill-1", name: "Test Ganache", category: CATEGORY } },
+    ]);
+
+    const [onlyId] = await categoryIdsNamed(page, CATEGORY);
+    await page.goto(`/fillings/categories/${onlyId}`);
+
+    await expect(page.getByRole("button", { name: /Archive category/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Delete category/i })).toHaveCount(0);
+  });
+
+  test("a duplicate of an in-use category can be deleted, and the original survives", async ({ page }) => {
+    test.setTimeout(60000);
+    await openCategoriesTab(page);
+    await putRows(page, [
+      { store: "fillings", row: { id: "dup-fill-1", name: "Test Ganache", category: CATEGORY } },
+      { store: "fillingCategories", row: { id: "dup-cat-1", name: CATEGORY, shelfStable: false, color: "#0072B2" } },
+    ]);
+
+    await page.goto("/fillings/categories/dup-cat-1");
+
+    // Delete is offered even though a filling references the name, because the
+    // other copy goes on answering to it.
+    await page.getByRole("button", { name: /Delete category/i }).click();
+    await expect(page.getByText(/2 copies of this category share the name/)).toBeVisible();
+    await page.getByRole("button", { name: "Yes, delete" }).click();
+    await expect(page).toHaveURL(/\/fillings\/?(\?tab=categories)?$/);
+
+    // Exactly one row keeps the name, and it is not the one we deleted.
+    const remaining = await categoryIdsNamed(page, CATEGORY);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).not.toBe("dup-cat-1");
+  });
+});
