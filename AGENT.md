@@ -782,6 +782,7 @@ Nutrition data is stored as an optional `nutrition?: NutritionData` field on `In
 ## Seed Data (`public/seed/`, `src/lib/seed.ts`)
 - CSV files auto-loaded on first visit via `src/components/seed-loader.tsx`
 - `localStorage` key `"chocolatier-seeded"` prevents re-seeding
+- **With Dexie Cloud configured, seeding waits for the first sync to land** (`decideSeedGate()` in `src/lib/seedGate.ts`: logged in + `initiallySynced` + `phase === "in-sync"`). Every `ensureDefault*` decides what is missing by reading the *local* table, which is empty on a fresh browser profile until sync completes — seeding earlier inserts a duplicate set and pushes it to the cloud, once per new device or incognito window. Local-only mode seeds immediately, as before. Because the gate means nothing touches a table before login, `auth-gate.tsx` opens the database itself
 - Files: `ingredients.csv`, `moulds.csv`, `decorations.csv`, `packaging.csv` — header-only templates. These double as the import templates for the upcoming "Load CSV" feature; `seedIfNeeded()` runs `seedIngredients` + `seedMoulds` and no-ops on empty files. Products, fillings, and their joins are app-only (no CSV import path).
 - To re-seed during dev: clear `localStorage` and IndexedDB in browser devtools
 
@@ -912,11 +913,11 @@ src/
     page-header.tsx         — reusable page title/description header: <PageHeader title="…" description="…" />
     inline-name-editor.tsx  — name field with hover-pencil for inline rename; used at top of every detail page
     stock-status-panel.tsx  — full stock workflow widget (flag low/out, mark ordered, restock)
-    auth-gate.tsx           — blocks the app behind a login screen when NEXT_PUBLIC_DEXIE_CLOUD_URL is set; pass-through when running local-only
+    auth-gate.tsx           — blocks the app behind a login screen when NEXT_PUBLIC_DEXIE_CLOUD_URL is set; pass-through when running local-only. Calls `db.open()` on mount: Dexie opens lazily and `db.cloud.currentUser` only reflects a saved session once the open runs the addon's ready hook, so without it a returning user never gets past the sign-in screen
     error-boundary.tsx      — React error boundary (wraps root layout)
     global-error-handler.tsx — global unhandled-error/rejection logger
     csv-import.tsx          — reusable CSV import UI: file pick → preview table → commit (parameterised by CSVImportConfig<T>)
-    seed-loader.tsx         — triggers seed on first load
+    seed-loader.tsx         — triggers seed on first load; in cloud mode waits behind `decideSeedGate()` until the initial sync has landed
     sw-register.tsx         — registers service worker
     persistent-storage-request.tsx — requests `navigator.storage.persist()` on boot so the browser won't evict IndexedDB under storage pressure; mounted from the root layout alongside `sw-register.tsx`
     leftover-modal.tsx      — modal prompt for registering leftover filling after fill step completion
@@ -936,6 +937,7 @@ src/
     persistent-storage.ts   — `requestPersistentStorage()`, `getStorageStatus()`, `formatBytes()` — SSR-safe wrappers around `navigator.storage` so the UI can show persisted state + usage/quota and offer a manual "Request persistent storage" button
     upgrade-snapshot.ts     — pre-upgrade safety snapshot. `snapshotBeforeUpgrade()` fires at `db.ts` module init; if the stored IDB version is below `CURRENT_DEXIE_VERSION * 10`, it peeks at the DB and downloads a recovery JSON before Dexie runs `.upgrade()` hooks. Exports pure helpers `decideUpgradeSnapshot()` and `buildUpgradeSnapshotFilename()` for unit testing. `CURRENT_DEXIE_VERSION` is kept in sync with `db.ts` by hand
     seed.ts                 — seeding logic
+    seedGate.ts             — pure `decideSeedGate()`: may the seeders run yet? Guards the fresh-browser duplicate-defaults race in cloud mode (unit-tested; deliberately imports no `db`)
     collectionPricing.ts    — pure pricing/margin calculations
     csv.ts                  — CSV parser
     csv-import.ts           — reusable CSV import: parse, validate, commit with dedup, template download (entity-agnostic)

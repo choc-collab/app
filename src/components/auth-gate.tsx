@@ -1,10 +1,22 @@
 "use client";
 
+import { useEffect } from "react";
 import { useObservable } from "dexie-react-hooks";
 import { db, isCloudConfigured } from "@/lib/db";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const currentUser = useObservable(db.cloud.currentUser);
+
+  // Dexie opens lazily, and `db.cloud.currentUser` only picks up a saved session
+  // once that open runs the addon's ready hook. The seed loader used to be the
+  // first thing to touch a table; now that it waits for sync, nothing else would
+  // open the database and a signed-in returning user would sit on the sign-in
+  // screen forever. With `requireAuth` this stays pending while signed out, which
+  // is what it already did when the seed loader triggered it.
+  useEffect(() => {
+    if (!isCloudConfigured) return;
+    db.open().catch((e) => console.error("db.open failed:", e));
+  }, []);
 
   if (!isCloudConfigured) return <>{children}</>;
   if (currentUser === undefined) return null;

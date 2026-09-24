@@ -4,6 +4,11 @@ All notable user-facing changes to Choc-collab are documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0 — minor bumps may include breaking changes).
 
+## [0.9.2] — 2026-09-24
+
+### Fixed
+- **Opening the app on a new device no longer adds a second set of default categories** — with sync switched on, every fresh browser (a new device, an incognito window, or one whose site data you'd cleared) quietly added its own copy of the default product, filling, ingredient and decoration categories and the default shell designs. Do that a few times and the pantry lists read "Ganaches, Ganaches, Ganaches". The seeder fills in whatever it can't find, and on a brand-new browser it ran before the first sync had finished downloading — so it couldn't find anything, and inserted a full set that then synced up alongside the real one. Seeding now waits until your own data has arrived before deciding anything is missing, and skips the session entirely if it never does. This stops new copies appearing; it doesn't remove ones already made, so a cleanup pass will follow separately. Local-only installs never had the problem and are unchanged. (#171)
+
 ## [0.9.1] — 2026-09-21
 
 ### Added
