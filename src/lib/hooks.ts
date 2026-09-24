@@ -5,6 +5,7 @@ import { sanitizeBrand } from "@/lib/brand-sanitize";
 import type { Ingredient, Product, ProductCategory, Filling, FillingCategory, ProductFilling, FillingIngredient, FillingComponent, Mould, ProductionPlan, PlanProduct, PlanFilling, PlanStepStatus, UserPreferences, ProductFillingHistory, IngredientPriceHistory, CoatingChocolateMapping, ProductCostSnapshot, Experiment, ExperimentIngredient, Packaging, PackagingOrder, ShoppingItem, Collection, CollectionProduct, CollectionPackaging, CollectionPricingSnapshot, DecorationMaterial, DecorationCategory, ShellDesign, FillingStock, IngredientCategory, Sale, ShopKind, GiveAwayRecord, GiveAwayShape, GiveAwayReason, Brand, LabelTemplate, LabelTemplateKind, Order, Customer, OrderProductionLink, OrderLineItem, LogEntry, LogDay } from "@/types";
 import { DEFAULT_PRODUCT_CATEGORIES, DEFAULT_INGREDIENT_CATEGORIES, DEFAULT_COATINGS, SHELF_STABLE_CATEGORIES, costPerGram as deriveIngredientCostPerGram, hasPricingData, type MarketRegion, type CurrencyCode, type FillMode, getCurrencySymbol } from "@/types";
 import { validateCategoryRange } from "@/lib/productCategories";
+import { decideCategoryDelete } from "@/lib/categoryDelete";
 import { calculateProductCost, buildIngredientCostMap, serializeBreakdown, deriveShellPercentageFromFractions } from "@/lib/costCalculation";
 import { computeShopKpis, EMPTY_SHOP_KPIS, type ShopKpis } from "@/lib/shopKpis";
 import { computeTodaySignals, type TodaySignals, type TodayProductInfo } from "@/lib/todaySignals";
@@ -704,11 +705,23 @@ export async function saveFillingCategory(obj: Omit<FillingCategory, "id" | "cre
 export async function deleteFillingCategory(id: string): Promise<void> {
   const cat = await db.fillingCategories.get(id);
   if (!cat) return;
-  const usage = await db.fillings.where("category").equals(cat.name).count();
-  if (usage > 0) {
-    throw new Error(`Cannot delete category "${cat.name}" — ${usage} filling(s) still use it.`);
+  const [usageCount, sameNameCount] = await Promise.all([
+    db.fillings.where("category").equals(cat.name).count(),
+    db.fillingCategories.where("name").equals(cat.name).count(),
+  ]);
+  if (!decideCategoryDelete({ usageCount, sameNameCount }).canDelete) {
+    throw new Error(`Cannot delete category "${cat.name}" — ${usageCount} filling(s) still use it.`);
   }
   await db.fillingCategories.delete(id);
+}
+
+/** How many category rows carry this exact name. More than one means duplicates
+ *  (see `decideCategoryDelete`), and removing one of them is safe. */
+export function useFillingCategoryNameCount(name: string | undefined): number {
+  return useLiveQuery(
+    () => (name ? db.fillingCategories.where("name").equals(name).count() : 0),
+    [name],
+  ) ?? 0;
 }
 
 export async function archiveFillingCategory(id: string): Promise<void> {
@@ -1900,14 +1913,32 @@ export async function unarchiveIngredientCategory(id: string): Promise<void> {
  *  Also throws if attempting to delete the protected "Chocolate" category. */
 export async function deleteIngredientCategory(id: string): Promise<void> {
   const cat = await db.ingredientCategories.get(id);
-  if (cat?.name === "Chocolate") {
-    throw new Error('The "Chocolate" category cannot be deleted — it is required for shell ingredient selection.');
-  }
-  const inUse = await db.ingredients.where("category").equals(cat?.name ?? "").count();
-  if (inUse > 0) {
-    throw new Error(`Cannot delete category: ${inUse} ingredient(s) still reference it. Archive it instead.`);
+  if (!cat) return;
+  const [usageCount, sameNameCount] = await Promise.all([
+    db.ingredients.where("category").equals(cat.name).count(),
+    db.ingredientCategories.where("name").equals(cat.name).count(),
+  ]);
+  const verdict = decideCategoryDelete({
+    usageCount,
+    sameNameCount,
+    isProtectedName: cat.name === "Chocolate",
+  });
+  if (!verdict.canDelete) {
+    throw new Error(
+      verdict.reason === "protected-name"
+        ? 'The "Chocolate" category cannot be deleted — it is required for shell ingredient selection.'
+        : `Cannot delete category: ${usageCount} ingredient(s) still reference it. Archive it instead.`,
+    );
   }
   await db.ingredientCategories.delete(id);
+}
+
+/** How many category rows carry this exact name — see `useFillingCategoryNameCount`. */
+export function useIngredientCategoryNameCount(name: string | undefined): number {
+  return useLiveQuery(
+    () => (name ? db.ingredientCategories.where("name").equals(name).count() : 0),
+    [name],
+  ) ?? 0;
 }
 
 /** Reactive list of (non-archived) ingredients currently assigned to a category by name. */

@@ -5,11 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   useIngredientCategory,
   useIngredientCategoryUsage,
+  useIngredientCategoryNameCount,
   saveIngredientCategory,
   deleteIngredientCategory,
   archiveIngredientCategory,
   unarchiveIngredientCategory,
 } from "@/lib/hooks";
+import { decideCategoryDelete } from "@/lib/categoryDelete";
 import { UsedInPanel } from "@/components/pantry";
 import { InlineNameEditor } from "@/components/inline-name-editor";
 import { DetailSkeleton, DetailNotFound } from "@/components/detail-states";
@@ -28,6 +30,7 @@ export default function IngredientCategoryDetailPage() {
 
   const category = useIngredientCategory(categoryId);
   const usedInIngredients = useIngredientCategoryUsage(category?.name);
+  const sameNameCount = useIngredientCategoryNameCount(category?.name);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -103,7 +106,11 @@ export default function IngredientCategoryDetailPage() {
   }
 
   const inUseCount = usedInIngredients.length;
-  const isChocolate = category.name === "Chocolate";
+  const deleteVerdict = decideCategoryDelete({
+    usageCount: inUseCount,
+    sameNameCount,
+    isProtectedName: category.name === "Chocolate",
+  });
 
   return (
     <div>
@@ -157,12 +164,12 @@ export default function IngredientCategoryDetailPage() {
             >
               <ArchiveRestore className="w-4 h-4" /> Unarchive category
             </button>
-          ) : isChocolate ? (
+          ) : deleteVerdict.reason === "protected-name" ? (
             /* Chocolate is protected — explain why */
             <p className="text-xs text-muted-foreground">
               The &ldquo;Chocolate&rdquo; category cannot be deleted or archived — it is required for shell ingredient selection.
             </p>
-          ) : inUseCount > 0 ? (
+          ) : !deleteVerdict.canDelete ? (
             /* In use — archive only, no delete */
             confirmDelete ? (
               <div className="rounded-lg border border-border bg-card p-4 space-y-3">
@@ -193,12 +200,14 @@ export default function IngredientCategoryDetailPage() {
               </button>
             )
           ) : (
-            /* Not in use — allow full delete */
+            /* Unused, or one of several copies sharing the name — allow full delete */
             confirmDelete ? (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
                 <p className="text-sm text-destructive font-medium">Delete this category?</p>
                 <p className="text-xs text-muted-foreground">
-                  No ingredients are currently using it. This cannot be undone.
+                  {deleteVerdict.reason === "duplicate"
+                    ? `${sameNameCount} copies of this category share the name. Deleting this one leaves ${sameNameCount - 1}, so every ingredient using it is unaffected. This cannot be undone.`
+                    : "No ingredients are currently using it. This cannot be undone."}
                 </p>
                 <div className="flex gap-2">
                   <button
