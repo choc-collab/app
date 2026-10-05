@@ -15,6 +15,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      # @vitest/coverage-v8 peer-pins vitest to the exact same version, so
+      # they must always bump together (separate PRs fail npm ERESOLVE).
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+        update-types:
+          - "major"
     ignore:
       # eslint v10 breaks eslint-plugin-react@7.x (bundled by eslint-config-next).
       # Stay on 9.x until upstream catches up.
