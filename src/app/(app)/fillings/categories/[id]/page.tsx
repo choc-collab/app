@@ -6,12 +6,14 @@ import {
   useFillingCategory,
   useFillingCategories,
   useFillingCategoryUsage,
+  useFillingCategoryNameCount,
   saveFillingCategory,
   deleteFillingCategory,
   archiveFillingCategory,
   unarchiveFillingCategory,
   useFillings,
 } from "@/lib/hooks";
+import { decideCategoryDelete } from "@/lib/categoryDelete";
 import { UsedInPanel } from "@/components/pantry";
 import { SidebarCard } from "@/components/detail-sidebar";
 import { InlineNameEditor } from "@/components/inline-name-editor";
@@ -36,6 +38,8 @@ export default function FillingCategoryDetailPage() {
 
   const category = useFillingCategory(categoryId);
   const inUseCount = useFillingCategoryUsage(category?.name);
+  const sameNameCount = useFillingCategoryNameCount(category?.name);
+  const deleteVerdict = decideCategoryDelete({ usageCount: inUseCount, sameNameCount });
   const allFillings = useFillings();
   const allCategories = useFillingCategories();
   const sharedColorWith = (category?.color
@@ -275,7 +279,7 @@ export default function FillingCategoryDetailPage() {
             >
               <ArchiveRestore className="w-4 h-4" /> Unarchive category
             </button>
-          ) : inUseCount > 0 ? (
+          ) : !deleteVerdict.canDelete ? (
             confirmDelete ? (
               <div className="rounded-lg border border-border bg-card p-4 space-y-3">
                 <div className="flex items-center gap-2">
@@ -308,7 +312,9 @@ export default function FillingCategoryDetailPage() {
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-3">
               <p className="text-sm text-destructive font-medium">Delete this category?</p>
               <p className="text-xs text-muted-foreground">
-                No fillings are currently using it. This cannot be undone.
+                {deleteVerdict.reason === "duplicate"
+                  ? `${sameNameCount} copies of this category share the name. Deleting this one leaves ${sameNameCount - 1}, so every filling using it is unaffected. This cannot be undone.`
+                  : "No fillings are currently using it. This cannot be undone."}
               </p>
               <div className="flex gap-2">
                 <button
