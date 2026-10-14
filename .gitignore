@@ -48,3 +48,6 @@ test-results/
 
 # wrangler local cache (Cloudflare Worker dev state — do not commit)
 .wrangler/
+
+# vitest coverage reports
+coverage/
